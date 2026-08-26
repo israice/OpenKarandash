@@ -366,8 +366,8 @@ function candidateFiles(prompt) {
     return found;
 }
 
-function conflictingRuns(files) {
-    return [...activeRuns.values()].filter((run) => [...run.files].some((f) => files.has(f)));
+function conflictingRuns(files, exclude) {
+    return [...activeRuns.values()].filter((run) => run !== exclude && [...run.files].some((f) => files.has(f)));
 }
 
 // ждём, только если реально пересекаемся файлами с уже активным запуском —
@@ -386,6 +386,43 @@ async function waitForFileTurn(files, send) {
     } finally {
         waitingCount -= 1;
     }
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// эвристика по промпту — только первая линия обороны. Точную проверку делает
+// PreToolUse-хук (.claude/hooks/file-lock.js): он спрашивает сюда прямо перед
+// вызовом Edit/Write/NotebookEdit, и мы либо пускаем, либо ждём освобождения файла
+const LOCK_CHECK_TIMEOUT_MS = 85_000; // короче таймаута хука (100с в settings.json) — успеваем ответить
+
+async function checkFileLock(file, sessionId) {
+    const resolved = path.resolve(file);
+    const all = [...activeRuns.values()];
+    // sessionId известен хуку с самого начала (в отличие от нашего run.sessionId,
+    // который заполняется только после первой строки стрима) — но пока запрос
+    // самый первый, стрим мог не успеть догнать: тогда берём самый свежий безымянный,
+    // как и в stopActiveRun. Вызов извне (например, интерактивная сессия в этом же
+    // проекте) сюда просто не попадёт — caller останется null, и это нормально
+    const caller = sessionId
+        ? all.find((r) => r.sessionId === sessionId) || null
+        : all.filter((r) => !r.sessionId).pop() || null;
+
+    const files = new Set([resolved]);
+    const deadline = Date.now() + LOCK_CHECK_TIMEOUT_MS;
+    for (;;) {
+        const blockers = conflictingRuns(files, caller);
+        if (blockers.length === 0) break;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+            return { ok: false, reason: `${path.basename(resolved)} сейчас редактирует другая сессия` };
+        }
+        await Promise.race([...blockers.map((r) => r.done), sleep(remaining)]);
+    }
+
+    if (caller) caller.files.add(resolved); // теперь это факт, а не догадка
+    return { ok: true };
 }
 
 // sessionId известен не всегда (CLI ещё не прислал id для только что стартовавшего
@@ -451,12 +488,15 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
     if (sessionId) args.push('--resume', sessionId);
-    // оба режима идут без запросов разрешения: в headless -p подтвердить их некому,
-    // и запрос завис бы до таймаута. разница не в разрешениях, а в наборе инструментов
-    args.push('--permission-mode', 'bypassPermissions');
+    // headless -p не может показать интерактивный запрос на разрешение, поэтому оба
+    // режима идут без него: Chat — через plan (ничего не меняет и не запускает),
+    // Action — через bypassPermissions (выполняет сразу)
     if (mode === 'Chat') {
+        args.push('--permission-mode', 'plan');
         args.push('--disallowedTools', CHAT_DENIED_TOOLS);
         args.push('--strict-mcp-config'); // MCP-инструменты тоже умеют писать — отключаем их целиком
+    } else {
+        args.push('--permission-mode', 'bypassPermissions');
     }
 
     let startedSession = null;
@@ -516,6 +556,12 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
         if (event.type === 'result') {
             if (event.is_error) emit({ type: 'error', error: event.result || 'CLI вернул ошибку' });
             else answer = event.result || answer;
+        }
+
+        // лимиты подписки (5 часов / 7 дней) CLI присылает сам, на каждый запрос —
+        // это те же цифры, что показывает /usage, только уже в JSON
+        if (event.type === 'rate_limit_event') {
+            emit({ type: 'rate_limit', info: event.rate_limit_info });
         }
     };
 
@@ -690,6 +736,20 @@ async function handleApi(req, res, urlPath) {
         if (urlPath === '/api/claude/stop') {
             const { sessionId } = await readJson(req);
             sendJson(res, { ok: true, stopped: stopActiveRun(sessionId || null) });
+            return;
+        }
+
+        // вызывается PreToolUse-хуком (.claude/hooks/file-lock.js) прямо перед
+        // Edit/Write/NotebookEdit — может держать ответ до минуты, пока файл не освободится
+        if (urlPath === '/api/claude/lock-check') {
+            const { file, sessionId } = await readJson(req);
+            if (!file) {
+                sendJson(res, { ok: false, reason: 'Не указан файл' });
+                return;
+            }
+            const result = await checkFileLock(file, sessionId || null);
+            console.log(`[lock-check] ${path.basename(file)}: ${result.ok ? 'свободен' : 'занят — ' + result.reason}`);
+            sendJson(res, result);
             return;
         }
 
@@ -869,6 +929,9 @@ server.on('error', (err) => {
 
 server.listen(port, () => {
     console.log(`Сервер запущен: http://localhost:${port}`);
+    // читает PreToolUse-хук (.claude/hooks/file-lock.js), чтобы найти /api/claude/lock-check.
+    // имя начинается с точки, поэтому слежение за файлами (snapshot()) его игнорирует
+    fs.writeFileSync(path.join(ROOT, '.server-port'), String(port));
     if (LIVE_RELOAD) {
         watchFiles();
         console.log('Автообновление включено — страница перезагрузится после сохранения файла.');
