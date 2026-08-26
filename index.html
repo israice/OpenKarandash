@@ -1,0 +1,2993 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <title>Hello World</title>
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+            background: #131417;
+            color: #e9e9ec;
+        }
+
+        /* оба вида страницы занимают весь экран, показывается всегда один */
+        .view {
+            min-height: 100vh;
+        }
+
+        .view--home {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            padding: 150px 24px 24px;
+            gap: 16px;
+        }
+
+        /* панель статистики вверху экрана, по центру — ниже строки вкладок (.topbar) */
+        .dashboard {
+            position: fixed;
+            top: 74px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 12px;
+        }
+
+        .stat-tile {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 18px;
+            border: 1px solid #2e3138;
+            border-radius: 10px;
+            background: #16181c;
+        }
+
+        /* заглушка под будущие блоки статистики */
+        .stat-tile--placeholder {
+            min-width: 120px;
+            border-style: dashed;
+        }
+
+        .stat-tile__value {
+            font-size: 1.4rem;
+            font-weight: 600;
+        }
+
+        .stat-tile__label {
+            color: #9a9ea6;
+        }
+
+        /* панель наблюдения под плитками: всё умещается на экране без прокрутки,
+           списки внутри карточек скроллятся сами, если сессий много */
+        .observation {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(280px, 1fr));
+            grid-template-rows: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+            width: 100%;
+            max-width: 1080px;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .obs-card {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            padding: 16px 18px;
+            border: 1px solid #2e3138;
+            border-radius: 10px;
+            background: #16181c;
+        }
+
+        .obs-card__title {
+            margin: 0 0 12px;
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        .obs-card__stats {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .obs-card__stats li {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 12px;
+            color: #9a9ea6;
+        }
+
+        .obs-card__stats strong {
+            color: #e9e9ec;
+            font-size: 1.05rem;
+            font-weight: 600;
+        }
+
+        .obs-connection {
+            display: flex;
+            align-items: center;
+        }
+
+        .obs-connection__text {
+            margin: 0;
+            color: #e9e9ec;
+            font-size: 0.95rem;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .obs-connection__text--off {
+            color: #9a9ea6;
+            font-weight: 400;
+        }
+
+        .obs-list {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            overflow-y: auto;
+            min-height: 0;
+        }
+
+        .obs-list__item {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            gap: 8px;
+            padding: 6px 4px;
+            border: 0;
+            border-radius: 6px;
+            background: none;
+            color: inherit;
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .obs-list__item:hover {
+            background: #22252b;
+        }
+
+        .obs-list__dot {
+            flex: none;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #3a3e46;
+        }
+
+        .obs-list__dot--running {
+            background: #f5a623;
+            animation: session-item-pulse 1.2s ease-in-out infinite;
+        }
+
+        .obs-list__title {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .obs-list__meta {
+            flex: none;
+            color: #9a9ea6;
+            font-size: 0.82rem;
+        }
+
+        .obs-list__empty {
+            padding: 4px;
+            color: #9a9ea6;
+        }
+
+        /* вид Graph: во всю площадь под визуализацию graphify */
+        .view--graph {
+            display: block;
+            /* отступ под фиксированную .topbar, иначе она перекрывает поиск графа */
+            padding-top: 64px;
+            background: #0f0f1a;
+        }
+
+        .graph-frame {
+            display: block;
+            width: 100%;
+            height: calc(100vh - 64px);
+            border: 0;
+            background: #0f0f1a;
+        }
+
+        .graph-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            height: calc(100vh - 64px);
+            padding: 0 24px;
+            text-align: center;
+            color: #9aa0aa;
+        }
+
+        .graph-empty__title {
+            font-size: 1rem;
+            color: #e9e9ec;
+        }
+
+        .graph-empty__hint code {
+            padding: 2px 6px;
+            border-radius: 6px;
+            background: #1a1c21;
+            color: #e9e9ec;
+        }
+
+        .graph-frame[hidden], .graph-empty[hidden] {
+            display: none;
+        }
+
+        /* ---------- виды с боковым меню: меню слева, заглушка по центру ---------- */
+
+        .view--side {
+            display: flex;
+        }
+
+        .side-nav {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            width: 210px;
+            flex-shrink: 0;
+            padding: 68px 12px 16px;
+            border-right: 1px solid #2e3138;
+            background: #16181c;
+        }
+
+        .side-nav__title {
+            margin: 0 0 8px;
+            padding: 0 12px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #7c818b;
+        }
+
+        .side-nav__item {
+            padding: 10px 12px;
+            border: 0;
+            border-radius: 7px;
+            background: none;
+            font: inherit;
+            font-size: 0.88rem;
+            color: #c3c7ce;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .side-nav__item:hover {
+            background: #22252b;
+            color: #f2f2f4;
+        }
+
+        .side-nav__item:focus-visible {
+            outline: 2px solid #6ea8fe;
+            outline-offset: 2px;
+        }
+
+        .view__content {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* правило идёт после раскладок видов, поэтому скрытие всегда побеждает */
+        .view[hidden] {
+            display: none;
+        }
+
+        h1 {
+            font-size: 3rem;
+            font-weight: 600;
+        }
+
+        /* верхняя правая область: панель кнопок + настройки */
+        .topbar {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            /* fixed-контейнер создаёт свой контекст наложения — поднимаем его целиком
+               выше .modal / .modal--top, иначе z-index внутри (.settings) бесполезен */
+            z-index: 1300;
+        }
+
+        /* горизонтальная панель слева от кнопки настроек */
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            padding: 3px;
+            border: 1px solid #2e3138;
+            border-radius: 10px;
+            background: #1a1c21;
+        }
+
+        .icon-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 34px;
+            height: 34px;
+            padding: 0;
+            border: 0;
+            border-radius: 7px;
+            background: none;
+            color: #a9adb6;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s;
+        }
+
+        .icon-button:hover,
+        .icon-button[aria-expanded="true"] {
+            background: #262930;
+            color: #f2f2f4;
+        }
+
+        .icon-button[aria-pressed="true"] {
+            background: #2b4d78;
+            color: #f2f2f4;
+        }
+
+        .icon-button:focus-visible {
+            outline: 2px solid #6ea8fe;
+            outline-offset: 2px;
+        }
+
+        /* кнопка настроек стоит отдельно, поэтому у неё своя рамка */
+        .settings {
+            position: relative;
+        }
+
+        .settings__button {
+            width: 40px;
+            height: 40px;
+            border: 1px solid #2e3138;
+            border-radius: 8px;
+            background: #1c1e23;
+        }
+
+        /* меню: под кнопкой, выровнено по её правому краю — раскрывается влево */
+        .settings__menu {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            min-width: 200px;
+            margin: 0;
+            padding: 6px;
+            list-style: none;
+            border: 1px solid #2e3138;
+            border-radius: 10px;
+            background: #1a1c21;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+        }
+
+        .settings__menu[hidden] {
+            display: none;
+        }
+
+        .settings__item {
+            display: block;
+            width: 100%;
+            padding: 9px 12px;
+            border: 0;
+            border-radius: 6px;
+            background: none;
+            font: inherit;
+            font-size: 0.9rem;
+            color: #e9e9ec;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .settings__item:hover,
+        .settings__item:focus-visible {
+            background: #272a31;
+            outline: none;
+        }
+
+        .settings__item--active {
+            color: #ff9a9d;
+        }
+
+        .settings__item--active::before {
+            content: "";
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            margin-right: 8px;
+            border-radius: 50%;
+            background: #e5484d;
+            vertical-align: middle;
+        }
+
+        .settings__separator {
+            height: 1px;
+            margin: 6px 4px;
+            background: #2c2f36;
+        }
+
+        /* ---------- режим комментариев ---------- */
+
+        body.edit-mode,
+        body.edit-mode * {
+            cursor: crosshair;
+        }
+
+        /* внутри окна комментария курсор обычный: там уже не выбирают элемент */
+        body.edit-mode .comment-popover,
+        body.edit-mode .comment-popover * {
+            cursor: default;
+        }
+
+        body.edit-mode .comment-popover__field {
+            cursor: text;
+        }
+
+        body.edit-mode .comment-popover__button {
+            cursor: pointer;
+        }
+
+        /* рамка рисуется отдельным слоем, чтобы не менять стили самой страницы */
+        .hover-frame {
+            position: fixed;
+            /* выше .topbar (z-index: 1300, свой контекст наложения), иначе рамка
+               прячется под панелью настроек при наведении на её элементы */
+            z-index: 1310;
+            border: 2px solid #e5484d;
+            border-radius: 3px;
+            background: rgba(229, 72, 77, 0.08);
+            pointer-events: none;
+        }
+
+        .hover-frame[hidden],
+        .comment-popover[hidden] {
+            display: none;
+        }
+
+        .hover-frame--picked {
+            background: rgba(229, 72, 77, 0.14);
+        }
+
+        .comment-popover {
+            position: fixed;
+            z-index: 1320;
+            width: 280px;
+            padding: 12px;
+            border: 1px solid #2e3138;
+            border-radius: 10px;
+            background: #1a1c21;
+            box-shadow: 0 12px 34px rgba(0, 0, 0, 0.6);
+        }
+
+        .comment-popover__target {
+            margin-bottom: 8px;
+            font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+            font-size: 0.74rem;
+            color: #e5848a;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .comment-popover__field {
+            width: 100%;
+            min-height: 80px;
+            padding: 8px 10px;
+            border: 1px solid #2e3138;
+            border-radius: 7px;
+            background: #131417;
+            font: inherit;
+            font-size: 0.85rem;
+            color: #e9e9ec;
+            resize: vertical;
+        }
+
+        .comment-popover__field::placeholder { color: #6a6f78; }
+
+        .comment-popover__field:focus {
+            outline: none;
+            border-color: #6ea8fe;
+        }
+
+        .comment-popover__actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .comment-popover__button {
+            padding: 7px 14px;
+            border: 1px solid #2e3138;
+            border-radius: 7px;
+            background: #22252b;
+            font: inherit;
+            font-size: 0.82rem;
+            color: #e9e9ec;
+            cursor: pointer;
+        }
+
+        .comment-popover__button:hover { background: #2a2e35; }
+
+        .comment-popover__button--primary {
+            border-color: #e5484d;
+            background: #e5484d;
+            color: #fff;
+        }
+
+        .comment-popover__button--primary:hover { background: #d43b40; }
+
+        .comment-popover__button:focus-visible {
+            outline: 2px solid #6ea8fe;
+            outline-offset: 2px;
+        }
+
+        /* ---------- модальное окно настроек ---------- */
+
+        .modal {
+            position: fixed;
+            inset: 0;
+            z-index: 1100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .modal[hidden] { display: none; }
+
+        /* окно поверх другого модального окна */
+        .modal--top { z-index: 1200; }
+
+        .modal__backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+        }
+
+        .modal__dialog {
+            position: relative;
+            width: 100%;
+            max-width: 460px;
+            max-height: 100%;
+            overflow-y: auto;
+            padding: 20px;
+            border: 1px solid #2e3138;
+            border-radius: 12px;
+            background: #1a1c21;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+        }
+
+        .modal__header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .modal__title {
+            margin: 0;
+            font-size: 1.05rem;
+            font-weight: 600;
+        }
+
+        .modal__close {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            border: 0;
+            border-radius: 7px;
+            background: none;
+            font-size: 1.2rem;
+            line-height: 1;
+            color: #a9adb6;
+            cursor: pointer;
+        }
+
+        .modal__close:hover { background: #262930; color: #f2f2f4; }
+
+        .modal__close:focus-visible {
+            outline: 2px solid #6ea8fe;
+            outline-offset: 2px;
+        }
+
+        .modal__hint {
+            margin: 6px 0 16px;
+            font-size: 0.82rem;
+            color: #8b909a;
+        }
+
+        /* ---------- список провайдеров ---------- */
+
+        .provider-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .provider {
+            padding: 12px 14px;
+            border: 1px solid #2e3138;
+            border-radius: 10px;
+            background: #16181c;
+        }
+
+        .provider__row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .provider__name {
+            font-size: 0.92rem;
+            font-weight: 600;
+        }
+
+        .provider__note {
+            margin-top: 2px;
+            font-size: 0.76rem;
+            color: #8b909a;
+        }
+
+        .provider__status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.76rem;
+            color: #5fd08a;
+        }
+
+        .provider__status::before {
+            content: "";
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #5fd08a;
+        }
+
+        .provider__actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .provider__button {
+            padding: 7px 14px;
+            border: 1px solid #2e3138;
+            border-radius: 7px;
+            background: #22252b;
+            font: inherit;
+            font-size: 0.8rem;
+            color: #e9e9ec;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .provider__button:hover { background: #2a2e35; }
+
+        .provider__button:focus-visible {
+            outline: 2px solid #6ea8fe;
+            outline-offset: 2px;
+        }
+
+        .provider__button--connect {
+            border-color: #3b6ea8;
+            background: #2b4d78;
+        }
+
+        .provider__button--connect:hover { background: #33598a; }
+
+        /* блок модели появляется под провайдером после подключения */
+        .provider__model {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #26292f;
+        }
+
+        .provider__model-label {
+            font-size: 0.78rem;
+            color: #8b909a;
+            white-space: nowrap;
+        }
+
+        .provider__select {
+            flex: 1;
+            min-width: 0;
+            padding: 7px 10px;
+            border: 1px solid #2e3138;
+            border-radius: 7px;
+            background: #131417;
+            font: inherit;
+            font-size: 0.8rem;
+            color: #e9e9ec;
+            cursor: pointer;
+        }
+
+        .provider__select:focus-visible {
+            outline: 2px solid #6ea8fe;
+            outline-offset: 2px;
+        }
+
+        .provider__select--effort {
+            flex: 0 0 auto;
+            width: auto;
+        }
+
+        /* ---------- вид «Kanban»: колонки задач ---------- */
+
+        .view--board {
+            display: block;
+            height: 100vh;
+            padding: 68px 16px 16px;
+            overflow-x: auto;
+            overflow-y: hidden;
+        }
+
+        /* колонки тянутся на всю высоту доски, список карточек прокручивается внутри */
+        .board {
+            display: flex;
+            gap: 12px;
+            align-items: stretch;
+            height: 100%;
+        }
+
+        .board__column {
+            display: flex;
+            flex-direction: column;
+            width: 260px;
+            flex-shrink: 0;
+            border: 1px solid #2e3138;
+            border-radius: 10px;
+            background: #16181c;
+        }
+
+        .board__header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 12px 14px;
+            border-bottom: 1px solid #26292f;
+        }
+
+        .board__title {
+            margin: 0;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .board__count {
+            min-width: 20px;
+            padding: 2px 6px;
+            border-radius: 20px;
+            background: #22252b;
+            font-size: 0.72rem;
+            color: #8b909a;
+            text-align: center;
+        }
+
+        .board__body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px 14px;
+            font-size: 0.8rem;
+            color: #6a6f78;
+        }
+
+        /* ---------- вид «Chat»: лента сверху, поле ввода снизу ---------- */
+
+        /* панель кнопок в левом верхнем углу — на одной линии с правой */
+        .topbar--left {
+            right: auto;
+            left: 16px;
+        }
+
+        .view--chat {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* панель Sessions выдвигается слева и не сдвигает верхние кнопки */
+        .chat__sessions {
+            width: 210px;
+        }
+
+        .chat__sessions[hidden] {
+            display: none;
+        }
+
+        .chat__main {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            padding: 68px 16px 16px;
+        }
+
+        .chat__session-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            max-width: 720px;
+            margin: 0 auto 8px;
+        }
+
+        .chat__session-bar[hidden] {
+            display: none;
+        }
+
+        .chat__session-id {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.78rem;
+            color: #6a6f78;
+        }
+
+        .chat__session-copy {
+            padding: 2px 8px;
+            border: 1px solid #2e3138;
+            border-radius: 6px;
+            background: none;
+            color: #a9adb6;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s;
+        }
+
+        .chat__session-copy:hover { background: #262930; color: #f2f2f4; }
+
+        .chat__messages {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat__composer {
+            --composer-control-height: 38px;
+            display: flex;
+            align-items: flex-end;
+            gap: 10px;
+            width: 100%;
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 10px;
+            border: 1px solid #2e3138;
+            border-radius: 12px;
+            background: #1a1c21;
+        }
+
+        .chat__input {
+            flex: 1;
+            max-height: 160px;
+            padding: 8px 10px;
+            border: 0;
+            background: none;
+            font: inherit;
+            font-size: 0.88rem;
+            color: #e9e9ec;
+            resize: none;
+            overflow-y: hidden;
+        }
+
+        .chat__input::placeholder { color: #6a6f78; }
+        .chat__input:focus { outline: none; }
+
+        /* сегментированный переключатель: видны обе опции, активная под «пилюлей» */
+        .segmented {
+            position: relative;
+            height: var(--composer-control-height);
+            display: grid;
+            grid-auto-flow: column;
+            grid-auto-columns: 1fr;
+            gap: 2px;
+            padding: 3px;
+            border: 1px solid #2e3138;
+            border-radius: 9px;
+            background: #16181c;
+        }
+
+        .segmented__thumb {
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: calc(50% - 4px);
+            height: calc(100% - 6px);
+            border-radius: 6px;
+            background: #2b4d78;
+            transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), background 0.22s;
+        }
+
+        /* пилюля уезжает ко второй опции */
+        .segmented[data-active="Action"] .segmented__thumb {
+            transform: translateX(calc(100% + 2px));
+            background: #7a5b2a;
+        }
+
+        .segmented__option {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 14px;
+            border: 0;
+            border-radius: 6px;
+            background: none;
+            font: inherit;
+            font-size: 0.8rem;
+            color: #8b909a;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: color 0.18s;
+        }
+
+        .segmented__option[aria-checked="true"] { color: #f2f2f4; }
+
+        .segmented__option:hover:not([aria-checked="true"]) { color: #c3c7ce; }
+
+        .segmented__option:focus-visible {
+            outline: 2px solid #6ea8fe;
+            outline-offset: 2px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .segmented__thumb { transition: none; }
+        }
+
+        .chat__send {
+            height: var(--composer-control-height);
+            padding: 0 16px;
+            border: 1px solid #3b6ea8;
+            border-radius: 8px;
+            background: #2b4d78;
+            font: inherit;
+            font-size: 0.82rem;
+            color: #f2f2f4;
+            cursor: pointer;
+        }
+
+        .chat__send:hover { background: #33598a; }
+
+        .chat__send:focus-visible {
+            outline: 2px solid #6ea8fe;
+            outline-offset: 2px;
+        }
+
+        .chat__send--stop {
+            border-color: #e5484d;
+            background: #e5484d;
+        }
+
+        .chat__send--stop:hover { background: #d43b40; }
+
+        /* ---------- выбор окружения Claude CLI ---------- */
+
+        .picker {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .picker__item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid #2e3138;
+            border-radius: 10px;
+            background: #16181c;
+            font: inherit;
+            font-size: 0.88rem;
+            color: #e9e9ec;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .picker__item:hover { background: #22252b; border-color: #3b6ea8; }
+
+        .picker__item:focus-visible {
+            outline: 2px solid #6ea8fe;
+            outline-offset: 2px;
+        }
+
+        .picker__version {
+            font-size: 0.76rem;
+            color: #8b909a;
+        }
+
+        .provider__error {
+            margin-top: 8px;
+            font-size: 0.78rem;
+            color: #ff9a9d;
+        }
+
+        /* ---------- сообщения чата ---------- */
+
+        .chat__list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            width: 100%;
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 8px 0 16px;
+        }
+
+        .chat__empty {
+            margin: auto;
+            font-size: 0.85rem;
+            color: #6a6f78;
+        }
+
+        .chat__message {
+            max-width: 80%;
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 0.88rem;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .chat__message--user {
+            align-self: flex-end;
+            background: #2b4d78;
+            color: #f2f2f4;
+        }
+
+        .chat__message--assistant {
+            align-self: flex-start;
+            border: 1px solid #2e3138;
+            background: #1a1c21;
+        }
+
+        /* ответ ассистента рендерится как HTML (см. renderMarkdown), поэтому
+           переносы строк расставляют сами блочные элементы, а не CSS pre-wrap */
+        .chat__message--assistant p,
+        .chat__message--assistant ul,
+        .chat__message--assistant ol {
+            margin: 0 0 8px;
+        }
+
+        .chat__message--assistant p:last-child,
+        .chat__message--assistant ul:last-child,
+        .chat__message--assistant ol:last-child {
+            margin-bottom: 0;
+        }
+
+        .chat__message--assistant ul,
+        .chat__message--assistant ol {
+            padding-left: 1.3em;
+        }
+
+        .chat__message--assistant li {
+            margin: 2px 0;
+        }
+
+        .chat__message--assistant h1,
+        .chat__message--assistant h2,
+        .chat__message--assistant h3,
+        .chat__message--assistant h4,
+        .chat__message--assistant h5,
+        .chat__message--assistant h6 {
+            margin: 10px 0 6px;
+            font-size: 1em;
+            font-weight: 600;
+        }
+
+        .chat__message--assistant :first-child {
+            margin-top: 0;
+        }
+
+        .chat__message--assistant pre {
+            margin: 6px 0;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: #101114;
+            overflow-x: auto;
+            white-space: pre;
+        }
+
+        .chat__message--assistant code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.85em;
+        }
+
+        .chat__message--assistant :not(pre) > code {
+            padding: 1px 5px;
+            border-radius: 4px;
+            background: #26292f;
+        }
+
+        .chat__message--assistant a {
+            color: #6ea8fe;
+        }
+
+        .chat__message--error {
+            align-self: flex-start;
+            border: 1px solid #4a2427;
+            background: #241a1b;
+            color: #f0c8ca;
+        }
+
+        .chat__message--pending { color: #8b909a; }
+
+        .chat__typing {
+            display: inline-flex;
+            gap: 3px;
+        }
+
+        .chat__typing span {
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: chat__typing-blink 1.4s infinite ease-in-out both;
+        }
+
+        .chat__typing span:nth-child(2) { animation-delay: 0.2s; }
+        .chat__typing span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes chat__typing-blink {
+            0%, 80%, 100% { opacity: 0.25; }
+            40% { opacity: 1; }
+        }
+
+        .chat__message--tool {
+            align-self: flex-start;
+            border: 1px solid #2e3138;
+            background: transparent;
+            color: #6a6f78;
+            font-size: 0.8rem;
+            padding: 6px 14px;
+        }
+
+        /* ---------- список сессий ---------- */
+
+        .chat__sessions {
+            overflow-y: hidden;
+        }
+
+        .session-new {
+            margin-bottom: 10px;
+            padding: 8px 12px;
+            border: 1px solid #2e3138;
+            border-radius: 7px;
+            background: #22252b;
+            font: inherit;
+            font-size: 0.82rem;
+            color: #e9e9ec;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .session-new:hover { background: #2a2e35; }
+
+        .session-new:focus-visible,
+        .session-item:focus-visible {
+            outline: 2px solid #6ea8fe;
+            outline-offset: 2px;
+        }
+
+        .session-list {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+        }
+
+        .session-item {
+            position: relative;
+            display: block;
+            width: 100%;
+            padding: 8px 10px;
+            border: 0;
+            border-radius: 7px;
+            background: none;
+            font: inherit;
+            color: #c3c7ce;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .session-item--running::after {
+            content: '';
+            position: absolute;
+            right: 6px;
+            bottom: 6px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #f5a623;
+            animation: session-item-pulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes session-item-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.25; }
+        }
+
+        .session-item:hover { background: #22252b; }
+
+        /* мусорка в правом верхнем углу строки: видна при наведении и с клавиатуры.
+           прячем прозрачностью, а не display, иначе кнопка выпадает из tab-порядка */
+        .session-row { position: relative; }
+
+        .session-delete {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            display: flex;
+            padding: 3px;
+            border: 0;
+            border-radius: 5px;
+            background: none;
+            color: #8b9099;
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.12s ease;
+        }
+
+        .session-row:hover .session-delete,
+        .session-delete:focus-visible { opacity: 1; }
+
+        .session-delete:hover { background: #4a2c2c; color: #f2b8b8; }
+
+        .session-delete:focus-visible {
+            outline: 2px solid #6ea8fe;
+            outline-offset: 1px;
+        }
+
+        .session-item[aria-current="true"] {
+            background: #2b4d78;
+            color: #f2f2f4;
+        }
+
+        .session-item__title {
+            padding-right: 18px; /* место под мусорку */
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            font-size: 0.82rem;
+            line-height: 1.35;
+        }
+
+        .session-item__meta {
+            margin-top: 3px;
+            font-size: 0.7rem;
+            color: #7c818b;
+        }
+
+        .session-item[aria-current="true"] .session-item__meta { color: #b9cbe2; }
+
+        .session-empty {
+            padding: 8px 10px;
+            font-size: 0.78rem;
+            color: #6a6f78;
+        }
+
+        .session-item--placeholder .session-item__title { font-style: italic; }
+
+        .session-reset {
+            margin-top: 10px;
+            padding: 8px 12px;
+            border: 1px solid #4a2c2c;
+            border-radius: 7px;
+            background: #22252b;
+            font: inherit;
+            font-size: 0.82rem;
+            color: #e08787;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .session-reset:hover { background: #2e2223; }
+
+        .session-reset:focus-visible {
+            outline: 2px solid #6ea8fe;
+            outline-offset: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <div class="toolbar" role="toolbar" aria-label="Действия">
+            <button type="button" class="icon-button" id="graphButton" data-view="graph" aria-pressed="false" aria-label="Graph" title="Graph">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="6" cy="6" r="2.5"></circle>
+                    <circle cx="18" cy="6" r="2.5"></circle>
+                    <circle cx="12" cy="18" r="2.5"></circle>
+                    <path d="M8 7.5 16 7.5M7.2 8.2 11 16M16.8 8.2 13 16"></path>
+                </svg>
+            </button>
+            <button type="button" class="icon-button" id="flowButton" data-view="flow" aria-pressed="false" aria-label="Flow" title="Flow">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="3" width="7" height="6" rx="1.5"></rect>
+                    <rect x="14" y="15" width="7" height="6" rx="1.5"></rect>
+                    <path d="M6.5 9v6a3 3 0 0 0 3 3H14"></path>
+                </svg>
+            </button>
+            <button type="button" class="icon-button" id="kanbanButton" data-view="kanban" aria-pressed="false" aria-label="Kanban" title="Kanban">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="5" height="16" rx="1.5"></rect>
+                    <rect x="9.5" y="4" width="5" height="11" rx="1.5"></rect>
+                    <rect x="16" y="4" width="5" height="14" rx="1.5"></rect>
+                </svg>
+            </button>
+            <button type="button" class="icon-button" id="chatButton" data-view="chat" aria-pressed="false" aria-label="Telegram" title="Telegram">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-5.5A8 8 0 0 1 11 4h2a8 8 0 0 1 8 8z"></path>
+                </svg>
+            </button>
+            <button type="button" class="icon-button" id="homeButton" data-view="home" aria-pressed="true" aria-label="Home" title="Home">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 10.5 12 3l9 7.5"></path>
+                    <path d="M5.5 9.5V21h13V9.5"></path>
+                </svg>
+            </button>
+        </div>
+
+        <div class="settings" id="settings">
+            <button
+                type="button"
+                class="icon-button settings__button"
+                id="settingsButton"
+                aria-haspopup="true"
+                aria-expanded="false"
+                aria-controls="settingsMenu"
+                aria-label="Настройки"
+                title="Настройки"
+            >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+            </button>
+
+            <ul class="settings__menu" id="settingsMenu" role="menu" aria-labelledby="settingsButton" hidden>
+                <li role="none"><button type="button" class="settings__item" role="menuitem">Edit</button></li>
+                <li role="none"><button type="button" class="settings__item" role="menuitem">Заглушка_2</button></li>
+                <li role="none"><button type="button" class="settings__item" role="menuitem">Заглушка_2</button></li>
+                <li role="none"><div class="settings__separator"></div></li>
+                <li role="none"><button type="button" class="settings__item" role="menuitem">Settings</button></li>
+            </ul>
+        </div>
+    </div>
+
+    <main class="view view--home" id="defaultView">
+        <div class="dashboard">
+            <div class="stat-tile">
+                <span class="stat-tile__value" id="runningCount">0</span>
+                <span class="stat-tile__label">сессий сейчас работает</span>
+            </div>
+            <div class="stat-tile">
+                <span class="stat-tile__value" id="totalCount">0</span>
+                <span class="stat-tile__label">сессий всего</span>
+            </div>
+            <div class="stat-tile">
+                <span class="stat-tile__value" id="queuedCount">0</span>
+                <span class="stat-tile__label">в очереди</span>
+            </div>
+        </div>
+
+        <div class="observation">
+            <section class="obs-card">
+                <h2 class="obs-card__title">Активность</h2>
+                <ul class="obs-card__stats">
+                    <li><span>Сообщений всего</span><strong id="obsMessages">0</strong></li>
+                    <li><span>Сессий за 24 часа</span><strong id="obsToday">0</strong></li>
+                    <li><span>Последняя активность</span><strong id="obsLastActive">—</strong></li>
+                </ul>
+            </section>
+
+            <section class="obs-card">
+                <h2 class="obs-card__title">Providers</h2>
+                <div class="obs-connection">
+                    <p class="obs-connection__text obs-connection__text--off" id="obsConnectionText">Не подключено · подключите провайдера в настройках</p>
+                </div>
+            </section>
+
+            <section class="obs-card">
+                <h2 class="obs-card__title">Активные сессии</h2>
+                <ul class="obs-list" id="obsRunningList">
+                    <li class="obs-list__empty">Сейчас ничего не выполняется</li>
+                </ul>
+            </section>
+
+            <section class="obs-card">
+                <h2 class="obs-card__title">Последние сессии</h2>
+                <ul class="obs-list" id="obsRecentList">
+                    <li class="obs-list__empty">Сессий пока нет</li>
+                </ul>
+            </section>
+        </div>
+    </main>
+
+    <main class="view view--graph" id="graphView" hidden>
+        <iframe class="graph-frame" id="graphFrame" title="Граф проекта" data-src="graphify-out/graph.html"></iframe>
+        <div class="graph-empty" id="graphEmpty" hidden>
+            <p class="graph-empty__title">Граф ещё не собран</p>
+            <p class="graph-empty__hint">Соберите его командой <code>graphify update .</code> в каталоге проекта и откройте вкладку снова.</p>
+        </div>
+    </main>
+
+    <div class="hover-frame" id="hoverFrame" hidden></div>
+
+    <div class="comment-popover" id="commentPopover" role="dialog" aria-modal="false" aria-label="Комментарий к элементу" hidden>
+        <div class="comment-popover__target" id="commentTarget"></div>
+        <textarea class="comment-popover__field" id="commentField" placeholder="Комментарий к элементу..."></textarea>
+        <div class="comment-popover__actions">
+            <button type="button" class="comment-popover__button" id="commentCancel">Отмена</button>
+            <button type="button" class="comment-popover__button comment-popover__button--primary" id="commentSave">Сохранить</button>
+        </div>
+    </div>
+
+    <div class="view view--side" id="flowView" hidden>
+        <nav class="side-nav" id="flowNav" aria-label="Flows">
+            <h2 class="side-nav__title">Flows</h2>
+
+        </nav>
+
+        <div class="view__content">
+            <h1>Flows</h1>
+        </div>
+    </div>
+
+    <div class="view view--board" id="kanbanView" hidden>
+        <div class="board" id="board"></div>
+    </div>
+
+    <div class="view view--chat" id="chatView" hidden>
+        <div class="topbar topbar--left">
+            <div class="toolbar">
+                <button type="button" class="icon-button" id="sessionsToggle" aria-pressed="true" aria-expanded="true" aria-controls="sessionsPanel" aria-label="Sessions" title="Sessions">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+                        <path d="M9 4v16"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <nav class="side-nav chat__sessions" id="sessionsPanel" aria-label="Sessions">
+            <h2 class="side-nav__title">Sessions</h2>
+            <button type="button" class="session-new" id="sessionNew">+ New</button>
+            <ul class="session-list" id="sessionList"></ul>
+            <button type="button" class="session-reset" id="sessionReset">Обнулить базу сессий</button>
+        </nav>
+
+        <div class="chat__main">
+        <div class="chat__session-bar" id="chatSessionBar" hidden>
+            <span class="chat__session-id" id="chatSessionIdText">—</span>
+            <button type="button" class="chat__session-copy" id="chatSessionCopy" title="Скопировать id сессии">Copy</button>
+        </div>
+        <div class="chat__messages" id="chatMessages">
+            <p class="chat__empty" id="chatEmpty">Пока нет сообщений</p>
+            <div class="chat__list" id="chatList"></div>
+        </div>
+
+        <form class="chat__composer" id="chatComposer">
+            <textarea class="chat__input" id="chatInput" rows="1" placeholder="Напишите сообщение..." aria-label="Сообщение"></textarea>
+            <div class="segmented" id="chatMode" role="radiogroup" aria-label="Режим отправки">
+                <span class="segmented__thumb" aria-hidden="true"></span>
+                <button type="button" class="segmented__option" role="radio" aria-checked="false" data-mode="Chat" tabindex="-1">Chat</button>
+                <button type="button" class="segmented__option" role="radio" aria-checked="true" data-mode="Action" tabindex="0">Action</button>
+            </div>
+            <button type="submit" class="chat__send">Send</button>
+        </form>
+        </div>
+    </div>
+
+    <div class="modal modal--top" id="pickerModal" hidden>
+        <div class="modal__backdrop" data-close-modal></div>
+        <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
+            <div class="modal__header">
+                <h2 class="modal__title" id="pickerTitle">Где запускать Claude CLI?</h2>
+                <button type="button" class="modal__close" data-close-modal aria-label="Закрыть">&times;</button>
+            </div>
+            <p class="modal__hint" id="pickerHint"></p>
+            <ul class="picker" id="pickerList"></ul>
+        </div>
+    </div>
+
+    <div class="modal" id="settingsModal" hidden>
+        <div class="modal__backdrop" data-close-modal></div>
+        <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+            <div class="modal__header">
+                <h2 class="modal__title" id="settingsModalTitle">Settings</h2>
+                <button type="button" class="modal__close" data-close-modal aria-label="Закрыть">&times;</button>
+            </div>
+            <p class="modal__hint">Подключите AI-провайдера, чтобы выбрать модель по умолчанию.</p>
+            <ul class="provider-list" id="providerList"></ul>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            const root = document.getElementById('settings');
+            const button = document.getElementById('settingsButton');
+            const menu = document.getElementById('settingsMenu');
+
+            function open() {
+                menu.hidden = false;
+                button.setAttribute('aria-expanded', 'true');
+            }
+
+            function close() {
+                menu.hidden = true;
+                button.setAttribute('aria-expanded', 'false');
+            }
+
+            button.addEventListener('click', () => {
+                menu.hidden ? open() : close();
+            });
+
+            // клик вне меню закрывает его
+            document.addEventListener('click', (e) => {
+                if (!root.contains(e.target)) close();
+            });
+
+            // Escape закрывает и возвращает фокус на кнопку
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && !menu.hidden) {
+                    close();
+                    button.focus();
+                }
+            });
+
+            menu.addEventListener('click', (e) => {
+                const item = e.target.closest('.settings__item');
+                if (!item) return;
+                const label = item.textContent.trim();
+
+                // меню не закрываем: Edit включает и выключает режим прямо из него
+                if (label === 'Edit') {
+                    editMode ? exitEditMode() : enterEditMode();
+                    return;
+                }
+
+                close();
+
+                if (label === 'Settings') openSettings();
+                else console.log('Выбрано:', label);
+            });
+
+
+            // ---------- режим комментариев ----------
+
+            const frame = document.getElementById('hoverFrame');
+            const popover = document.getElementById('commentPopover');
+            const popoverTarget = document.getElementById('commentTarget');
+            const field = document.getElementById('commentField');
+
+            // исключаем только собственный слой режима — рамку и окно комментария.
+            // всё остальное на странице комментируется, включая меню настроек
+            const OWN_UI = '.hover-frame, .comment-popover';
+
+            // отступы окна комментария от элемента и от края экрана
+            const POPOVER_GAP = 10;
+            const VIEWPORT_EDGE_MARGIN = 8;
+
+            let editMode = false;
+            let picked = null;
+
+            function describe(el) {
+                const id = el.id ? '#' + el.id : '';
+                const cls = typeof el.className === 'string' && el.className
+                    ? '.' + el.className.trim().split(/\s+/).join('.')
+                    : '';
+                return el.tagName.toLowerCase() + id + cls;
+            }
+
+            // клик по иконке попадает в <path> внутри <svg> — поднимаемся до элемента,
+            // который имеет смысл комментировать (саму кнопку)
+            function resolve(el) {
+                if (el instanceof SVGElement) {
+                    const svg = el.closest('svg');
+                    return (svg && svg.parentElement) || svg || el;
+                }
+                return el;
+            }
+
+            function isTargetable(el) {
+                return el && el.nodeType === 1 && !el.closest(OWN_UI);
+            }
+
+            // elementFromPoint отдаёт только верхний элемент, поэтому контейнер,
+            // целиком закрытый детьми (колонка канбана, форма композера, сам view),
+            // иначе недостижим. Колесо мыши поднимает рамку по цепочке предков.
+            function lift(el, depth) {
+                let cur = el;
+                for (let i = 0; i < depth; i++) {
+                    const parent = cur.parentElement;
+                    if (!parent || parent === document.body) break;
+                    cur = parent;
+                }
+                return cur;
+            }
+
+            function drawFrame(el) {
+                const r = el.getBoundingClientRect();
+                frame.style.top = r.top + 'px';
+                frame.style.left = r.left + 'px';
+                frame.style.width = r.width + 'px';
+                frame.style.height = r.height + 'px';
+                frame.hidden = false;
+            }
+
+            function placePopover(el) {
+                const r = el.getBoundingClientRect();
+                const box = popover.getBoundingClientRect();
+
+                // под элементом, если снизу есть место, иначе над ним
+                let top = r.bottom + POPOVER_GAP;
+                if (top + box.height > window.innerHeight - VIEWPORT_EDGE_MARGIN) {
+                    top = Math.max(VIEWPORT_EDGE_MARGIN, r.top - box.height - POPOVER_GAP);
+                }
+
+                // по левому краю элемента, но не вылезая за экран
+                let left = r.left;
+                left = Math.min(left, window.innerWidth - box.width - VIEWPORT_EDGE_MARGIN);
+                left = Math.max(VIEWPORT_EDGE_MARGIN, left);
+
+                popover.style.top = top + 'px';
+                popover.style.left = left + 'px';
+            }
+
+            function openPopover(el) {
+                picked = el;
+                frame.classList.add('hover-frame--picked');
+                drawFrame(el);
+                popoverTarget.textContent = describe(el);
+                field.value = '';
+                popover.hidden = false;
+                placePopover(el);
+                field.focus();
+            }
+
+            function closePopover() {
+                popover.hidden = true;
+                picked = null;
+                hoverBase = null;
+                hoverDepth = 0;
+                frame.classList.remove('hover-frame--picked');
+                frame.hidden = true;
+            }
+
+            function syncEditItem() {
+                const item = [...menu.querySelectorAll('.settings__item')]
+                    .find((el) => el.textContent.trim() === 'Edit');
+                if (!item) return;
+                item.classList.toggle('settings__item--active', editMode);
+                item.setAttribute('aria-pressed', String(editMode));
+            }
+
+            function enterEditMode() {
+                editMode = true;
+                document.body.classList.add('edit-mode');
+                syncEditItem();
+                if (rafId === null) track();
+            }
+
+            function exitEditMode() {
+                editMode = false;
+                document.body.classList.remove('edit-mode');
+                closePopover();
+                syncEditItem();
+                if (rafId !== null) {
+                    cancelAnimationFrame(rafId);
+                    rafId = null;
+                }
+            }
+
+            // запоминаем позицию курсора и каждый кадр смотрим, что под ней находится.
+            // так подхватываются любые элементы, в том числе появившиеся после загрузки
+            // или возникшие под неподвижным курсором, а рамка следует за движущимся элементом
+            let cursorX = -1;
+            let cursorY = -1;
+            let rafId = null;
+            let hoverBase = null;   // элемент под курсором до подъёма
+            let hovered = null;     // элемент, который сейчас в рамке
+            let hoverDepth = 0;     // сколько уровней подняли колесом
+
+            document.addEventListener('pointermove', (e) => {
+                cursorX = e.clientX;
+                cursorY = e.clientY;
+            }, true);
+
+            function track() {
+                rafId = requestAnimationFrame(track);
+                if (!editMode) return;
+
+                if (picked) {
+                    drawFrame(picked);
+                    placePopover(picked);
+                    return;
+                }
+
+                if (cursorX < 0) return;
+
+                const base = resolve(document.elementFromPoint(cursorX, cursorY));
+                if (!isTargetable(base)) {
+                    frame.hidden = true;
+                    hovered = null;
+                    return;
+                }
+
+                // сменился элемент под курсором — подъём начинаем заново
+                if (base !== hoverBase) {
+                    hoverBase = base;
+                    hoverDepth = 0;
+                }
+
+                hovered = lift(base, hoverDepth);
+                drawFrame(hovered);
+            }
+
+            // колесо вверх — к родителю, вниз — обратно к элементу под курсором;
+            // прокрутка страницы в режиме Edit при этом не нужна
+            document.addEventListener('wheel', (e) => {
+                if (!editMode || picked) return;
+                e.preventDefault();
+                hoverDepth = Math.max(0, hoverDepth + (e.deltaY < 0 ? 1 : -1));
+            }, { capture: true, passive: false });
+
+            // перехватываем клик до обычных обработчиков страницы
+            let clickSeen = false;
+            document.addEventListener('click', (e) => {
+                clickSeen = true;
+                if (!editMode) return;
+                // проверяем именно цель клика: по кнопкам окна комментария
+                // режим не должен срабатывать, иначе они перестают нажиматься
+                if (!isTargetable(resolve(e.target))) return;
+                const el = hovered || resolve(e.target);
+
+                e.preventDefault();
+                e.stopPropagation();
+                openPopover(el);
+            }, true);
+
+            // клик по нативному скроллбару браузер не превращает в событие click,
+            // поэтому такой элемент нельзя было выбрать наведением на его скролл —
+            // ловим это через pointerup и достраиваем выбор, если click не пришёл следом
+            document.addEventListener('pointerup', (e) => {
+                if (!editMode || e.button !== 0) return;
+                if (!isTargetable(resolve(e.target))) return;
+                const el = hovered || resolve(e.target);
+                e.preventDefault();
+                e.stopPropagation();
+                clickSeen = false;
+                setTimeout(() => {
+                    if (!clickSeen) openPopover(el);
+                }, 0);
+            }, true);
+
+            // Esc выключает режим и закрывает открытое окно комментария;
+            // меню закрывает обработчик выше, поэтому одного нажатия хватает на всё
+            document.addEventListener('keydown', (e) => {
+                if (e.key !== 'Escape' || !editMode) return;
+                exitEditMode();
+            });
+
+            // в поле комментария те же правила: Enter — новая строка, Ctrl+Enter — отправка
+            field.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    commentSave.click();
+                }
+            });
+
+            document.getElementById('commentCancel').addEventListener('click', closePopover);
+
+            // из комментария собираем вопрос: что за элемент и что о нём написал пользователь
+            function buildCommentPrompt(el, comment) {
+                // у контейнеров в textContent лежит всё их содержимое — такой «текст элемента»
+                // только зашумляет вопрос, поэтому берём его лишь у коротких элементов
+                const text = (el.textContent || '').trim().replace(/\s+/g, ' ');
+                const lines = [`Элемент интерфейса: ${describe(el)}`];
+                if (text && text.length <= 120) lines.push(`Текст элемента: ${text}`);
+                lines.push(`Комментарий: ${comment}`);
+                return lines.join('\n');
+            }
+
+            const commentSave = document.getElementById('commentSave');
+
+            commentSave.addEventListener('click', () => {
+                const comment = field.value.trim();
+                if (!comment || !picked) return;
+
+                const prompt = buildCommentPrompt(picked, comment);
+                exitEditMode(); // закрывает окно комментария и снимает рамку
+                startCommentSession(prompt);
+            });
+
+            // ---------- модальное окно Settings ----------
+
+            // списки моделей — заготовка под реальные данные провайдеров
+            const PROVIDERS = [
+                {
+                    id: 'claude',
+                    name: 'Claude',
+                    note: 'Anthropic',
+                    models: ['claude-opus-5', 'claude-sonnet-5', 'claude-fable-5', 'claude-haiku-4-5'],
+                    defaultModel: 'claude-sonnet-5',
+                    efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+                    defaultEffort: 'medium',
+                },
+                {
+                    id: 'codex',
+                    name: 'Codex',
+                    note: 'OpenAI',
+                    models: ['gpt-5-codex', 'gpt-5', 'gpt-5-mini', 'o4-mini'],
+                    defaultModel: 'gpt-5-codex',
+                },
+                {
+                    id: 'opencode',
+                    name: 'OpenCode',
+                    note: 'локальные и сторонние модели',
+                    models: ['qwen3-coder', 'kimi-k2', 'glm-4.6', 'deepseek-v3'],
+                    defaultModel: 'qwen3-coder',
+                },
+            ];
+
+            // подключение переживает перезагрузку страницы: id окружения, модель и
+            // сессию CLI держим в localStorage, само окружение восстанавливаем на сервере
+            const STORE_KEY = 'noname.claude';
+
+            function saveClaudeState() {
+                const state = connections.get('claude');
+                try {
+                    if (!state) localStorage.removeItem(STORE_KEY);
+                    else localStorage.setItem(STORE_KEY, JSON.stringify({ ...state, sessionId: chatSessionId }));
+                } catch {
+                    // приватный режим или запрет на хранилище — работаем без сохранения
+                }
+            }
+
+            function loadClaudeState() {
+                try {
+                    return JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+                } catch {
+                    return null;
+                }
+            }
+
+            const connections = new Map();
+
+            const chatSessionBar = document.getElementById('chatSessionBar');
+            const chatSessionIdText = document.getElementById('chatSessionIdText');
+            const chatSessionCopyBtn = document.getElementById('chatSessionCopy');
+
+            function setChatSessionId(id) {
+                chatSessionId = id;
+                chatSessionIdText.textContent = id || '—';
+                chatSessionBar.hidden = !id;
+                syncComposerBusy();
+            }
+
+            chatSessionCopyBtn.addEventListener('click', () => {
+                if (chatSessionId) navigator.clipboard.writeText(chatSessionId);
+            });
+
+            const modal = document.getElementById('settingsModal');
+            const providerList = document.getElementById('providerList');
+
+            function renderProviders() {
+                providerList.innerHTML = '';
+
+                for (const provider of PROVIDERS) {
+                    const state = connections.get(provider.id);
+
+                    const item = document.createElement('li');
+                    item.className = 'provider';
+
+                    const row = document.createElement('div');
+                    row.className = 'provider__row';
+                    row.innerHTML = `
+                        <div>
+                            <div class="provider__name">${provider.name}</div>
+                            <div class="provider__note">${provider.note}</div>
+                        </div>
+                        <div class="provider__actions">
+                            ${state ? `<span class="provider__status">${state.note || 'Подключено'}</span>` : ''}
+                            <button type="button"
+                                    class="provider__button ${state ? '' : 'provider__button--connect'}"
+                                    data-provider="${provider.id}">
+                                ${state ? 'Отключить' : 'Подключить'}
+                            </button>
+                        </div>
+                    `;
+                    item.append(row);
+
+                    // выбор модели показываем только у подключённого провайдера
+                    if (state) {
+                        const modelRow = document.createElement('div');
+                        modelRow.className = 'provider__model';
+
+                        const label = document.createElement('span');
+                        label.className = 'provider__model-label';
+                        label.textContent = 'Модель:';
+
+                        const select = document.createElement('select');
+                        select.className = 'provider__select';
+                        select.dataset.providerSelect = provider.id;
+                        select.setAttribute('aria-label', `Модель для ${provider.name}`);
+
+                        for (const model of provider.models) {
+                            const option = document.createElement('option');
+                            option.value = model;
+                            option.textContent = model === provider.defaultModel
+                                ? `${model} (по умолчанию)`
+                                : model;
+                            option.selected = model === state.model;
+                            select.append(option);
+                        }
+
+                        modelRow.append(label, select);
+
+                        // effort пока умеет только Claude CLI (--effort)
+                        if (provider.efforts) {
+                            const effortSelect = document.createElement('select');
+                            effortSelect.className = 'provider__select provider__select--effort';
+                            effortSelect.dataset.providerEffortSelect = provider.id;
+                            effortSelect.setAttribute('aria-label', `Effort для ${provider.name}`);
+
+                            for (const effort of provider.efforts) {
+                                const option = document.createElement('option');
+                                option.value = effort;
+                                option.textContent = effort === provider.defaultEffort
+                                    ? `${effort} (по умолчанию)`
+                                    : effort;
+                                option.selected = effort === (state.effort || provider.defaultEffort);
+                                effortSelect.append(option);
+                            }
+
+                            modelRow.append(effortSelect);
+                        }
+
+                        item.append(modelRow);
+                    }
+
+                    providerList.append(item);
+                }
+
+                renderObsConnection();
+            }
+
+            const pickerModal = document.getElementById('pickerModal');
+
+            function openModal(el) {
+                el.hidden = false;
+                el.querySelector('.modal__close').focus();
+            }
+
+            function closeModal(el) {
+                el.hidden = true;
+                if (el === modal) button.focus();
+            }
+
+            function openSettings() {
+                renderProviders();
+                openModal(modal);
+            }
+
+            const pickerList = document.getElementById('pickerList');
+            const pickerHint = document.getElementById('pickerHint');
+
+            async function api(path, body) {
+                const res = await fetch(path, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body || {}),
+                });
+                return res.json();
+            }
+
+            function showProviderError(id, message) {
+                const row = providerList.querySelector(`[data-provider="${id}"]`)?.closest('.provider');
+                if (!row) return;
+                const error = document.createElement('div');
+                error.className = 'provider__error';
+                error.textContent = message;
+                row.append(error);
+            }
+
+            async function connectClaude(install) {
+                const result = await api('/api/claude/connect', { id: install.id });
+                if (!result.ok) {
+                    showProviderError('claude', result.error);
+                    return;
+                }
+
+                const provider = PROVIDERS.find((p) => p.id === 'claude');
+                connections.set('claude', {
+                    installId: result.id,
+                    label: result.label,
+                    version: result.version,
+                    model: connections.get('claude')?.model || provider.defaultModel,
+                    effort: connections.get('claude')?.effort || provider.defaultEffort,
+                    note: `${result.label} · CLI ${result.version}`,
+                });
+                saveClaudeState();
+                renderProviders();
+            }
+
+            // окно выбора открывается, только когда найдено больше одного окружения
+            function pickInstall(installs) {
+                pickerHint.textContent = 'CLI найден в нескольких окружениях — выберите, какое использовать.';
+                pickerList.innerHTML = '';
+
+                for (const install of installs) {
+                    const item = document.createElement('li');
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'picker__item';
+                    btn.innerHTML = `<span>${install.label}</span><span class="picker__version">CLI ${install.version}</span>`;
+                    btn.addEventListener('click', () => {
+                        closeModal(pickerModal);
+                        connectClaude(install);
+                    });
+                    item.append(btn);
+                    pickerList.append(item);
+                }
+
+                openModal(pickerModal);
+            }
+
+            function showNotFound() {
+                pickerHint.textContent = 'Claude CLI не найден ни в Windows, ни в WSL. Установите его или укажите путь через переменную CLAUDE_BIN при запуске сервера.';
+                pickerList.innerHTML = '';
+                openModal(pickerModal);
+            }
+
+            providerList.addEventListener('click', async (e) => {
+                const btn = e.target.closest('[data-provider]');
+                if (!btn) return;
+
+                const id = btn.dataset.provider;
+
+                if (connections.has(id)) {
+                    connections.delete(id);
+                    if (id === 'claude') {
+                        setChatSessionId(null);
+                        saveClaudeState();
+                    }
+                    renderProviders();
+                    return;
+                }
+
+                // у Claude подключение настоящее: ищем CLI в обоих окружениях
+                if (id === 'claude') {
+                    btn.disabled = true;
+                    btn.textContent = 'Ищу Claude...';
+
+                    let installs = [];
+                    try {
+                        ({ installs = [] } = await api('/api/claude/detect'));
+                    } catch (err) {
+                        renderProviders();
+                        showProviderError(id, `Сервер недоступен: ${err.message}`);
+                        return;
+                    }
+
+                    renderProviders();
+
+                    if (installs.length === 0) showNotFound();
+                    else if (installs.length === 1) connectClaude(installs[0]);
+                    else pickInstall(installs);
+                    return;
+                }
+
+                // остальные провайдеры пока переключаются без реального подключения
+                const provider = PROVIDERS.find((p) => p.id === id);
+                connections.set(id, { model: provider.defaultModel });
+                renderProviders();
+            });
+
+            providerList.addEventListener('change', (e) => {
+                const select = e.target.closest('[data-provider-select]');
+                if (select) {
+                    connections.get(select.dataset.providerSelect).model = select.value;
+                    if (select.dataset.providerSelect === 'claude') saveClaudeState();
+                    return;
+                }
+
+                const effortSelect = e.target.closest('[data-provider-effort-select]');
+                if (!effortSelect) return;
+                connections.get(effortSelect.dataset.providerEffortSelect).effort = effortSelect.value;
+                if (effortSelect.dataset.providerEffortSelect === 'claude') saveClaudeState();
+            });
+
+            for (const el of [modal, pickerModal]) {
+                el.addEventListener('click', (e) => {
+                    if (e.target.closest('[data-close-modal]')) closeModal(el);
+                });
+            }
+
+            // Esc закрывает верхнее из открытых окон
+            document.addEventListener('keydown', (e) => {
+                if (e.key !== 'Escape') return;
+                if (!pickerModal.hidden) closeModal(pickerModal);
+                else if (!modal.hidden) closeModal(modal);
+            });
+
+            // ---------- переключение вида Session ----------
+
+            const VIEWS = {
+                home: document.getElementById('defaultView'),
+                graph: document.getElementById('graphView'),
+                flow: document.getElementById('flowView'),
+                kanban: document.getElementById('kanbanView'),
+                chat: document.getElementById('chatView'),
+            };
+
+            const graphFrame = document.getElementById('graphFrame');
+            const graphEmpty = document.getElementById('graphEmpty');
+
+            // граф отдаёт graphify; пока graphify-out/graph.html не собран, сервер
+            // ответит 404 и в iframe попадёт сырой текст ошибки — поэтому сначала
+            // проверяем файл и показываем заглушку, а грузим только при первом показе
+            async function showGraph() {
+                if (graphFrame.src) return;
+                let ok = false;
+                try {
+                    const res = await fetch(graphFrame.dataset.src, { method: 'HEAD' });
+                    ok = res.ok;
+                } catch {
+                    ok = false;
+                }
+                graphFrame.hidden = !ok;
+                graphEmpty.hidden = ok;
+                if (ok) graphFrame.src = graphFrame.dataset.src;
+            }
+
+            const BOARD_COLUMNS = ['New', 'In Progress', 'Checking', 'Validator', 'Done'];
+
+            // поле ввода растёт под текст, Enter отправляет, Shift+Enter переносит строку
+            const chatInput = document.getElementById('chatInput');
+
+            chatInput.addEventListener('input', () => {
+                chatInput.style.height = 'auto';
+                chatInput.style.height = chatInput.scrollHeight + 'px';
+                chatInput.style.overflowY = chatInput.scrollHeight > 160 ? 'auto' : 'hidden';
+            });
+
+            // Enter переносит строку, отправляет Ctrl+Enter (на Mac — Cmd+Enter)
+            chatInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    document.getElementById('chatComposer').requestSubmit();
+                }
+            });
+
+            // режим отправки: обе опции видны, активная помечена aria-checked
+            const chatMode = document.getElementById('chatMode');
+            const modeOptions = [...chatMode.querySelectorAll('.segmented__option')];
+
+            function setMode(mode) {
+                chatMode.dataset.active = mode;
+
+                for (const option of modeOptions) {
+                    const active = option.dataset.mode === mode;
+                    option.setAttribute('aria-checked', String(active));
+                    option.tabIndex = active ? 0 : -1;
+                }
+
+                chatInput.placeholder = mode === 'Action'
+                    ? 'Опишите действие...'
+                    : 'Напишите сообщение...';
+            }
+
+            chatMode.addEventListener('click', (e) => {
+                const option = e.target.closest('.segmented__option');
+                if (option) setMode(option.dataset.mode);
+            });
+
+            // стрелками переключаемся между опциями, как в обычной группе радиокнопок
+            chatMode.addEventListener('keydown', (e) => {
+                if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+                e.preventDefault();
+                const current = modeOptions.findIndex((o) => o.dataset.mode === chatMode.dataset.active);
+                const next = modeOptions[(current + (e.key === 'ArrowRight' ? 1 : -1) + modeOptions.length) % modeOptions.length];
+                setMode(next.dataset.mode);
+                next.focus();
+            });
+
+            setMode('Action');
+
+            // ---------- панель Sessions на странице Chat ----------
+
+            const sessionsToggle = document.getElementById('sessionsToggle');
+            const sessionsPanel = document.getElementById('sessionsPanel');
+
+            const sessionList = document.getElementById('sessionList');
+            const runningCountEl = document.getElementById('runningCount');
+
+            // ---------- панель наблюдения на вкладке Home ----------
+
+            const totalCountEl = document.getElementById('totalCount');
+            const queuedCountEl = document.getElementById('queuedCount');
+            const obsMessagesEl = document.getElementById('obsMessages');
+            const obsTodayEl = document.getElementById('obsToday');
+            const obsLastActiveEl = document.getElementById('obsLastActive');
+            const obsRunningList = document.getElementById('obsRunningList');
+            const obsRecentList = document.getElementById('obsRecentList');
+            const obsConnectionText = document.getElementById('obsConnectionText');
+
+            sessionsToggle.addEventListener('click', () => {
+                const open = sessionsPanel.hidden;
+                sessionsPanel.hidden = !open;
+                sessionsToggle.setAttribute('aria-pressed', String(open));
+                sessionsToggle.setAttribute('aria-expanded', String(open));
+            });
+
+            function formatWhen(iso) {
+                const date = new Date(iso);
+                if (Number.isNaN(date.getTime())) return '';
+
+                const minutes = Math.round((Date.now() - date) / 60000);
+                if (minutes < 1) return 'только что';
+                if (minutes < 60) return `${minutes} мин назад`;
+                if (minutes < 24 * 60) return `${Math.round(minutes / 60)} ч назад`;
+                return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+            }
+
+            // кнопка удаления поверх строки: вложить её в .session-item нельзя,
+            // кнопка внутри кнопки — невалидная разметка, поэтому она соседний элемент
+            function deleteButton(session) {
+                const del = document.createElement('button');
+                del.type = 'button';
+                del.className = 'session-delete';
+                del.dataset.deleteId = session.id;
+                del.title = 'Удалить сессию';
+                del.setAttribute('aria-label', `Удалить сессию: ${session.title}`);
+                del.innerHTML = `
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                `;
+                return del;
+            }
+
+            function renderSessions(sessions) {
+                sessionList.innerHTML = '';
+
+                if (sessions.length === 0) {
+                    const empty = document.createElement('li');
+                    empty.className = 'session-empty';
+                    empty.textContent = 'Сессий пока нет';
+                    sessionList.append(empty);
+                    return;
+                }
+
+                for (const session of sessions) {
+                    const item = document.createElement('li');
+                    item.className = 'session-row';
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'session-item';
+                    btn.dataset.sessionId = session.id;
+                    if (session.running) btn.dataset.running = '1'; // сервер ещё ведёт эту работу
+                    btn.setAttribute('aria-current', String(session.id === chatSessionId));
+                    btn.innerHTML = `
+                        <span class="session-item__title"></span>
+                        <span class="session-item__meta">${formatWhen(session.updatedAt)} · ${session.messageCount} сообщ.</span>
+                    `;
+                    btn.querySelector('.session-item__title').textContent = session.title;
+                    item.append(btn, deleteButton(session));
+                    sessionList.append(item);
+                }
+
+                applyRunningIndicator();
+                renderObservation(sessions);
+            }
+
+            // одна строка списка «Активные» / «Последние сессии» на Home
+            function obsListItem(session) {
+                const li = document.createElement('li');
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'obs-list__item';
+                btn.dataset.sessionId = session.id;
+                if (session.running) btn.dataset.running = '1';
+
+                const dot = document.createElement('span');
+                dot.className = 'obs-list__dot' + (session.running ? ' obs-list__dot--running' : '');
+
+                const title = document.createElement('span');
+                title.className = 'obs-list__title';
+                title.textContent = session.title;
+
+                const meta = document.createElement('span');
+                meta.className = 'obs-list__meta';
+                meta.textContent = session.running
+                    ? 'выполняется…'
+                    : `${formatWhen(session.updatedAt)} · ${session.messageCount} сообщ.`;
+
+                btn.append(dot, title, meta);
+                li.append(btn);
+                return li;
+            }
+
+            function renderObsList(el, sessions, emptyText) {
+                el.innerHTML = '';
+                if (sessions.length === 0) {
+                    const li = document.createElement('li');
+                    li.className = 'obs-list__empty';
+                    li.textContent = emptyText;
+                    el.append(li);
+                    return;
+                }
+                for (const session of sessions) el.append(obsListItem(session));
+            }
+
+            // сводка процессов проекта на Home: считается из того же списка сессий,
+            // что уже приходит с /api/sessions — отдельный запрос не нужен
+            function renderObservation(sessions) {
+                totalCountEl.textContent = sessions.length;
+                obsMessagesEl.textContent = sessions.reduce((sum, s) => sum + s.messageCount, 0);
+
+                const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+                obsTodayEl.textContent = sessions.filter((s) => new Date(s.updatedAt).getTime() >= dayAgo).length;
+                obsLastActiveEl.textContent = sessions[0] ? formatWhen(sessions[0].updatedAt) : '—';
+
+                renderObsList(obsRunningList, sessions.filter((s) => s.running), 'Сейчас ничего не выполняется');
+                renderObsList(obsRecentList, sessions.slice(0, 6), 'Сессий пока нет');
+            }
+
+            function renderObsConnection() {
+                const state = connections.get('claude');
+                if (state?.note) {
+                    obsConnectionText.textContent = `${state.note} · модель ${state.model}`;
+                    obsConnectionText.classList.remove('obs-connection__text--off');
+                } else {
+                    obsConnectionText.textContent = 'Не подключено · подключите провайдера в настройках';
+                    obsConnectionText.classList.add('obs-connection__text--off');
+                }
+            }
+
+            for (const list of [obsRunningList, obsRecentList]) {
+                list.addEventListener('click', (e) => {
+                    const btn = e.target.closest('.obs-list__item');
+                    if (!btn) return;
+                    showView('chat');
+                    openSession(btn.dataset.sessionId, btn.dataset.running === '1');
+                });
+            }
+
+            async function loadSessions() {
+                try {
+                    const { sessions = [], queued = 0 } = await api('/api/sessions');
+                    renderSessions(sessions);
+                    queuedCountEl.textContent = queued;
+                    return sessions;
+                } catch {
+                    renderSessions([]);
+                    return [];
+                }
+            }
+
+            // черновик новой сессии: показывается в списке сразу, до первого сообщения,
+            // и исчезает сам, когда список перерисуется с реальными данными с сервера
+            function insertSessionPlaceholder() {
+                sessionList.querySelector('.session-item--placeholder')?.closest('li').remove();
+                sessionList.querySelector('.session-empty')?.remove();
+
+                for (const btn of sessionList.querySelectorAll('.session-item')) {
+                    btn.setAttribute('aria-current', 'false');
+                }
+
+                const item = document.createElement('li');
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'session-item session-item--placeholder';
+                btn.setAttribute('aria-current', 'true');
+                btn.innerHTML = `
+                    <span class="session-item__title">New</span>
+                    <span class="session-item__meta">черновик</span>
+                `;
+                item.append(btn);
+                sessionList.prepend(item);
+                applyRunningIndicator();
+            }
+
+            // переключение на другую сессию: показываем её переписку и продолжаем её же
+            async function openSession(id, running = false) {
+                sessionList.querySelector('.session-item--placeholder')?.closest('li').remove();
+                setChatSessionId(id);
+                saveClaudeState();
+
+                chatRun += 1;
+                chatList.innerHTML = '';
+                chatEmpty.hidden = true;
+
+                const { messages = [] } = await api('/api/sessions/messages', { id });
+                for (const message of messages) {
+                    if (message.role === 'tool') addStep(message.text);
+                    else addMessage(message.text, message.role === 'user' ? 'user' : 'assistant');
+                }
+
+                if (messages.length === 0) chatEmpty.hidden = false;
+
+                for (const btn of sessionList.querySelectorAll('.session-item')) {
+                    btn.setAttribute('aria-current', String(btn.dataset.sessionId === id));
+                }
+
+                // работа ещё идёт (страницу перезагрузили посреди неё) — досматриваем вживую
+                if (running) {
+                    setRunningSessionId(id);
+                    attachSession(id, chatRun);
+                }
+            }
+
+            sessionList.addEventListener('click', (e) => {
+                const del = e.target.closest('.session-delete');
+                if (del) {
+                    removeSession(del.dataset.deleteId);
+                    return; // клик по мусорке не должен открывать сессию
+                }
+
+                const btn = e.target.closest('.session-item');
+                if (btn && btn.dataset.sessionId) {
+                    openSession(btn.dataset.sessionId, btn.classList.contains('session-item--running'));
+                }
+            });
+
+            // удаление сессии из базы. если удалили открытую — лента чистится,
+            // иначе следующий вопрос ушёл бы в --resume несуществующей сессии
+            async function removeSession(id) {
+                if (!id || !confirm('Удалить эту сессию из базы? Действие необратимо.')) return;
+
+                const { ok, error } = await api('/api/sessions/delete', { id });
+                if (!ok) {
+                    alert(error || 'Не удалось удалить сессию');
+                    await loadSessions();
+                    return;
+                }
+
+                if (id === chatSessionId) {
+                    setChatSessionId(null);
+                    saveClaudeState();
+                    chatRun += 1;
+                    chatList.innerHTML = '';
+                    chatEmpty.hidden = false;
+                }
+
+                await loadSessions();
+            }
+
+            // новая сессия: чистим ленту, следующий вопрос начнёт свою историю в CLI,
+            // а в списке сразу появляется черновик — реальная сессия придёт с сервера позже
+            document.getElementById('sessionNew').addEventListener('click', () => {
+                setChatSessionId(null);
+                saveClaudeState();
+                chatRun += 1;
+                chatList.innerHTML = '';
+                chatEmpty.hidden = false;
+                insertSessionPlaceholder();
+            });
+
+            // обнулить базу сессий: чистим список и текущую переписку
+            document.getElementById('sessionReset').addEventListener('click', async () => {
+                if (!confirm('Удалить все сессии из базы? Действие необратимо.')) return;
+
+                await api('/api/sessions/reset');
+                setChatSessionId(null);
+                saveClaudeState();
+                chatRun += 1;
+                chatList.innerHTML = '';
+                chatEmpty.hidden = false;
+                await loadSessions();
+            });
+
+            // ---------- лента сообщений ----------
+
+            const chatList = document.getElementById('chatList');
+            const chatEmpty = document.getElementById('chatEmpty');
+            const chatMessages = document.getElementById('chatMessages');
+            const chatSend = document.querySelector('.chat__send');
+
+            let chatSessionId = null; // CLI продолжает диалог по нему
+            let chatRun = 0; // номер текущего запроса: старый перестаёт писать в ленту
+
+            // индикатор «сессия ещё выполняется» в списке слева
+            const PENDING_SESSION_ID = '__pending__'; // запрос уже идёт, но id придёт позже
+            let runningSessionId = null;
+
+            function applyRunningIndicator() {
+                for (const btn of sessionList.querySelectorAll('.session-item')) {
+                    const id = btn.dataset.sessionId || (btn.classList.contains('session-item--placeholder') ? PENDING_SESSION_ID : null);
+                    const active = btn.dataset.running === '1' || (id !== null && id === runningSessionId);
+                    btn.classList.toggle('session-item--running', active);
+                }
+                runningCountEl.textContent = sessionList.querySelectorAll('.session-item--running').length;
+            }
+
+            function setRunningSessionId(id) {
+                runningSessionId = id;
+                applyRunningIndicator();
+                syncComposerBusy();
+            }
+
+            // Stop-кнопка нужна только той сессии, что сейчас реально выполняется —
+            // при переключении на другую сессию busy-состояние пересчитывается заново
+            function syncComposerBusy() {
+                const viewingId = chatSessionId || PENDING_SESSION_ID;
+                setComposerBusy(runningSessionId !== null && runningSessionId === viewingId);
+            }
+
+            // сервер держит выбранное окружение в памяти и теряет его при перезапуске,
+            // поэтому страница умеет восстановить подключение по сохранённому id
+            let reconnecting = null;
+
+            function restoreServerConnection() {
+                const state = connections.get('claude');
+                if (!state) return Promise.resolve(false);
+                if (!reconnecting) {
+                    reconnecting = api('/api/claude/connect', { id: state.installId })
+                        .then((r) => r.ok)
+                        .catch(() => false)
+                        .finally(() => { reconnecting = null; });
+                }
+                return reconnecting;
+            }
+
+            (async function restoreOnLoad() {
+                const saved = loadClaudeState();
+                if (saved?.installId) {
+                    connections.set('claude', saved);
+                    restoreServerConnection(); // сервер мог быть перезапущен — вернём ему окружение
+                }
+                renderObsConnection();
+
+                // список сессий готов сразу при загрузке страницы
+                const sessions = await loadSessions();
+
+                // страницу перезагрузили (например, dev-автообновление) посреди работы той же
+                // сессии, что была открыта — досматриваем её поток вживую, а не теряем индикатор.
+                // в остальных случаях переписку показываем только по явному выбору в левом меню
+                const resumed = saved?.sessionId && sessions.find((s) => s.id === saved.sessionId && s.running);
+                if (resumed) {
+                    showView('chat');
+                    await openSession(resumed.id, true);
+                } else {
+                    setChatSessionId(null);
+                    saveClaudeState();
+                }
+            })();
+
+            // список сессий (боковая панель на всех экранах + панель наблюдения на Home)
+            // обновляется сам, пока вкладка открыта
+            setInterval(loadSessions, 8000);
+
+            function escapeHtml(s) {
+                return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
+
+            // ответ ассистента приходит в markdown — рендерим его в HTML, чтобы списки
+            // и абзацы легли отдельными блоками, а не одной slitной строкой pre-wrap
+            function renderMarkdown(text) {
+                const codeBlocks = [];
+                // код прячем до разбора остального — звёздочки/решётки внутри не должны считаться разметкой
+                let src = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+                    codeBlocks.push(`<pre><code>${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`);
+                    return `⁣${codeBlocks.length - 1}⁣`;
+                });
+
+                src = escapeHtml(src);
+                src = src.replace(/`([^`]+)`/g, '<code>$1</code>');
+                src = src.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+                src = src.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
+                src = src.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+                const out = [];
+                let list = null; // 'ul' | 'ol' | null
+                let para = [];
+
+                const flushPara = () => {
+                    if (para.length) { out.push(`<p>${para.join('<br>')}</p>`); para = []; }
+                };
+                const closeList = () => {
+                    if (list) { out.push(`</${list}>`); list = null; }
+                };
+
+                for (const rawLine of src.split('\n')) {
+                    const line = rawLine.trim();
+                    const codeRef = line.match(/^⁣\d+⁣$/);
+                    const heading = line.match(/^(#{1,6})\s+(.*)/);
+                    const bullet = line.match(/^[-*]\s+(.*)/);
+                    const numbered = line.match(/^\d+[.)]\s+(.*)/);
+
+                    // пустая строка закрывает абзац, но не список — иначе список из пунктов,
+                    // разделённых пустыми строками, распадается на несколько <ol>, и нумерация
+                    // каждый раз начинается заново (1 1 1 вместо 1 2 3)
+                    if (!line) { flushPara(); continue; }
+
+                    if (codeRef) {
+                        // плейсхолдер код-блока — целый блок сам по себе, не абзац
+                        flushPara(); closeList();
+                        out.push(line);
+                    } else if (heading) {
+                        flushPara(); closeList();
+                        const level = heading[1].length;
+                        out.push(`<h${level}>${heading[2]}</h${level}>`);
+                    } else if (bullet) {
+                        flushPara();
+                        if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; }
+                        out.push(`<li>${bullet[1]}</li>`);
+                    } else if (numbered) {
+                        flushPara();
+                        if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; }
+                        out.push(`<li>${numbered[1]}</li>`);
+                    } else {
+                        closeList();
+                        para.push(line);
+                    }
+                }
+                flushPara();
+                closeList();
+
+                return out.join('').replace(/⁣(\d+)⁣/g, (_, i) => codeBlocks[i]);
+            }
+
+            // строка шага: что Claude сделал (Read index.html, Bash npm test)
+            function addStep(text, before) {
+                const step = document.createElement('div');
+                step.className = 'chat__message chat__message--tool';
+                step.textContent = text;
+                if (before && before.parentNode === chatList) chatList.insertBefore(step, before);
+                else chatList.append(step);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                return step;
+            }
+
+            function addMessage(text, kind) {
+                chatEmpty.hidden = true;
+
+                const message = document.createElement('div');
+                message.className = `chat__message chat__message--${kind}`;
+                if (kind === 'assistant' && text) message.innerHTML = renderMarkdown(text);
+                else message.textContent = text;
+                chatList.append(message);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                return message;
+            }
+
+            function setComposerBusy(busy) {
+                chatInput.disabled = busy;
+                chatSend.classList.toggle('chat__send--stop', busy);
+                chatSend.textContent = busy ? 'Stop' : 'Send';
+            }
+
+            // останавливает CLI-процесс на сервере; поток сам закроется событием error/done
+            function stopClaude() {
+                api('/api/claude/stop', { sessionId: chatSessionId });
+            }
+
+            document.getElementById('chatComposer').addEventListener('submit', (e) => {
+                e.preventDefault();
+
+                if (chatSend.classList.contains('chat__send--stop')) {
+                    stopClaude();
+                    return;
+                }
+
+                const text = chatInput.value.trim();
+                if (!text) return;
+
+                const mode = chatMode.dataset.active;
+
+                chatInput.value = '';
+                chatInput.style.height = 'auto';
+                chatInput.style.overflowY = 'hidden';
+                sendToClaude(text, mode);
+            });
+
+            // комментарий из режима Edit начинает отдельную сессию с этим вопросом
+            function startCommentSession(prompt) {
+                showView('chat');
+                setChatSessionId(null);
+                saveClaudeState();
+                chatRun += 1;
+                chatList.innerHTML = '';
+                for (const btn of sessionList.querySelectorAll('.session-item')) {
+                    btn.setAttribute('aria-current', 'false');
+                }
+                setMode('Action');
+                sendToClaude(prompt, 'Action');
+            }
+
+            // ответ приходит потоком NDJSON: по событию в строке
+            async function readNdjson(res, onEvent) {
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let tail = '';
+
+                for (;;) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    tail += decoder.decode(value, { stream: true });
+                    const lines = tail.split('\n');
+                    tail = lines.pop();
+
+                    for (const line of lines) {
+                        if (line.trim()) onEvent(JSON.parse(line));
+                    }
+                }
+            }
+
+            async function streamAsk(body, onEvent) {
+                const res = await fetch('/api/claude/ask', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                await readNdjson(res, onEvent);
+            }
+
+            // строка ожидания с тремя точками — она же показывает текущий шаг
+            function addPendingStatus() {
+                const status = addMessage('', 'assistant');
+                status.classList.add('chat__message--pending');
+                status.innerHTML = '<span class="chat__typing"><span></span><span></span><span></span></span>';
+                return status;
+            }
+
+            // отрисовка событий потока — одна и та же для своего запроса
+            // и для подключения к работе, которая уже идёт
+            function makeRenderer(status) {
+                let answered = false;
+
+                return (event) => {
+                    if (event.type === 'tool') {
+                        // каждое действие остаётся своей строкой в ленте, а не заменяет предыдущую
+                        addStep(`${event.name} ${event.detail}`.trim(), status);
+                    } else if (event.type === 'text') {
+                        answered = true;
+                        addMessage(event.text, 'assistant');
+                        chatList.append(status); // строка ожидания остаётся последней
+                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                    } else if (event.type === 'error') {
+                        addMessage(event.error, 'error');
+                    } else if (event.type === 'done') {
+                        if (!answered && event.text) addMessage(event.text, 'assistant');
+                        loadSessions(); // в списке обновилось число сообщений
+                    }
+                };
+            }
+
+            // сессия всё ещё выполняется (страницу перезагрузили посреди работы) —
+            // досматриваем её ленту вживую
+            async function attachSession(id, run) {
+                const res = await fetch('/api/sessions/attach', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id }),
+                });
+
+                // поток идёт с типом application/x-ndjson; обычный JSON означает,
+                // что работа уже закончилась и подключаться не к чему
+                if (!res.headers.get('content-type')?.includes('ndjson')) {
+                    setRunningSessionId(null);
+                    loadSessions();
+                    return;
+                }
+
+                const status = addPendingStatus();
+                setComposerBusy(true);
+                const render = makeRenderer(status);
+
+                // как и в sendToClaude: пока довоспроизводим чужой поток, автообновление подождёт,
+                // иначе очередной dev-reload оборвёт чтение раньше, чем страница успеет его показать
+                window.__holdReload?.(true);
+
+                try {
+                    await readNdjson(res, (event) => {
+                        if (run === chatRun) render(event);
+                    });
+                } finally {
+                    window.__holdReload?.(false);
+                    status.remove();
+                    setRunningSessionId(null);
+                    if (run === chatRun) setComposerBusy(false);
+                }
+            }
+
+            async function sendToClaude(text, mode = 'Action') {
+                const run = ++chatRun;
+                const claude = connections.get('claude');
+                if (!claude) {
+                    addMessage('Claude не подключён. Откройте Settings и нажмите «Подключить».', 'error');
+                    return;
+                }
+
+                addMessage(text, 'user');
+
+                const status = addPendingStatus();
+                setComposerBusy(true);
+                setRunningSessionId(chatSessionId || PENDING_SESSION_ID);
+
+                let notConnected = false;
+                const render = makeRenderer(status);
+
+                // Claude из чата правит файлы проекта — автообновление подождёт,
+                // иначе перезагрузка оборвёт чтение потока и ответ пропадёт
+                window.__holdReload?.(true);
+
+                const handle = (event) => {
+                    // ленту уже очистили под другую сессию — этот запрос дорабатывает
+                    // на сервере, но в чат больше не пишет
+                    if (run !== chatRun) return;
+
+                    if (event.type === 'queued') {
+                        // впереди работает другая сессия — ждём своей очереди
+                        status.textContent = `В очереди: впереди ${event.ahead}`;
+                        return;
+                    }
+
+                    if (event.type === 'session') {
+                        // очередь дошла до нас — возвращаем индикатор ожидания
+                        status.innerHTML = '<span class="chat__typing"><span></span><span></span><span></span></span>';
+
+                        // id известен сразу — сессия появляется в списке до ответа
+                        if (event.id !== chatSessionId) {
+                            setChatSessionId(event.id);
+                            saveClaudeState();
+                            setRunningSessionId(event.id);
+                            loadSessions();
+                        }
+                        return;
+                    }
+
+                    if (event.type === 'error' && event.error === 'Claude не подключён') {
+                        notConnected = true; // повторим после восстановления окружения
+                        return;
+                    }
+
+                    render(event);
+                };
+
+                const ask = () => streamAsk({
+                    prompt: text,
+                    model: claude.model,
+                    effort: claude.effort,
+                    sessionId: chatSessionId,
+                    mode,
+                }, handle);
+
+                try {
+                    await ask();
+
+                    // сервер перезапустился и забыл окружение — восстановим и повторим
+                    if (notConnected) {
+                        notConnected = false;
+                        const restored = await restoreServerConnection();
+                        if (restored) await ask();
+                        if (!restored || notConnected) {
+                            addMessage('Claude не подключён. Откройте Settings и подключите заново.', 'error');
+                        }
+                    }
+                } catch (err) {
+                    addMessage(`Не удалось получить ответ: ${err.message}`, 'error');
+                } finally {
+                    window.__holdReload?.(false);
+                    setRunningSessionId(null);
+                    status.remove();
+                    if (run === chatRun) {
+                        setComposerBusy(false);
+                        chatInput.focus();
+                    }
+                }
+            }
+
+            // меню Flows повторяет разделы доски
+            const flowNav = document.getElementById('flowNav');
+            for (const title of BOARD_COLUMNS) {
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'side-nav__item';
+                item.dataset.flow = title;
+                item.textContent = title;
+                flowNav.append(item);
+            }
+
+            // колонки доски пока пустые — карточки появятся вместе с логикой
+            const board = document.getElementById('board');
+            for (const title of BOARD_COLUMNS) {
+                const column = document.createElement('section');
+                column.className = 'board__column';
+                column.innerHTML = `
+                    <div class="board__header">
+                        <h2 class="board__title">${title}</h2>
+                        <span class="board__count">0</span>
+                    </div>
+                    <div class="board__body">Пока пусто</div>
+                `;
+                board.append(column);
+            }
+
+            const viewButtons = [...document.querySelectorAll('.toolbar [data-view]')];
+
+            // показываем один вид, активную кнопку панели помечаем через aria-pressed
+            function showView(name) {
+                for (const [key, view] of Object.entries(VIEWS)) {
+                    view.hidden = key !== name;
+                }
+                for (const btn of viewButtons) {
+                    btn.setAttribute('aria-pressed', String(btn.dataset.view === name));
+                }
+                // пока chatView скрыт, scrollHeight не считается — лента грузится
+                // ещё до открытия вкладки, поэтому довернуть скролл вниз при показе
+                if (name === 'chat') chatMessages.scrollTop = chatMessages.scrollHeight;
+                if (name === 'graph') showGraph();
+            }
+
+            for (const btn of viewButtons) {
+                btn.addEventListener('click', () => showView(btn.dataset.view));
+            }
+
+            // пункты боковых меню пока только сообщают о нажатии
+            for (const nav of document.querySelectorAll('.side-nav')) {
+                nav.addEventListener('click', (e) => {
+                    const item = e.target.closest('.side-nav__item');
+                    if (item) console.log('Раздел:', item.dataset.session || item.dataset.flow);
+                });
+            }
+        })();
+    </script>
+</body>
+</html>
