@@ -21,7 +21,6 @@ git push
 v0.0.1 - Mission Control with working Claude
 v0.0.2 - Mission Control with Grafiphy
 v0.0.3 - Syntax-check hook for .js and inline <script>
-
 v0.0.4 - typescript-lsp off for the project
-
 v0.0.5 - smoke.js + PLAN.md
+v0.0.6 - 0.0.6

@@ -1,4 +1,5 @@
 .sessions.db
 .server-port
 .playwright-mcp
-/graphify-out/
+/vault/
+.index.db

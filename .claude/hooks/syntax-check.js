@@ -15,19 +15,29 @@ const WRITE_TOOLS = new Set(['Edit', 'Write']);
 
 // Возвращает JS из инлайновых <script> с сохранением нумерации строк: всё, что вне
 // скрипта, становится пустой строкой, поэтому node --check укажет строку самого .html.
-// ponytail: узнаём только голый <script> на отдельной строке — так размечен index.html.
-// Скрипты с атрибутами пропускаем осознанно: у src-скриптов кода тут нет, а
-// type="module" — это ESM, и node --check в режиме CJS дал бы ложную тревогу.
-// Потолок — разметка усложнится и часть кода перестанет проверяться; апгрейд: парсер HTML.
+// Узнаём и голый <script>, и <script type="module"> — второй нужен, когда код начнут
+// выносить в модули. Скрипты с src пропускаем: кода в них нет.
+// ponytail: тег ищем построчно, как размечен index.html; потолок — разметка в одну
+// строку или экзотические атрибуты, апгрейд: парсер HTML.
+const SCRIPT_OPEN = /^\s*<script(\s[^>]*)?>\s*$/i;
+
 function inlineJs(html) {
     const out = [];
     let inside = false;
+    let module = false;
     for (const line of html.split(/\r?\n/)) {
         if (inside && /^\s*<\/script>/i.test(line)) inside = false;
         out.push(inside ? line : '');
-        if (!inside && /^\s*<script\s*>\s*$/i.test(line)) inside = true;
+        if (inside) continue;
+
+        const open = line.match(SCRIPT_OPEN);
+        if (!open) continue;
+        const attrs = open[1] || '';
+        if (/\ssrc\s*=/i.test(attrs)) continue; // внешний файл проверится сам по себе
+        if (/type\s*=\s*["']?module/i.test(attrs)) module = true;
+        inside = true;
     }
-    return out.join('\n');
+    return { code: out.join('\n'), module };
 }
 
 function main() {
@@ -51,13 +61,17 @@ function main() {
     let args = ['--check', resolved];
     let source;
     if (ext === '.html') {
+        let inline;
         try {
-            source = inlineJs(fs.readFileSync(resolved, 'utf8'));
+            inline = inlineJs(fs.readFileSync(resolved, 'utf8'));
         } catch {
             return; // файл уже унесли — проверять нечего
         }
-        if (!source.trim()) return; // инлайнового кода нет
-        args = ['--check', '-'];
+        if (!inline.code.trim()) return; // инлайнового кода нет
+        source = inline.code;
+        // модульный скрипт разбирается по другим правилам: без явного указания
+        // node принял бы import/export за синтаксическую ошибку
+        args = inline.module ? ['--check', '--input-type=module', '-'] : ['--check', '-'];
     }
 
     try {

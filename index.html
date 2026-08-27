@@ -198,20 +198,453 @@
             color: #9a9ea6;
         }
 
-        /* вид Graph: во всю площадь под визуализацию graphify */
-        .view--graph {
-            display: block;
-            /* отступ под фиксированную .topbar, иначе она перекрывает поиск графа */
-            padding-top: 64px;
-            background: #0f0f1a;
+        /* версия из VERSION.md, подставляется сервером — видна на всех видах страницы */
+        .app-version {
+            position: fixed;
+            right: 12px;
+            bottom: 12px;
+            padding: 3px 8px;
+            border: 1px solid #2e3138;
+            border-radius: 6px;
+            background: #16181c;
+            color: #9a9ea6;
+            font-size: 0.75rem;
+            font-family: inherit;
+            cursor: pointer;
+            z-index: 1400;
         }
 
-        .graph-frame {
+        .app-version:hover { background: #1e2127; color: #f2f2f4; }
+
+        .version-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin: 16px 0 0;
+            padding: 0;
+            list-style: none;
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+
+        .version-list__item {
+            padding: 8px 10px;
+            border: 1px solid #2e3138;
+            border-radius: 8px;
+            background: #16181c;
+            color: #cfd2d8;
+            font-size: 0.85rem;
+        }
+
+        .version-list__item:first-child {
+            border-color: #3d5a99;
+            color: #f2f2f4;
+        }
+
+        /* вид Graph: во всю площадь под граф Obsidian */
+        .view--graph {
+            display: block;
+            /* отступ под фиксированную .topbar, иначе она перекрывает граф */
+            padding-top: 64px;
+            background: #131417;
+        }
+
+        .graph-canvas {
             display: block;
             width: 100%;
             height: calc(100vh - 64px);
+            background: #131417;
+            cursor: grab;
+            touch-action: none;
+        }
+
+        .graph-canvas:active {
+            cursor: grabbing;
+        }
+
+        /* все рёбра — один path: так анимация обновляет один атрибут вместо тысяч */
+        .graph-links {
+            fill: none;
+            stroke: #454b57;
+            stroke-width: 0.6;
+            stroke-linecap: round;
+            transition: opacity 0.25s ease;
+        }
+
+        /* рёбра узла под курсором рисуются поверх остальных */
+        .graph-links--near {
+            stroke: #6ea8fe;
+            stroke-width: 1.4;
+            opacity: 0.9;
+        }
+
+        .graph-node {
+            fill: #6ea8fe;
+            cursor: pointer;
+            transition: opacity 0.25s ease;
+        }
+
+        .graph-node circle {
+            transition: fill 0.18s ease, r 0.18s ease;
+        }
+
+        /* цвет по виду узла: файл, секция, функция, API-роут, сессия */
+        .graph-node--section { fill: #a78bfa; }
+        .graph-node--function { fill: #7dd3a0; }
+        .graph-node--route { fill: #f0a868; }
+        .graph-node--session { fill: #d97ba0; }
+        .graph-node--history, .graph-node--note { fill: #8a8f98; }
+
+        /* узел под курсором: светлеет, слегка растёт и подсвечивает вокруг себя */
+        .graph-node circle {
+            transform-box: fill-box;
+            transform-origin: center;
+        }
+
+        .graph-node--hovered circle {
+            fill: #e9e9ec;
+            transform: scale(1.35);
+            filter: drop-shadow(0 0 2px rgba(233, 233, 236, 0.65));
+        }
+
+        .graph-label {
+            fill: #9aa0aa;
+            font-size: 3.5px;
+            text-anchor: middle;
+            pointer-events: none;
+            user-select: none;
+            transition: opacity 0.25s ease;
+        }
+
+        /* при отдалении подписи сливаются в кашу — прячем их */
+        .graph--far .graph-label {
+            opacity: 0;
+        }
+
+        /* подпись узла под курсором видна на любом масштабе */
+        .graph--far .graph-node--hovered .graph-label,
+        .graph--far .graph-node--picked .graph-label {
+            opacity: 1;
+        }
+
+        /* сессия, после которой файлы уже правились: решение могло устареть */
+        .graph-node--stale {
+            opacity: 0.45;
+        }
+
+        /* пока курсор на узле, остальной граф уходит на второй план */
+        .graph--focused .graph-node:not(.graph-node--near):not(.graph-node--hovered) {
+            opacity: 0.25;
+        }
+
+        .graph--focused .graph-links {
+            opacity: 0.25;
+        }
+
+        .graph--focused .graph-links--near {
+            opacity: 1;
+        }
+
+        /* результаты поиска: найденное ярче, остальное приглушено */
+        .graph--search .graph-node:not(.graph-node--hit) { opacity: 0.15; }
+        .graph--search .graph-links { opacity: 0.08; }
+        /* найденное поиском мигает, чтобы его было видно в гуще узлов */
+        .graph-node--hit circle {
+            fill: #ffd166;
+            animation: graph-pulse 1.4s ease-in-out infinite;
+        }
+
+        @keyframes graph-pulse {
+            0%, 100% { transform: scale(1); filter: none; }
+            50% { transform: scale(1.5); filter: drop-shadow(0 0 3px rgba(255, 209, 102, 0.8)); }
+        }
+
+        .graph-node--near circle { fill: #cfe0ff; }
+
+        .graph-node--picked circle {
+            stroke: #e9e9ec;
+            stroke-width: 1.2;
+        }
+
+        /* пока узел тянут мышью, курсор и подсветка говорят об этом */
+        .graph--dragging { cursor: grabbing; }
+        .graph--dragging .graph-node--hovered circle { fill: #ffffff; }
+
+        /* граф проявляется, а не возникает рывком */
+        #graphSurface {
+            animation: graph-appear 0.45s ease both;
+        }
+
+        @keyframes graph-appear {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            #graphSurface { animation: none; }
+            .graph-node, .graph-node circle, .graph-label, .graph-links { transition: none; }
+            .graph-node--hit circle { animation: none; }
+        }
+
+        /* панель управления поверх полотна */
+        .graph-panel {
+            position: absolute;
+            top: 76px;
+            left: 12px;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            width: 232px;
+        }
+
+        .graph-search {
+            width: 100%;
+            padding: 7px 10px;
+            border: 1px solid #2e3138;
+            border-radius: 8px;
+            background: #16181c;
+            color: #e9e9ec;
+            font: inherit;
+            font-size: 0.82rem;
+        }
+
+        .graph-search:focus {
+            outline: none;
+            border-color: #6ea8fe;
+        }
+
+        .graph-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+
+        .graph-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 8px;
+            border: 1px solid #2e3138;
+            border-radius: 999px;
+            background: #16181c;
+            color: #9aa0aa;
+            font-size: 0.72rem;
+            cursor: pointer;
+        }
+
+        .graph-chip[aria-pressed="true"] {
+            color: #e9e9ec;
+            border-color: #3d424c;
+        }
+
+        .graph-chip__dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .graph-chip[aria-pressed="false"] .graph-chip__dot {
+            opacity: 0.25;
+        }
+
+        .graph-hint {
+            color: #6f747d;
+            font-size: 0.72rem;
+        }
+
+        /* окно с содержимым узла: просмотр и правка файла */
+        .file-modal .modal__dialog {
+            display: flex;
+            flex-direction: column;
+            max-width: min(1080px, 92vw);
+            height: min(84vh, 900px);
+            overflow: hidden;
+        }
+
+        .file-modal__meta {
+            margin: 6px 0 10px;
+            color: #8b909a;
+            font-size: 0.78rem;
+        }
+
+        .file-modal__links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            max-height: 66px;
+            overflow-y: auto;
+            margin-bottom: 10px;
+        }
+
+        .file-modal__link {
+            padding: 2px 8px;
+            border: 1px solid #2e3138;
+            border-radius: 999px;
+            background: #16181c;
+            color: #6ea8fe;
+            font-size: 0.72rem;
+            cursor: pointer;
+        }
+
+        .file-modal__link:hover { border-color: #3d424c; }
+
+        .file-modal__text {
+            flex: 1;
+            width: 100%;
+            min-height: 0;
+            padding: 12px;
+            border: 1px solid #2e3138;
+            border-radius: 8px;
+            background: #131417;
+            color: #d8dce4;
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+            font-size: 0.78rem;
+            line-height: 1.5;
+            tab-size: 4;
+            resize: none;
+            white-space: pre;
+            overflow: auto;
+        }
+
+        .file-modal__text:focus {
+            outline: none;
+            border-color: #6ea8fe;
+        }
+
+        .file-modal__text[readonly] {
+            color: #a9adb6;
+        }
+
+        .file-modal__footer {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .file-modal__status {
+            flex: 1;
+            color: #8b909a;
+            font-size: 0.76rem;
+        }
+
+        .file-modal__save {
+            padding: 6px 14px;
+            border: 1px solid #2b4d78;
+            border-radius: 8px;
+            background: #1d3352;
+            color: #e9e9ec;
+            font: inherit;
+            font-size: 0.8rem;
+            cursor: pointer;
+        }
+
+        .file-modal__save:hover:not(:disabled) { background: #2b4d78; }
+
+        /* окно редактирования ноды на канвасе Flows */
+        .node-modal__field {
+            display: block;
+            width: 100%;
+            margin: 0 0 10px;
+            padding: 8px 10px;
+            border: 1px solid #2e3138;
+            border-radius: 8px;
+            background: #131417;
+            color: #d8dce4;
+            font: inherit;
+            font-size: 0.85rem;
+        }
+
+        .node-modal__field:focus {
+            outline: none;
+            border-color: #6ea8fe;
+        }
+
+        textarea.node-modal__field {
+            min-height: 90px;
+            line-height: 1.45;
+            resize: vertical;
+        }
+
+        .node-modal__footer {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 4px;
+        }
+
+        .file-modal__save:disabled {
+            opacity: 0.4;
+            cursor: default;
+        }
+
+        /* панель деталей выбранного узла */
+        .graph-details {
+            position: absolute;
+            top: 76px;
+            right: 12px;
+            z-index: 2;
+            width: 280px;
+            max-height: calc(100vh - 100px);
+            overflow-y: auto;
+            padding: 12px 14px;
+            border: 1px solid #2e3138;
+            border-radius: 10px;
+            background: #16181c;
+            color: #c9ced8;
+            font-size: 0.8rem;
+        }
+
+        .graph-details[hidden] {
+            display: none;
+        }
+
+        .graph-details__title {
+            margin: 0 0 4px;
+            color: #e9e9ec;
+            font-size: 0.9rem;
+            word-break: break-word;
+        }
+
+        .graph-details__meta {
+            margin: 0 0 10px;
+            color: #7b818b;
+            font-size: 0.74rem;
+        }
+
+        .graph-details__section {
+            margin: 10px 0 4px;
+            color: #9aa0aa;
+            font-size: 0.74rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .graph-details__list {
+            margin: 0;
+            padding-left: 16px;
+        }
+
+        .graph-details__list button {
+            padding: 0;
             border: 0;
-            background: #0f0f1a;
+            background: none;
+            color: #6ea8fe;
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .graph-details__close {
+            position: absolute;
+            top: 8px;
+            right: 10px;
+            border: 0;
+            background: none;
+            color: #7b818b;
+            font-size: 1rem;
+            cursor: pointer;
         }
 
         .graph-empty {
@@ -238,7 +671,7 @@
             color: #e9e9ec;
         }
 
-        .graph-frame[hidden], .graph-empty[hidden] {
+        .graph-canvas[hidden], .graph-empty[hidden] {
             display: none;
         }
 
@@ -328,6 +761,186 @@
             justify-content: center;
         }
 
+        /* ---------- Flows: канвас в духе n8n (пока только полотно, zoom и pan) ---------- */
+
+        .flow-canvas {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            cursor: grab;
+            background-color: #131417;
+            /* точки — бесконечно повторяющийся фон на самом контейнере, а не на
+               ограниченном по размеру слое узлов, иначе за краем слоя фон обрывается */
+            background-image: radial-gradient(circle, #2b2e35 1.5px, transparent 1.5px);
+            background-size: 28px 28px;
+            background-position: 0 0;
+        }
+
+        .flow-canvas--panning {
+            cursor: grabbing;
+        }
+
+        .flow-canvas__surface {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 6000px;
+            height: 6000px;
+            transform-origin: 0 0;
+        }
+
+        .flow-node {
+            position: absolute;
+            width: 250px;
+            border-radius: 16px;
+            background: linear-gradient(180deg, #1c1f26, #16181c);
+            border: 1px solid #2e3138;
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(110, 168, 254, 0.06);
+            overflow: hidden;
+            user-select: none;
+        }
+
+        .flow-node__edit {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 26px;
+            height: 26px;
+            padding: 0;
+            border: 1px solid #2e3138;
+            border-radius: 7px;
+            background: #22252b;
+            color: #a9adb6;
+            font-size: 0.8rem;
+            line-height: 1;
+            cursor: pointer;
+            z-index: 1;
+            transition: background 0.12s ease, color 0.12s ease;
+        }
+
+        .flow-node__edit:hover { background: #2b4d78; color: #f2f2f4; }
+
+        .flow-node__edit:focus-visible {
+            outline: 2px solid #6ea8fe;
+            outline-offset: 2px;
+        }
+
+        .flow-node__header {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 16px 12px;
+        }
+
+        .flow-node__avatar {
+            display: flex;
+            flex-shrink: 0;
+            align-items: center;
+            justify-content: center;
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #6ea8fe, #2b4d78);
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+            font-size: 18px;
+        }
+
+        .flow-node__titles {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .flow-node__title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #f2f2f4;
+        }
+
+        .flow-node__subtitle {
+            font-size: 0.72rem;
+            color: #7c818b;
+        }
+
+        .flow-node__body {
+            padding: 0 16px 14px;
+            font-size: 0.8rem;
+            line-height: 1.45;
+            color: #9a9ea6;
+        }
+
+        .flow-node__footer {
+            display: flex;
+            align-items: center;
+            padding: 10px 16px;
+            border-top: 1px solid #2e3138;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .flow-node__badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 9px;
+            border-radius: 999px;
+            background: #22252b;
+            font-size: 0.68rem;
+            color: #9a9ea6;
+        }
+
+        .flow-node__badge-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #6ea8fe;
+        }
+
+        .flow-canvas__zoom {
+            position: absolute;
+            right: 16px;
+            bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            padding: 3px;
+            border: 1px solid #2e3138;
+            border-radius: 10px;
+            background: #1a1c21;
+        }
+
+        .flow-canvas__zoom-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            border: 0;
+            border-radius: 7px;
+            background: none;
+            color: #a9adb6;
+            cursor: pointer;
+            font-size: 15px;
+            transition: background 0.15s, color 0.15s;
+        }
+
+        .flow-canvas__zoom-btn:hover {
+            background: #262930;
+            color: #f2f2f4;
+        }
+
+        .flow-canvas__zoom-value {
+            min-width: 42px;
+            text-align: center;
+            font-size: 0.75rem;
+            color: #9a9ea6;
+        }
+
         /* правило идёт после раскладок видов, поэтому скрытие всегда побеждает */
         .view[hidden] {
             display: none;
@@ -347,8 +960,9 @@
             align-items: center;
             gap: 12px;
             /* fixed-контейнер создаёт свой контекст наложения — поднимаем его целиком
-               выше .modal / .modal--top, иначе z-index внутри (.settings) бесполезен */
-            z-index: 1300;
+               выше .modal / .modal--top и .shot-lightbox (тоже 1300), иначе editModeButton
+               перекрывается лайтбоксом скриншотов */
+            z-index: 1500;
         }
 
         /* горизонтальная панель слева от кнопки настроек */
@@ -443,21 +1057,6 @@
         .settings__item:focus-visible {
             background: #272a31;
             outline: none;
-        }
-
-        .settings__item--active {
-            color: #ff9a9d;
-        }
-
-        .settings__item--active::before {
-            content: "";
-            display: inline-block;
-            width: 6px;
-            height: 6px;
-            margin-right: 8px;
-            border-radius: 50%;
-            background: #e5484d;
-            vertical-align: middle;
         }
 
         .settings__separator {
@@ -927,6 +1526,7 @@
         }
 
         .chat__main {
+            --chat-content-width: 720px;
             flex: 1;
             min-width: 0;
             display: flex;
@@ -938,8 +1538,8 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            width: 100%;
-            max-width: 720px;
+            width: calc(100% - var(--sbw, 0px));
+            max-width: var(--chat-content-width);
             margin: 0 auto 8px;
         }
 
@@ -1009,8 +1609,8 @@
             display: flex;
             align-items: flex-end;
             gap: 10px;
-            width: 100%;
-            max-width: 720px;
+            width: calc(100% - var(--sbw, 0px));
+            max-width: var(--chat-content-width);
             margin: 0 auto;
             padding: 10px;
             border: 1px solid #2e3138;
@@ -1175,7 +1775,7 @@
             flex-direction: column;
             gap: 10px;
             width: 100%;
-            max-width: 720px;
+            max-width: var(--chat-content-width);
             margin: 0 auto;
             padding: 8px 0 16px;
         }
@@ -1456,12 +2056,123 @@
             margin-top: 4px;
         }
 
+        .task-card__progress-worker {
+            position: absolute;
+            top: 50%;
+            font-size: 0.8rem;
+            line-height: 1;
+            transform: translate(-50%, -50%);
+            opacity: 0.5;
+        }
+
+        .task-card__progress-worker--done {
+            opacity: 0.8;
+        }
+
+        .task-card__progress-worker--current {
+            opacity: 1;
+            filter: drop-shadow(0 0 4px rgba(110, 168, 254, 0.8));
+        }
+
+        .task-card__progress-worker--next {
+            opacity: 1;
+            filter: drop-shadow(0 0 5px rgba(52, 199, 89, 0.9));
+        }
+
+        .task-card__progress-worker:hover {
+            cursor: pointer;
+            opacity: 1;
+        }
+
+        .worker-tooltip {
+            position: fixed;
+            z-index: 60;
+            width: 260px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            background: #1b1d24;
+            border: 1px solid #2e3138;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(4px);
+            transition: opacity 0.12s ease, transform 0.12s ease;
+            pointer-events: none;
+        }
+
+        .worker-tooltip.is-visible {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .worker-tooltip__head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .worker-tooltip__emoji {
+            font-size: 1.3rem;
+        }
+
+        .worker-tooltip__name {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #e6e7ea;
+        }
+
+        .worker-tooltip__role {
+            font-size: 0.72rem;
+            color: #8b8d94;
+        }
+
+        .worker-tooltip__section {
+            margin-top: 7px;
+        }
+
+        .worker-tooltip__label {
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: #6f7178;
+            margin-bottom: 4px;
+        }
+
+        .worker-tooltip__tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+
+        .worker-tooltip__tag {
+            font-size: 0.68rem;
+            padding: 2px 7px;
+            border-radius: 999px;
+            background: #232630;
+            border: 1px solid #2e3138;
+            color: #75777d;
+        }
+
+        .worker-tooltip__tag.is-used {
+            background: rgba(110, 168, 254, 0.15);
+            border-color: rgba(110, 168, 254, 0.5);
+            color: #cfe0ff;
+        }
+
+        .worker-tooltip__hint {
+            margin-top: 8px;
+            font-size: 0.66rem;
+            color: #6f7178;
+        }
+
         .task-card__progress-track {
+            position: relative;
             flex: 1;
             height: 6px;
             border-radius: 999px;
             background: #232630;
-            overflow: hidden;
         }
 
         .task-card__progress-fill {
@@ -1771,6 +2482,13 @@
             </button>
         </div>
 
+        <button type="button" class="icon-button" id="editModeButton" aria-pressed="false" aria-label="Edit" title="Edit">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 20h9"></path>
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+            </svg>
+        </button>
+
         <div class="settings" id="settings">
             <button
                 type="button"
@@ -1789,7 +2507,6 @@
             </button>
 
             <ul class="settings__menu" id="settingsMenu" role="menu" aria-labelledby="settingsButton" hidden>
-                <li role="none"><button type="button" class="settings__item" role="menuitem">Edit</button></li>
                 <li role="none"><button type="button" class="settings__item" role="menuitem">Заглушка_2</button></li>
                 <li role="none"><button type="button" class="settings__item" role="menuitem">Заглушка_2</button></li>
                 <li role="none"><div class="settings__separator"></div></li>
@@ -1848,10 +2565,21 @@
     </main>
 
     <main class="view view--graph" id="graphView" hidden>
-        <iframe class="graph-frame" id="graphFrame" title="Граф проекта" data-src="graphify-out/graph.html"></iframe>
+        <div class="graph-panel" id="graphPanel" hidden>
+            <input type="search" class="graph-search" id="graphSearch" placeholder="Поиск по коду, заметкам, сессиям" aria-label="Поиск по проекту">
+            <div class="graph-chips" id="graphChips"></div>
+            <p class="graph-hint" id="graphHint"></p>
+        </div>
+        <aside class="graph-details" id="graphDetails" hidden>
+            <button type="button" class="graph-details__close" id="graphDetailsClose" aria-label="Закрыть">×</button>
+            <h2 class="graph-details__title" id="graphDetailsTitle"></h2>
+            <p class="graph-details__meta" id="graphDetailsMeta"></p>
+            <div id="graphDetailsBody"></div>
+        </aside>
+        <svg class="graph-canvas" id="graphCanvas" role="img" aria-label="Граф проекта"><g id="graphSurface"></g></svg>
         <div class="graph-empty" id="graphEmpty" hidden>
-            <p class="graph-empty__title">Граф ещё не собран</p>
-            <p class="graph-empty__hint">Соберите его командой <code>graphify update .</code> в каталоге проекта и откройте вкладку снова.</p>
+            <p class="graph-empty__title" id="graphEmptyTitle">Граф пока пуст</p>
+            <p class="graph-empty__hint" id="graphEmptyHint">Карта проекта собирается автоматически при открытии вкладки.</p>
         </div>
     </main>
 
@@ -1874,7 +2602,33 @@
         </nav>
 
         <div class="view__content">
-            <h1>Flows</h1>
+            <div class="flow-canvas" id="flowCanvas">
+                <div class="flow-canvas__surface" id="flowSurface">
+                    <div class="flow-node" id="flowNodeSecretary">
+                        <button type="button" class="flow-node__edit" id="flowNodeSecretaryEdit" title="Редактировать">✏️</button>
+                        <div class="flow-node__header">
+                            <span class="flow-node__avatar">🗂️</span>
+                            <span class="flow-node__titles">
+                                <span class="flow-node__title">Секретарь</span>
+                                <span class="flow-node__subtitle">Агент-диспетчер</span>
+                            </span>
+                        </div>
+                        <div class="flow-node__body">Принимает задачи и распределяет их по колонкам доски.</div>
+                        <div class="flow-node__footer">
+                            <span class="flow-node__badge">
+                                <span class="flow-node__badge-dot"></span>
+                                Временная нода
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                <div class="flow-canvas__zoom">
+                    <button type="button" class="flow-canvas__zoom-btn" id="flowZoomOut" title="Уменьшить">−</button>
+                    <span class="flow-canvas__zoom-value" id="flowZoomValue">100%</span>
+                    <button type="button" class="flow-canvas__zoom-btn" id="flowZoomIn" title="Увеличить">+</button>
+                    <button type="button" class="flow-canvas__zoom-btn" id="flowZoomReset" title="Сбросить масштаб">⤾</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1954,6 +2708,14 @@
                         <div class="task-card__progress">
                             <div class="task-card__progress-track">
                                 <div class="task-card__progress-fill" style="width: 65%"></div>
+                                <span class="task-card__progress-worker task-card__progress-worker--done" style="left: 0%" data-worker="secretary">🗂️</span>
+                                <span class="task-card__progress-worker task-card__progress-worker--done" style="left: 14%" data-worker="researcher">🔎</span>
+                                <span class="task-card__progress-worker task-card__progress-worker--done" style="left: 28%" data-worker="architect">🧭</span>
+                                <span class="task-card__progress-worker task-card__progress-worker--done" style="left: 45%" data-worker="designer">🎨</span>
+                                <span class="task-card__progress-worker task-card__progress-worker--current" style="left: 65%" data-worker="developer">🛠️</span>
+                                <span class="task-card__progress-worker task-card__progress-worker--next" style="left: 78%" data-worker="tester">🧪</span>
+                                <span class="task-card__progress-worker" style="left: 90%" data-worker="writer">📝</span>
+                                <span class="task-card__progress-worker" style="left: 100%" data-worker="reviewer">✅</span>
                             </div>
                             <span class="task-card__progress-label">65%</span>
                         </div>
@@ -2016,6 +2778,8 @@
         <img id="shotLightboxImg" src="" alt="">
     </div>
 
+    <div class="worker-tooltip" id="workerTooltip"></div>
+
     <div class="modal modal--top" id="pickerModal" hidden>
         <div class="modal__backdrop" data-close-modal></div>
         <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
@@ -2025,6 +2789,39 @@
             </div>
             <p class="modal__hint" id="pickerHint"></p>
             <ul class="picker" id="pickerList"></ul>
+        </div>
+    </div>
+
+    <div class="modal" id="nodeModal" hidden>
+        <div class="modal__backdrop" data-close-modal></div>
+        <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="nodeModalTitle">
+            <div class="modal__header">
+                <h2 class="modal__title" id="nodeModalTitle">Редактировать ноду</h2>
+                <button type="button" class="modal__close" data-close-modal aria-label="Закрыть">&times;</button>
+            </div>
+            <input type="text" class="node-modal__field" id="nodeModalTitleField" placeholder="Название">
+            <input type="text" class="node-modal__field" id="nodeModalSubtitleField" placeholder="Подзаголовок">
+            <textarea class="node-modal__field" id="nodeModalBodyField" placeholder="Описание"></textarea>
+            <div class="node-modal__footer">
+                <button type="button" class="file-modal__save" id="nodeModalSave">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal file-modal" id="fileModal" hidden>
+        <div class="modal__backdrop" data-close-modal></div>
+        <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="fileModalTitle">
+            <div class="modal__header">
+                <h2 class="modal__title" id="fileModalTitle"></h2>
+                <button type="button" class="modal__close" data-close-modal aria-label="Закрыть">&times;</button>
+            </div>
+            <p class="file-modal__meta" id="fileModalMeta"></p>
+            <div class="file-modal__links" id="fileModalLinks"></div>
+            <textarea class="file-modal__text" id="fileModalText" spellcheck="false" aria-label="Содержимое файла"></textarea>
+            <div class="file-modal__footer">
+                <span class="file-modal__status" id="fileModalStatus"></span>
+                <button type="button" class="file-modal__save" id="fileModalSave">Сохранить</button>
+            </div>
         </div>
     </div>
 
@@ -2040,11 +2837,26 @@
         </div>
     </div>
 
+    <div class="modal" id="versionModal" hidden>
+        <div class="modal__backdrop" data-close-modal></div>
+        <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="versionModalTitle">
+            <div class="modal__header">
+                <h2 class="modal__title" id="versionModalTitle">История версий</h2>
+                <button type="button" class="modal__close" data-close-modal aria-label="Закрыть">&times;</button>
+            </div>
+            <ul class="version-list">{{VERSION_LIST}}</ul>
+        </div>
+    </div>
+
+    <button type="button" class="app-version" id="appVersionButton">{{APP_VERSION}}</button>
+
+    <script src="graph.js"></script>
     <script>
         (function () {
             const root = document.getElementById('settings');
             const button = document.getElementById('settingsButton');
             const menu = document.getElementById('settingsMenu');
+            const editModeButton = document.getElementById('editModeButton');
 
             function open() {
                 menu.hidden = false;
@@ -2078,16 +2890,14 @@
                 if (!item) return;
                 const label = item.textContent.trim();
 
-                // меню не закрываем: Edit включает и выключает режим прямо из него
-                if (label === 'Edit') {
-                    editMode ? exitEditMode() : enterEditMode();
-                    return;
-                }
-
                 close();
 
                 if (label === 'Settings') openSettings();
                 else console.log('Выбрано:', label);
+            });
+
+            editModeButton.addEventListener('click', () => {
+                editMode ? exitEditMode() : enterEditMode();
             });
 
 
@@ -2193,11 +3003,7 @@
             }
 
             function syncEditItem() {
-                const item = [...menu.querySelectorAll('.settings__item')]
-                    .find((el) => el.textContent.trim() === 'Edit');
-                if (!item) return;
-                item.classList.toggle('settings__item--active', editMode);
-                item.setAttribute('aria-pressed', String(editMode));
+                editModeButton.setAttribute('aria-pressed', String(editMode));
             }
 
             function enterEditMode() {
@@ -2619,6 +3425,8 @@
                 el.querySelector('.modal__close').focus();
             }
 
+            MissionGraph.init({ openModal }); // graph.js открывает своё окно нашими руками
+
             function closeModal(el) {
                 el.hidden = true;
                 if (el === modal) {
@@ -2764,6 +3572,134 @@
                 }
             });
 
+            // Профиль каждого исполнителя на шкале: чем он владеет и что из этого
+            // задействовано именно в текущей задаче (used) — это решает глава компании,
+            // наводя курсор на иконку.
+            const WORKER_INFO = {
+                secretary: {
+                    emoji: '🗂️', name: 'Секретарь', role: 'Приём и разбор задачи',
+                    competencies: ['Приоритизация', 'Формулировка ТЗ', 'Маршрутизация'],
+                    mcp: ['Notion', 'Slack'],
+                    tools: ['Todo-лист', 'Шаблоны ТЗ'],
+                    skills: ['intake-triage'],
+                    used: ['Приоритизация', 'Маршрутизация', 'Todo-лист', 'intake-triage'],
+                },
+                researcher: {
+                    emoji: '🔎', name: 'Исследователь', role: 'Поиск первопричины',
+                    competencies: ['Анализ логов', 'Дебаг', 'Чтение чужого кода'],
+                    mcp: ['GitHub', 'Sentry'],
+                    tools: ['grep/rg', 'Профилировщик'],
+                    skills: ['root-cause-analysis'],
+                    used: ['Анализ логов', 'Дебаг', 'GitHub', 'grep/rg', 'root-cause-analysis'],
+                },
+                architect: {
+                    emoji: '🧭', name: 'Архитектор', role: 'Проектирование решения',
+                    competencies: ['Системный дизайн', 'Оценка рисков'],
+                    mcp: ['Notion'],
+                    tools: ['Диаграммы'],
+                    skills: ['design-review'],
+                    used: ['Системный дизайн', 'design-review'],
+                },
+                designer: {
+                    emoji: '🎨', name: 'Дизайнер', role: 'UI/UX для правки',
+                    competencies: ['Интерфейсы', 'Доступность'],
+                    mcp: ['Figma'],
+                    tools: ['Figma'],
+                    skills: ['ui-review'],
+                    used: [],
+                },
+                developer: {
+                    emoji: '🛠️', name: 'Разработчик', role: 'Реализация правки (сейчас в работе)',
+                    competencies: ['Node.js', 'Отладка гонок', 'Автотесты'],
+                    mcp: ['GitHub', 'Context7'],
+                    tools: ['VS Code', 'node:sqlite'],
+                    skills: ['bugfix', 'test-writing'],
+                    used: ['Node.js', 'Отладка гонок', 'Автотесты', 'GitHub', 'node:sqlite', 'bugfix', 'test-writing'],
+                },
+                tester: {
+                    emoji: '🧪', name: 'Тестировщик', role: 'Следующий: прогон регрессии',
+                    competencies: ['Регрессионное тестирование', 'Граничные случаи'],
+                    mcp: ['GitHub Actions'],
+                    tools: ['Playwright'],
+                    skills: ['regression-suite'],
+                    used: ['Регрессионное тестирование', 'GitHub Actions', 'Playwright', 'regression-suite'],
+                },
+                writer: {
+                    emoji: '📝', name: 'Технический писатель', role: 'Описание изменений',
+                    competencies: ['Changelog', 'Документация'],
+                    mcp: ['Notion'],
+                    tools: ['Markdown'],
+                    skills: ['release-notes'],
+                    used: [],
+                },
+                reviewer: {
+                    emoji: '✅', name: 'Проверяющий', role: 'Финальная приёмка',
+                    competencies: ['Код-ревью', 'Оценка соответствия ТЗ'],
+                    mcp: ['GitHub'],
+                    tools: ['code-review'],
+                    skills: ['final-approval'],
+                    used: [],
+                },
+            };
+
+            function renderWorkerTags(items, used) {
+                return items.map((item) => `<span class="worker-tooltip__tag${used.has(item) ? ' is-used' : ''}">${item}</span>`).join('');
+            }
+
+            function renderWorkerTooltip(info) {
+                const used = new Set(info.used);
+                return `
+                    <div class="worker-tooltip__head">
+                        <span class="worker-tooltip__emoji">${info.emoji}</span>
+                        <div>
+                            <div class="worker-tooltip__name">${info.name}</div>
+                            <div class="worker-tooltip__role">${info.role}</div>
+                        </div>
+                    </div>
+                    <div class="worker-tooltip__section">
+                        <p class="worker-tooltip__label">Компетенции</p>
+                        <div class="worker-tooltip__tags">${renderWorkerTags(info.competencies, used)}</div>
+                    </div>
+                    <div class="worker-tooltip__section">
+                        <p class="worker-tooltip__label">MCP</p>
+                        <div class="worker-tooltip__tags">${renderWorkerTags(info.mcp, used)}</div>
+                    </div>
+                    <div class="worker-tooltip__section">
+                        <p class="worker-tooltip__label">Инструменты</p>
+                        <div class="worker-tooltip__tags">${renderWorkerTags(info.tools, used)}</div>
+                    </div>
+                    <div class="worker-tooltip__section">
+                        <p class="worker-tooltip__label">Skills</p>
+                        <div class="worker-tooltip__tags">${renderWorkerTags(info.skills, used)}</div>
+                    </div>
+                    <p class="worker-tooltip__hint">Подсвечено — задействовано в этой задаче</p>
+                `;
+            }
+
+            const workerTooltip = document.getElementById('workerTooltip');
+
+            document.querySelectorAll('.task-card__progress-worker').forEach((el) => {
+                const info = WORKER_INFO[el.dataset.worker];
+                if (!info) return;
+
+                el.addEventListener('mouseenter', () => {
+                    workerTooltip.innerHTML = renderWorkerTooltip(info);
+                    const rect = el.getBoundingClientRect();
+                    workerTooltip.classList.add('is-visible');
+                    const tipRect = workerTooltip.getBoundingClientRect();
+                    let left = rect.left + rect.width / 2 - tipRect.width / 2;
+                    left = Math.max(8, Math.min(left, window.innerWidth - tipRect.width - 8));
+                    let top = rect.top - tipRect.height - 10;
+                    if (top < 8) top = rect.bottom + 10;
+                    workerTooltip.style.left = `${left}px`;
+                    workerTooltip.style.top = `${top}px`;
+                });
+
+                el.addEventListener('mouseleave', () => {
+                    workerTooltip.classList.remove('is-visible');
+                });
+            });
+
             const shotLightbox = document.getElementById('shotLightbox');
             const shotLightboxImg = document.getElementById('shotLightboxImg');
 
@@ -2780,7 +3716,14 @@
                 shotLightboxImg.src = '';
             });
 
-            for (const el of [modal, pickerModal]) {
+            const versionModal = document.getElementById('versionModal');
+            document.getElementById('appVersionButton').addEventListener('click', () => openModal(versionModal));
+
+            // окна графа живут в graph.js, но закрываются общим кодом — берём их по id
+            const fileModal = document.getElementById('fileModal');
+            const nodeModal = document.getElementById('nodeModal');
+
+            for (const el of [modal, pickerModal, versionModal, fileModal, nodeModal]) {
                 el.addEventListener('click', (e) => {
                     if (e.target.closest('[data-close-modal]')) closeModal(el);
                 });
@@ -2790,7 +3733,10 @@
             document.addEventListener('keydown', (e) => {
                 if (e.key !== 'Escape') return;
                 if (!shotLightbox.hidden) { shotLightbox.hidden = true; shotLightboxImg.src = ''; }
+                else if (!fileModal.hidden) closeModal(fileModal);
+                else if (!nodeModal.hidden) closeModal(nodeModal);
                 else if (!pickerModal.hidden) closeModal(pickerModal);
+                else if (!versionModal.hidden) closeModal(versionModal);
                 else if (!modal.hidden) closeModal(modal);
             });
 
@@ -2804,27 +3750,15 @@
                 chat: document.getElementById('chatView'),
             };
 
-            const graphFrame = document.getElementById('graphFrame');
-            const graphEmpty = document.getElementById('graphEmpty');
-
-            // граф отдаёт graphify; пока graphify-out/graph.html не собран, сервер
-            // ответит 404 и в iframe попадёт сырой текст ошибки — поэтому сначала
-            // проверяем файл и показываем заглушку, а грузим только при первом показе
-            async function showGraph() {
-                if (graphFrame.src) return;
-                let ok = false;
-                try {
-                    const res = await fetch(graphFrame.dataset.src, { method: 'HEAD' });
-                    ok = res.ok;
-                } catch {
-                    ok = false;
-                }
-                graphFrame.hidden = !ok;
-                graphEmpty.hidden = ok;
-                if (ok) graphFrame.src = graphFrame.dataset.src;
-            }
-
             const BOARD_COLUMNS = ['New', 'In Progress', 'Checking', 'Validator', 'Done'];
+
+            // ширина нативного скроллбара нужна, чтобы composer/session-bar совпадали по ширине
+            // с .chat__messages, где место под скроллбар зарезервировано через scrollbar-gutter
+            const sbProbe = document.createElement('div');
+            sbProbe.style.cssText = 'position:absolute;top:-9999px;width:100px;height:100px;overflow:scroll;';
+            document.body.appendChild(sbProbe);
+            document.documentElement.style.setProperty('--sbw', (sbProbe.offsetWidth - sbProbe.clientWidth) + 'px');
+            sbProbe.remove();
 
             // поле ввода растёт под текст, Enter отправляет, Shift+Enter переносит строку
             const chatInput = document.getElementById('chatInput');
@@ -3605,6 +4539,140 @@
                 flowNav.append(item);
             }
 
+            // канвас Flows: пока только полотно — zoom колёсиком/кнопками и pan перетаскиванием фона
+            let centerFlowNode = null;
+            (() => {
+                const canvas = document.getElementById('flowCanvas');
+                const surface = document.getElementById('flowSurface');
+                const zoomValue = document.getElementById('flowZoomValue');
+                const zoomIn = document.getElementById('flowZoomIn');
+                const zoomOut = document.getElementById('flowZoomOut');
+                const zoomReset = document.getElementById('flowZoomReset');
+
+                const MIN_SCALE = 0.3;
+                const MAX_SCALE = 2;
+                const START_X = 0;
+                const START_Y = 0;
+
+                let scale = 1;
+                let x = START_X;
+                let y = START_Y;
+
+                const GRID_SIZE = 28;
+
+                function apply() {
+                    surface.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+                    // фон-сетка на контейнере не привязана к слою узлов — двигаем и
+                    // масштабируем её тем же x/y/scale, иначе она разъедется с узлами
+                    canvas.style.backgroundPosition = `${x}px ${y}px`;
+                    canvas.style.backgroundSize = `${GRID_SIZE * scale}px ${GRID_SIZE * scale}px`;
+                    zoomValue.textContent = Math.round(scale * 100) + '%';
+                }
+
+                // масштабирование к точке под курсором, чтобы она осталась на месте
+                function zoomAt(clientX, clientY, factor) {
+                    const rect = canvas.getBoundingClientRect();
+                    const px = clientX - rect.left;
+                    const py = clientY - rect.top;
+                    const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * factor));
+                    x = px - (px - x) * (newScale / scale);
+                    y = py - (py - y) * (newScale / scale);
+                    scale = newScale;
+                    apply();
+                }
+
+                canvas.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.1 : 1 / 1.1);
+                }, { passive: false });
+
+                zoomIn.addEventListener('click', () => {
+                    const rect = canvas.getBoundingClientRect();
+                    zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, 1.2);
+                });
+                zoomOut.addEventListener('click', () => {
+                    const rect = canvas.getBoundingClientRect();
+                    zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, 1 / 1.2);
+                });
+                zoomReset.addEventListener('click', () => {
+                    scale = 1;
+                    x = START_X;
+                    y = START_Y;
+                    apply();
+                });
+
+                // drag-n-drop полотна: тянем только за пустой фон, не за ноду
+                let panning = false;
+                let startX = 0;
+                let startY = 0;
+                let originX = 0;
+                let originY = 0;
+
+                canvas.addEventListener('mousedown', (e) => {
+                    if (e.target.closest('.flow-node') || e.target.closest('.flow-canvas__zoom')) return;
+                    panning = true;
+                    startX = e.clientX;
+                    startY = e.clientY;
+                    originX = x;
+                    originY = y;
+                    canvas.classList.add('flow-canvas--panning');
+                });
+
+                window.addEventListener('mousemove', (e) => {
+                    if (!panning) return;
+                    x = originX + (e.clientX - startX);
+                    y = originY + (e.clientY - startY);
+                    apply();
+                });
+
+                window.addEventListener('mouseup', () => {
+                    panning = false;
+                    canvas.classList.remove('flow-canvas--panning');
+                });
+
+                apply();
+
+                // нода стартует по центру видимой area канваса. #flowCanvas в этот
+                // момент ещё скрыт (view с display:none), его clientWidth/Height
+                // нулевые — поэтому центрируем один раз при первом реальном показе
+                // вкладки, когда размеры уже посчитаны layout'ом браузера
+                const node = document.getElementById('flowNodeSecretary');
+                centerFlowNode = () => {
+                    node.style.left = Math.round((canvas.clientWidth - node.offsetWidth) / 2) + 'px';
+                    node.style.top = Math.round((canvas.clientHeight - node.offsetHeight) / 2) + 'px';
+                };
+            })();
+
+            // редактирование карточки ноды через модальное окно
+            (() => {
+                const editBtn = document.getElementById('flowNodeSecretaryEdit');
+                const node = document.getElementById('flowNodeSecretary');
+                const titleEl = node.querySelector('.flow-node__title');
+                const subtitleEl = node.querySelector('.flow-node__subtitle');
+                const bodyEl = node.querySelector('.flow-node__body');
+
+                const nodeModal = document.getElementById('nodeModal');
+                const titleField = document.getElementById('nodeModalTitleField');
+                const subtitleField = document.getElementById('nodeModalSubtitleField');
+                const bodyField = document.getElementById('nodeModalBodyField');
+                const saveBtn = document.getElementById('nodeModalSave');
+
+                editBtn.addEventListener('click', () => {
+                    titleField.value = titleEl.textContent;
+                    subtitleField.value = subtitleEl.textContent;
+                    bodyField.value = bodyEl.textContent;
+                    openModal(nodeModal);
+                    titleField.focus();
+                });
+
+                saveBtn.addEventListener('click', () => {
+                    titleEl.textContent = titleField.value;
+                    subtitleEl.textContent = subtitleField.value;
+                    bodyEl.textContent = bodyField.value;
+                    closeModal(nodeModal);
+                });
+            })();
+
             // колонки доски пока пустые — карточки появятся вместе с логикой
             const board = document.getElementById('board');
             for (const title of BOARD_COLUMNS) {
@@ -3643,7 +4711,13 @@
                 // пока chatView скрыт, scrollHeight не считается — лента грузится
                 // ещё до открытия вкладки, поэтому довернуть скролл вниз при показе
                 if (name === 'chat') chatMessages.scrollTop = chatMessages.scrollHeight;
-                if (name === 'graph') showGraph();
+                if (name === 'graph') MissionGraph.show();
+                // центрируем ноду один раз при первом реальном показе — до этого
+                // канвас скрыт (display:none) и его размеры ещё нулевые
+                if (name === 'flow' && centerFlowNode) {
+                    centerFlowNode();
+                    centerFlowNode = null;
+                }
             }
 
             for (const btn of viewButtons) {

@@ -32,15 +32,18 @@ function freePort() {
     });
 }
 
-function request(port, urlPath, { method = 'GET', host = '127.0.0.1' } = {}) {
+function request(port, urlPath, { method = 'GET', host = '127.0.0.1', json } = {}) {
     return new Promise((resolve, reject) => {
-        const req = http.request({ host, port, path: urlPath, method, timeout: 5000 }, (res) => {
+        const payload = json === undefined ? null : JSON.stringify(json);
+        const headers = payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {};
+        const req = http.request({ host, port, path: urlPath, method, headers, timeout: 5000 }, (res) => {
             let body = '';
             res.on('data', (chunk) => { body += chunk; });
             res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
         });
         req.on('timeout', () => req.destroy(new Error('таймаут запроса')));
         req.on('error', reject);
+        if (payload) req.write(payload);
         req.end();
     });
 }
@@ -111,6 +114,53 @@ check('POST /api/sessions отвечает списком', async (port) => {
     equal(res.status, 200, 'код ответа');
     const parsed = JSON.parse(res.body);
     if (!parsed.ok || !Array.isArray(parsed.sessions)) throw new Error(`неожиданный ответ: ${res.body}`);
+});
+
+check('POST /api/obsidian/graph отдаёт карту', async (port) => {
+    const res = await request(port, '/api/obsidian/graph', { method: 'POST' });
+    equal(res.status, 200, 'код ответа');
+    const parsed = JSON.parse(res.body);
+    if (!parsed.ok || !parsed.notes.length) throw new Error(`карта пуста: ${res.body.slice(0, 200)}`);
+    // узлы с типом появляются только когда карта собралась целиком
+    if (!parsed.notes.some((note) => note.kind === 'file')) throw new Error('в карте нет узлов-файлов');
+});
+
+check('POST /api/search ищет по индексу', async (port) => {
+    const res = await request(port, '/api/search', { method: 'POST', json: { q: 'reload' } });
+    equal(res.status, 200, 'код ответа');
+    const parsed = JSON.parse(res.body);
+    if (!parsed.ok || !Array.isArray(parsed.hits)) throw new Error(`неожиданный ответ: ${res.body.slice(0, 200)}`);
+});
+
+// сырой ввод с точками и кавычками роняет FTS5, если его не экранировать
+check('поиск переживает спецсимволы', async (port) => {
+    const res = await request(port, '/api/search', { method: 'POST', json: { q: 'server.js "граф' } });
+    equal(res.status, 200, 'код ответа');
+    const parsed = JSON.parse(res.body);
+    if (!parsed.ok) throw new Error(`поиск упал: ${res.body.slice(0, 200)}`);
+});
+
+check('POST /api/file/read отдаёт содержимое', async (port) => {
+    const res = await request(port, '/api/file/read', { method: 'POST', json: { path: 'smoke.js' } });
+    equal(res.status, 200, 'код ответа');
+    const parsed = JSON.parse(res.body);
+    if (!parsed.ok || !parsed.text.includes('Смоук-проверка')) throw new Error(`неожиданный ответ: ${res.body.slice(0, 200)}`);
+});
+
+// путь приходит от клиента: подъём по каталогам не должен выпускать за пределы проекта
+check('чтение за пределами проекта отклоняется', async (port) => {
+    const res = await request(port, '/api/file/read', { method: 'POST', json: { path: '../../../Windows/win.ini' } });
+    equal(res.status, 200, 'код ответа');
+    const parsed = JSON.parse(res.body);
+    if (parsed.ok) throw new Error('файл за пределами проекта прочитался');
+});
+
+// заметки vault пересобираются сервером — правка в них потерялась бы
+check('запись в заметку vault отклоняется', async (port) => {
+    const res = await request(port, '/api/file/write', { method: 'POST', json: { path: 'vault/Проект/server.js.md', text: 'нельзя' } });
+    equal(res.status, 200, 'код ответа');
+    const parsed = JSON.parse(res.body);
+    if (parsed.ok) throw new Error('заметка vault оказалась перезаписываемой');
 });
 
 check('неизвестный /api — 404', async (port) => {

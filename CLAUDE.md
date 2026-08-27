@@ -1,12 +1,15 @@
-## graphify
+## Карта проекта и память
 
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+Знания о проекте живут в Obsidian-vault внутри репозитория: папка `vault/` (не коммитится). Сервер создаёт и наполняет её при запуске и обновляет через 3 секунды после правок.
 
-Rules:
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+Что в ней лежит:
+- `vault/Проект/` — заметка на каждый файл папки проекта (включая скрытые и игнорируемые git; не обходятся только `.git` и сам `vault/`), на его секции и функции, плюс `API/` с заметкой на каждый роут. Связи берутся из настоящих ссылок: литералы `/api/...`, `src`/`href`, `require`, вызовы функций.
+- `vault/Сессии/` — память о прошлых сессиях: что просили, чем закончилось, какие файлы затронуты. Помеченные `stale: true` устарели — после них файлы уже менялись.
+
+Правила:
+- Ищи по проекту командой `node search.js "запрос"` — полнотекстовый поиск (FTS5/BM25) по коду, заметкам и прошлым сессиям, выдаёт узел, путь и фрагмент. Фильтр: `node search.js --kind session "запрос"`. Индекс собирает сервер; MCP-инструменты `obsidian_*` не используем — они требуют запущенного Obsidian и токена.
+- `vault/Проект/` перезаписывается целиком при каждой пересборке. Свои заметки клади в корень vault — их никто не тронет, и они попадут и в граф, и в поиск.
+- Граф смотрят во вкладке Graph веб-интерфейса, приложение Obsidian не открывается.
 
 ## Конвенции
 
