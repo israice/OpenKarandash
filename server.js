@@ -1,13 +1,44 @@
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 
-const PORT = Number(process.env.PORT) || 3000;
 const ROOT = __dirname;
+
+// ---------- .env: единственное место для порта и секретов ----------
+// файла нет — создаём его с портом 3001 и на нём же поднимаемся. значения из .env
+// не перетирают то, что уже задано в окружении: так `PORT=3999 node server.js`
+// (смоук поднимает сервер на свободном порту) продолжает работать
+const ENV_FILE = path.join(ROOT, '.env');
+
+const ENV_TEMPLATE = `# Настройки и секреты проекта. В git не попадает — правьте прямо здесь.
+PORT=3001
+
+# Путь к CLI Claude, если его нет в PATH
+# CLAUDE_BIN=
+# Внешний Obsidian-vault вместо папки vault/ внутри проекта
+# OBSIDIAN_VAULT=
+`;
+
+function loadEnv() {
+    if (!fs.existsSync(ENV_FILE)) {
+        fs.writeFileSync(ENV_FILE, ENV_TEMPLATE, 'utf8');
+        console.log('Создан .env с портом 3001 — порт и секреты правьте в нём');
+    }
+    for (const line of fs.readFileSync(ENV_FILE, 'utf8').split(/\r?\n/)) {
+        const pair = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/); // комментарии и пустые строки не подходят
+        if (!pair) continue;
+        const value = pair[2].trim().replace(/^(['"])([\s\S]*)\1$/, '$2'); // кавычки вокруг значения необязательны
+        if (process.env[pair[1]] === undefined) process.env[pair[1]] = value;
+    }
+}
+
+loadEnv();
+
+const PORT = Number(process.env.PORT) || 3001;
 const LIVE_RELOAD = process.env.NO_RELOAD !== '1';
-const MAX_PORT_ATTEMPTS = 10; // сколько соседних портов пробуем при занятости PORT
 const POLL_MS = 400; // как часто сверяем время изменения файлов
 
 // ---------- перезапуск при изменении самого server.js ----------
@@ -657,6 +688,10 @@ function readJson(req, limit = 100_000) {
 // и правки базы не вызывают перезагрузку страницы
 const DB_FILE = path.join(ROOT, '.sessions.db');
 const db = new DatabaseSync(DB_FILE);
+// WAL: чтение не блокирует запись, поэтому сборка карты и поиск не мешают чату.
+// busy_timeout: если папку обслуживает второй экземпляр сервера, ждём его
+// транзакцию, а не падаем сразу с «database is locked»
+db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
 
 db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -674,6 +709,13 @@ db.exec(`
     );
 `);
 
+// колонка добавлена уже после первых версий базы — CREATE TABLE IF NOT EXISTS
+// её не добавит в старый файл, поэтому дозаводим миграцией и глушим ошибку,
+// если она там уже есть
+try {
+    db.exec('ALTER TABLE sessions ADD COLUMN thumb TEXT');
+} catch { /* колонка уже есть */ }
+
 const upsertSession = db.prepare(`
     INSERT INTO sessions (id, title, updated_at)
     VALUES (?, ?, ?)
@@ -687,9 +729,10 @@ const upsertMessage = db.prepare(`
 `);
 
 const touchSession = db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?');
+const setSessionThumb = db.prepare('UPDATE sessions SET thumb = ? WHERE id = ?');
 
 const listSessions = db.prepare(`
-    SELECT s.id, s.title, s.updated_at AS updatedAt,
+    SELECT s.id, s.title, s.updated_at AS updatedAt, s.thumb AS thumb,
            (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.role <> 'tool') AS messageCount
     FROM sessions s
     ORDER BY s.updated_at DESC
@@ -719,7 +762,7 @@ function deleteSession(id) {
 // вопрос записываем сразу, как CLI сообщил id: сессия появляется в списке
 // в начале работы, а не после ответа
 function startExchange(sessionId, question) {
-    upsertSession.run(sessionId, question.slice(0, 120), new Date().toISOString());
+    upsertSession.run(sessionId, extractTitle(question, 120), new Date().toISOString());
     upsertMessage.run(sessionId, countMessages.get(sessionId).n, 'user', question);
 }
 
@@ -765,7 +808,7 @@ function collectNotes(dir, base, acc = []) {
 }
 
 // в карту идёт всё, что физически лежит в папке проекта, включая скрытые файлы
-// и то, что игнорирует git (.sessions.db, .server-port, локальные настройки).
+// и то, что игнорирует git (.sessions.db, .env, локальные настройки).
 // исключений ровно два, и оба вынужденные:
 //   .git — служебная база на тысячи объектов, содержимое проекта в ней дублируется
 //   vault — сама карта: заметки о заметках плодились бы с каждой пересборкой
@@ -1233,13 +1276,17 @@ function buildVaultGraph() {
 // это память: её не сносим даже при сбросе списка сессий
 const EDITING_TOOLS = /^(Edit|Write|NotebookEdit) (.+)$/;
 
-// тема сессии: режим комментариев кладёт в title «Элемент интерфейса… Комментарий: …»,
+// тема сессии: режим комментариев кладёт в вопрос «Элемент интерфейса… Комментарий: …»,
 // и настоящее намерение — именно текст комментария
+function extractTitle(raw, maxLen) {
+    const text = String(raw || '').trim();
+    const comment = text.match(/Комментарий:\s*([\s\S]+)/);
+    const line = (comment ? comment[1] : text).split(/\r?\n/)[0].trim();
+    return line.slice(0, maxLen) || 'Без темы';
+}
+
 function sessionTitle(session) {
-    const raw = String(session.title || '').trim();
-    const comment = raw.match(/Комментарий:\s*([\s\S]+)/);
-    const line = (comment ? comment[1] : raw).split(/\r?\n/)[0].trim();
-    return line.slice(0, 80) || 'Без темы';
+    return extractTitle(session.title, 80);
 }
 
 function sessionNote(session) {
@@ -1302,6 +1349,7 @@ function syncSessionNotes() {
 // имя с точки: snapshot() такие пропускает, и запись в базу не вызовет перезагрузку
 const INDEX_FILE = path.join(ROOT, '.index.db');
 const searchDb = new DatabaseSync(INDEX_FILE);
+searchDb.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
 
 // unicode61 нужен для кириллицы, prefix — чтобы работал поиск по началу слова
 searchDb.exec(`
@@ -1478,6 +1526,58 @@ function writeProjectFile(relative, text) {
 
 // ---------- API коннектора ----------
 
+// снимок экрана для миниатюры сессии: canvas на фронтенде не видит ничего
+// за пределами вкладки браузера, поэтому реальный скриншот системы делает
+// сервер — PowerShell копирует экран через System.Drawing и сохраняет JPEG во
+// временный файл, который потом сам читает и кодирует в base64 Node. Раньше
+// кодировали в base64 прямо в PowerShell через ImageCodecInfo/EncoderParameters
+// (ручной контроль quality) — эта связка «скриншот экрана + ручное JPEG-
+// кодирование» ловится антивирусом как эвристика скрин-скрейпинга
+// (ScriptContainedMaliciousContent) и скрипт блокируется целиком. Save(path,
+// ImageFormat.Jpeg) без EncoderParameters под ту же эвристику не попадает.
+// Ширину держим заметно больше старых 192px, чтобы миниатюру можно было
+// разобрать, не оставляя мыло. 'powershell.exe' с расширением, а не
+// 'powershell': под WSL это тот же самый Windows-хост, но interop ищет
+// исполняемый файл по точному имени с .exe — без расширения Linux не найдёт
+// его в PATH. На нативном Windows работает так же
+const SCREENSHOT_WIDTH = 480;
+
+function captureScreenshot() {
+    const tmpFile = path.join(os.tmpdir(), `noname-shot-${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`);
+    const script = `
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+        $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+        $full = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+        $g = [System.Drawing.Graphics]::FromImage($full)
+        $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+        $w = ${SCREENSHOT_WIDTH}
+        $h = [Math]::Max(1, [int]([double]$b.Height / $b.Width * $w))
+        $thumb = New-Object System.Drawing.Bitmap $full, $w, $h
+        $thumb.Save('${tmpFile.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Jpeg)
+    `;
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+
+    return new Promise((resolve) => {
+        const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true });
+        child.on('error', () => resolve(null));
+        child.on('close', (code) => {
+            if (code !== 0 || !fs.existsSync(tmpFile)) {
+                resolve(null);
+                return;
+            }
+            try {
+                const base64 = fs.readFileSync(tmpFile).toString('base64');
+                resolve(base64 ? `data:image/jpeg;base64,${base64}` : null);
+            } catch {
+                resolve(null);
+            } finally {
+                fs.unlink(tmpFile, () => {});
+            }
+        });
+    });
+}
+
 function sendJson(res, payload, status = 200) {
     const body = JSON.stringify(payload);
     res.writeHead(status, {
@@ -1578,8 +1678,11 @@ async function handleApi(req, res, urlPath) {
         }
 
         if (urlPath === '/api/sessions') {
+            // тему чистим на выдаче, а не только при записи: так короткий заголовок
+            // получают и сессии, заведённые до этого правила — миграция базы не нужна
             const sessions = listSessions.all().map((session) => ({
                 ...session,
+                title: sessionTitle(session),
                 running: runs.has(session.id),
             }));
             sendJson(res, { ok: true, sessions, queued: waitingCount });
@@ -1626,6 +1729,35 @@ async function handleApi(req, res, urlPath) {
             listeners.add(res);
             req.on('close', () => listeners.delete(res));
             return; // ответ закроется, когда закончится работа
+        }
+
+        // снимок экрана из режима Edit: клиент попросил его сразу после отправки
+        // комментария, пока выбранный элемент ещё обведён рамкой
+        if (urlPath === '/api/screenshot') {
+            const thumb = await captureScreenshot();
+            if (!thumb) {
+                sendJson(res, { ok: false, error: 'Не удалось сделать скриншот' });
+                return;
+            }
+            sendJson(res, { ok: true, thumb });
+            return;
+        }
+
+        // превью элемента, к которому был оставлен комментарий из режима Edit —
+        // приходит уже готовой data URL (скриншот системы либо клиентский снимок)
+        if (urlPath === '/api/sessions/thumb') {
+            const { id, thumb } = await readJson(req);
+            const MAX_THUMB_BYTES = 300 * 1024;
+            // строгий формат data-URL: только base64, без пробелов, кавычек и скобок —
+            // это то, что реально отдаёт canvas.toDataURL, и ничего сверх этого
+            const THUMB_RE = /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/]+=*$/;
+            if (!id || typeof thumb !== 'string' || thumb.length > MAX_THUMB_BYTES || !THUMB_RE.test(thumb)) {
+                sendJson(res, { ok: false, error: 'Некорректное превью' });
+                return;
+            }
+            setSessionThumb.run(thumb, id);
+            sendJson(res, { ok: true });
+            return;
         }
 
         if (urlPath === '/api/sessions/messages') {
@@ -1714,34 +1846,18 @@ const server = http.createServer((req, res) => {
     });
 });
 
-// если порт не задан явно, при занятости пробуем следующий
-const PORT_FIXED = Boolean(process.env.PORT);
-let port = PORT;
-
+// порт ровно один — тот, что записан в .env. соседние не пробуем: вторая копия
+// сервера на той же папке дерётся за .sessions.db и .index.db («database is locked»)
+// и вслепую перезаписывает vault/
 server.on('error', (err) => {
     if (err.code !== 'EADDRINUSE') throw err;
-
-    if (PORT_FIXED) {
-        console.error(`Порт ${port} занят. Укажите другой:`);
-        console.error(`  PowerShell: $env:PORT=8123; node server.js`);
-        console.error(`  bash:       PORT=8123 node server.js`);
-        process.exit(1);
-    }
-
-    if (port - PORT >= MAX_PORT_ATTEMPTS) {
-        console.error(`Порты ${PORT}-${port} заняты. Укажите свободный явно.`);
-        process.exit(1);
-    }
-
-    console.log(`Порт ${port} занят, пробую ${port + 1}...`);
-    server.listen(++port);
+    console.error(`Порт ${PORT} занят — скорее всего, сервер уже запущен: http://localhost:${PORT}`);
+    console.error('Другой порт задаётся строкой PORT= в .env');
+    process.exit(1);
 });
 
-server.listen(port, () => {
-    console.log(`Сервер запущен: http://localhost:${port}`);
-    // читает PreToolUse-хук (.claude/hooks/file-lock.js), чтобы найти /api/claude/lock-check.
-    // имя начинается с точки, поэтому слежение за файлами (snapshot()) его игнорирует
-    fs.writeFileSync(path.join(ROOT, '.server-port'), String(port));
+server.listen(PORT, () => {
+    console.log(`Сервер запущен: http://localhost:${PORT}`);
     prepareVault();
     if (LIVE_RELOAD) {
         watchFiles();

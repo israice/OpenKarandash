@@ -1,12 +1,9 @@
 // Вкладка Graph: карта проекта, поиск по ней и окно с содержимым узла.
 // Вынесено из index.html, который иначе разросся бы ещё на шесть сотен строк.
-// Подключается обычным <script>, а не модулем: type="module" откладывает выполнение
-// до разбора страницы, а инлайновый код обращается к MissionGraph сразу.
+// Подключается с defer и ничего не ждёт от порядка загрузки: общее ядро берём
+// из window.App в момент вызова, а не при старте файла.
 (function () {
     'use strict';
-
-    // окно открывает страница: там же лежит управление фокусом и остальными окнами
-    let openModal = (el) => { el.hidden = false; };
 
     // ---------- граф проекта ----------
 
@@ -486,7 +483,7 @@
         fileModalSave.disabled = true;
         fileModalStatus.textContent = '';
         renderModalLinks(node);
-        openModal(fileModal);
+        App.openModal(fileModal); // окно открывает ядро: там управление фокусом
 
         let data;
         try {
@@ -648,6 +645,7 @@
     graphCanvas.addEventListener('wheel', (event) => {
         if (!graphBox) return;
         event.preventDefault();
+        settled = true; // пользователь взял камеру в руки — автоподгонка кадра больше её не трогает
         const rect = graphCanvas.getBoundingClientRect();
         const factor = event.deltaY < 0 ? 0.85 : 1 / 0.85;
         const px = graphBox.x + ((event.clientX - rect.left) / rect.width) * graphBox.w;
@@ -739,7 +737,6 @@
     graphCanvas.addEventListener('pointerup', endDrag);
     graphCanvas.addEventListener('pointercancel', endDrag);
     window.MissionGraph = {
-        init(deps) { if (deps && deps.openModal) openModal = deps.openModal; },
         show(force) { showGraph(force); },
     };
 })();

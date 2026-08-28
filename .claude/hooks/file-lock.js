@@ -48,9 +48,10 @@ async function main() {
     const cwd = input.cwd || process.cwd();
     let port;
     try {
-        port = fs.readFileSync(path.join(cwd, '.server-port'), 'utf8').trim();
+        // порт живёт в .env: сервер поднимается строго на нём и другого не выбирает
+        port = fs.readFileSync(path.join(cwd, '.env'), 'utf8').match(/^\s*PORT\s*=\s*(\d+)/m)?.[1];
     } catch {
-        return allow(); // сервер не запущен — блокировать нечем
+        return allow(); // .env нет — сервер ни разу не запускался, блокировать нечем
     }
     if (!port) return allow();
 

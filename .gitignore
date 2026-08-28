@@ -1,5 +1,5 @@
 .sessions.db
-.server-port
+.env
 .playwright-mcp
 /vault/
 .index.db

@@ -14,7 +14,6 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const ROOT = __dirname;
-const PORT_FILE = path.join(ROOT, '.server-port');
 
 const checks = [];
 const check = (name, fn) => checks.push({ name, fn });
@@ -178,10 +177,8 @@ check('запрос не с localhost — 403', async (port) => {
 // ---------- прогон ----------
 
 async function main() {
-    // сервер пишет .server-port при старте; вернём файл как был, иначе PreToolUse-хук
-    // file-lock.js после смоука будет стучаться на порт, которого уже нет
-    const savedPort = fs.existsSync(PORT_FILE) ? fs.readFileSync(PORT_FILE, 'utf8') : null;
-
+    // порт для прогона берём свободный и передаём через окружение: .env — настройка
+    // рабочего сервера, смоук её не трогает
     const port = await freePort();
     const server = await startServer(port);
 
@@ -198,8 +195,6 @@ async function main() {
         }
     } finally {
         server.kill();
-        if (savedPort === null) fs.rmSync(PORT_FILE, { force: true });
-        else fs.writeFileSync(PORT_FILE, savedPort);
     }
 
     console.log(failed ? `\nПровалено проверок: ${failed} из ${checks.length}` : `\nВсе проверки пройдены (${checks.length})`);
