@@ -54,7 +54,7 @@ Edit — режим комментариев к элементам интерф�
 
 **Скриншот.** `POST /api/screenshot` — снимок делает сервер: `canvas` в браузере видит только вкладку, а не экран целиком. На стороне `server.js` это PowerShell + `System.Drawing`: снимок всего виртуального экрана, уменьшение до `SCREENSHOT_WIDTH` и JPEG в виде `data:`-URL. Не получилось — вернётся `null`, и сессия просто останется с плейсхолдером. Кнопка «Сохранить» на время захвата блокируется, чтобы второй клик не обогнал первый снимок.
 
-**Новая сессия — всегда.** `App.startCommentSession(prompt, thumb)` переключает на вкладку Chat, сбрасывает `chatSessionId` в `null`, очищает ленту, снимает выделение со списка сессий и ставит режим `Action`. Комментарий никогда не подмешивается к текущему разговору — это отдельная задача с чистого листа.
+**Новая сессия — всегда.** `App.startCommentSession(prompt, thumb)` сбрасывает `chatSessionId` в `null`, очищает ленту, снимает выделение со списка сессий и ставит режим `Action`. Комментарий никогда не подмешивается к текущему разговору — это отдельная задача с чистого листа. Вкладка при этом не переключается: если пользователь не сидит в Chat, он сам туда перейдёт и выберет сессию, когда захочет.
 
 **Правки применяются сразу.** Запрос уходит в `POST /api/claude/ask`, где режим `Action` запускает Claude CLI с `--permission-mode bypassPermissions` (в отличие от `Chat`, который идёт через `plan` и ничего не меняет). Ответ приходит потоком NDJSON.
 
@@ -64,12 +64,21 @@ Edit — режим комментариев к элементам интерф�
 
 ## 📁 Файлы
 
+Вся кнопка Edit лежит в этой папке — и клиент, и стили, и серверная половина:
+
 | Файл | Что в нём |
 |---|---|
-| `button-edit.js` | Весь режим целиком: своя разметка (кнопка, рамка, окно комментария), отслеживание курсора, подъём колесом, сборка промпта, захват скриншота |
-| `index.html` | Стили `body.edit-mode`, `.hover-frame`, `.comment-popover` и её элементов |
-| `app.js` | `App.startCommentSession` — новая сессия под комментарий, `sendToClaude`, ожидание id для миниатюры |
-| `server.js` | `/api/claude/ask` (режим `Action` → `bypassPermissions`), `/api/screenshot` (PowerShell + `System.Drawing`), `/api/sessions/thumb` |
+| `PROJECTS/Edit/button-edit.js` | Весь режим целиком: своя разметка (кнопка, рамка, окно комментария), отслеживание курсора, подъём колесом, сборка промпта, захват скриншота |
+| `PROJECTS/Edit/button-edit.css` | Стили `body.edit-mode`, `.hover-frame`, `.comment-popover` и её элементов |
+| `PROJECTS/Edit/screenshot.js` | Серверный модуль `captureScreenshot()`: PowerShell + `System.Drawing`, `SCREENSHOT_WIDTH`, JPEG в виде `data:`-URL |
+
+Снаружи остаётся только проводка — три строки, которые нельзя унести из общих файлов:
+
+| Файл | Что в нём про Edit |
+|---|---|
+| `SYSTEM/index.html` | `<link>` на `button-edit.css` и `<script defer>` на `button-edit.js` |
+| `server.js` | `require('./PROJECTS/Edit/screenshot.js')` и роут `POST /api/screenshot` |
+| `SYSTEM/app.js` | `App.startCommentSession` — общее ядро, им пользуется ещё и кнопка `+` на доске Kanban (`PROJECTS/Kanban/kanban.js`) |
 
 Файл `button-edit.js` самодостаточен: он сам создаёт свой тулбар и вставляет его перед `#settings`, поэтому в разметке `index.html` нет ни кнопки, ни рамки, ни попапа.
 

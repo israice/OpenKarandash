@@ -2,7 +2,7 @@
 // маршруты и сверяет коды ответов. Нужна как страховка при разборе index.html на модули —
 // автоматических проверок в проекте больше нет. Зависимостей не требует.
 //
-// Запуск: node smoke.js   (ненулевой код возврата = что-то сломалось)
+// Запуск: node SYSTEM/smoke.js   (ненулевой код возврата = что-то сломалось)
 //
 // Базу .sessions.db трогает только на чтение: /api/sessions/reset здесь не вызывается,
 // иначе прогон смоука стирал бы историю сессий пользователя.
@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
-const ROOT = __dirname;
+const ROOT = path.resolve(__dirname, '..'); // сервер запускается из корня проекта, а смоук лежит в SYSTEM
 
 const checks = [];
 const check = (name, fn) => checks.push({ name, fn });
@@ -57,6 +57,25 @@ function lanAddress() {
     return null;
 }
 
+// поднятый смоуком сервер не должен пережить смоук ни при каком исходе: осиротевший
+// процесс держит cwd проекта (папку потом не переименовать) и занимает .sessions.db.
+// поэтому ссылка на него лежит здесь, а гасим её и из finally, и по сигналам, и на выходе
+let server = null;
+const stopServer = () => {
+    if (!server) return;
+    server.kill();
+    server = null;
+};
+
+process.on('exit', stopServer);
+// Ctrl+C и остановка снаружи не проходят через finally — уносим сервер вручную
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
+    process.on(signal, () => {
+        stopServer();
+        process.exit(1);
+    });
+}
+
 function startServer(port) {
     return new Promise((resolve, reject) => {
         // NO_RELOAD=1 — без слежения за файлами и без процесса-сторожа: смоуку нужен
@@ -66,16 +85,29 @@ function startServer(port) {
             env: { ...process.env, PORT: String(port), NO_RELOAD: '1' },
             stdio: ['ignore', 'pipe', 'pipe'],
         });
+        server = child;
 
         let out = '';
+        // не уложился в срок: процесс жив, но нам не отвечает — гасим, иначе он останется висеть
+        const timer = setTimeout(() => {
+            stopServer();
+            reject(new Error(`сервер не сообщил о старте за 10 с:\n${out}`));
+        }, 10_000);
+
         const onData = (chunk) => {
             out += chunk;
-            if (out.includes('Сервер запущен')) resolve(child);
+            if (out.includes('Сервер запущен')) {
+                clearTimeout(timer);
+                resolve(child);
+            }
         };
         child.stdout.on('data', onData);
         child.stderr.on('data', onData);
-        child.on('exit', (code) => reject(new Error(`сервер не поднялся (код ${code}):\n${out}`)));
-        setTimeout(() => reject(new Error(`сервер не сообщил о старте за 10 с:\n${out}`)), 10_000);
+        child.on('exit', (code) => {
+            clearTimeout(timer);
+            server = null; // уже мёртв, добивать нечего
+            reject(new Error(`сервер не поднялся (код ${code}):\n${out}`));
+        });
     });
 }
 
@@ -140,7 +172,7 @@ check('поиск переживает спецсимволы', async (port) => 
 });
 
 check('POST /api/file/read отдаёт содержимое', async (port) => {
-    const res = await request(port, '/api/file/read', { method: 'POST', json: { path: 'smoke.js' } });
+    const res = await request(port, '/api/file/read', { method: 'POST', json: { path: 'SYSTEM/smoke.js' } });
     equal(res.status, 200, 'код ответа');
     const parsed = JSON.parse(res.body);
     if (!parsed.ok || !parsed.text.includes('Смоук-проверка')) throw new Error(`неожиданный ответ: ${res.body.slice(0, 200)}`);
@@ -156,10 +188,32 @@ check('чтение за пределами проекта отклоняетс�
 
 // заметки vault пересобираются сервером — правка в них потерялась бы
 check('запись в заметку vault отклоняется', async (port) => {
-    const res = await request(port, '/api/file/write', { method: 'POST', json: { path: 'vault/Проект/server.js.md', text: 'нельзя' } });
+    const res = await request(port, '/api/file/write', { method: 'POST', json: { path: 'DATA/vault/Проект/server.js.md', text: 'нельзя' } });
     equal(res.status, 200, 'код ответа');
     const parsed = JSON.parse(res.body);
     if (parsed.ok) throw new Error('заметка vault оказалась перезаписываемой');
+    // отказ должен быть по делу: внутренняя ошибка тоже приходит как ok:false и раньше проходила проверку
+    if (!parsed.error.includes('vault')) throw new Error(`отказ не по делу: ${parsed.error}`);
+});
+
+// кнопка «+» тулбара (SYSTEM/new-button.js) должна заводить настоящую папку
+// в PROJECTS/, а не только запись в базе — иначе раздел не попадёт в общий
+// список карточек (PROJECTS/Projects/projects-tab.js); удаление страницы должно
+// убирать эту папку целиком, а не оставлять мусор на диске
+check('POST /api/pages/create заводит папку в PROJECTS/, delete её убирает', async (port) => {
+    const title = `Смоук ${Date.now()}`;
+    const res = await request(port, '/api/pages/create', { method: 'POST', json: { title } });
+    equal(res.status, 200, 'код ответа');
+    const parsed = JSON.parse(res.body);
+    if (!parsed.ok || !parsed.folder) throw new Error(`неожиданный ответ: ${res.body.slice(0, 200)}`);
+    const dir = path.join(ROOT, 'PROJECTS', parsed.folder);
+    try {
+        if (!fs.existsSync(path.join(dir, 'README.md'))) throw new Error(`README.md не создан в ${dir}`);
+        await request(port, '/api/pages/delete', { method: 'POST', json: { id: parsed.id } });
+        if (fs.existsSync(dir)) throw new Error(`папка ${dir} пережила удаление страницы`);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true }); // подстраховка, если проверка упала раньше удаления
+    }
 });
 
 check('неизвестный /api — 404', async (port) => {
@@ -180,7 +234,7 @@ async function main() {
     // порт для прогона берём свободный и передаём через окружение: .env — настройка
     // рабочего сервера, смоук её не трогает
     const port = await freePort();
-    const server = await startServer(port);
+    await startServer(port); // ссылку держит stopServer — гасить сервер только через него
 
     let failed = 0;
     try {
@@ -194,7 +248,7 @@ async function main() {
             }
         }
     } finally {
-        server.kill();
+        stopServer();
     }
 
     console.log(failed ? `\nПровалено проверок: ${failed} из ${checks.length}` : `\nВсе проверки пройдены (${checks.length})`);

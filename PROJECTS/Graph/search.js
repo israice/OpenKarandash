@@ -2,14 +2,14 @@
 // Читает индекс, который собирает server.js — своего разбора здесь нет,
 // поэтому команда работает и без запущенного сервера.
 //
-//   node search.js "живая перезагрузка"
-//   node search.js --kind session "граф"
+//   node PROJECTS/Graph/search.js "живая перезагрузка"
+//   node PROJECTS/Graph/search.js --kind session "граф"
 
 const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
-const INDEX_FILE = path.join(__dirname, '.index.db');
+const INDEX_FILE = path.join(__dirname, '..', '..', 'DATA', '.index.db'); // всё, что сервер собрал сам, — в DATA
 
 // то же экранирование, что и на сервере: сырой ввод в MATCH роняет запрос
 function ftsQuery(raw) {
@@ -28,7 +28,7 @@ if (args[0] === '--kind') kind = args.splice(0, 2)[1];
 const query = args.join(' ');
 
 if (!query) {
-    console.error('Использование: node search.js [--kind code|note|session] "запрос"');
+    console.error('Использование: node PROJECTS/Graph/search.js [--kind code|note|session] "запрос"');
     process.exit(2);
 }
 

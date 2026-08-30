@@ -1,5 +1,3 @@
-.sessions.db
 .env
 .playwright-mcp
-/vault/
-.index.db
+/DATA/

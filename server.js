@@ -4,6 +4,9 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
+// серверная половина кнопки Edit — вся кнопка живёт в PROJECTS/Edit
+const { captureScreenshot, listScreens } = require('./PROJECTS/Edit/screenshot.js');
+const graph = require('./PROJECTS/Graph/graph-server.js');
 
 const ROOT = __dirname;
 
@@ -15,10 +18,13 @@ const ENV_FILE = path.join(ROOT, '.env');
 
 const ENV_TEMPLATE = `# Настройки и секреты проекта. В git не попадает — правьте прямо здесь.
 PORT=3001
+# Экран, с которого кнопка Edit снимает скриншот (индекс в списке мониторов,
+# считая с нуля) — меняется также из Settings в интерфейсе
+SCREENSHOT_SCREEN=0
 
 # Путь к CLI Claude, если его нет в PATH
 # CLAUDE_BIN=
-# Внешний Obsidian-vault вместо папки vault/ внутри проекта
+# Внешний Obsidian-vault вместо папки DATA/vault/ внутри проекта
 # OBSIDIAN_VAULT=
 `;
 
@@ -37,9 +43,25 @@ function loadEnv() {
 
 loadEnv();
 
+// правит значение прямо в .env (или дописывает строку, если её ещё нет) —
+// используется настройкой экрана для скриншотов из Settings
+function setEnvValue(key, value) {
+    process.env[key] = value;
+    const lines = fs.readFileSync(ENV_FILE, 'utf8').split(/\r?\n/);
+    const re = new RegExp(`^\\s*${key}\\s*=`);
+    const line = `${key}=${value}`;
+    const i = lines.findIndex((l) => re.test(l));
+    if (i >= 0) lines[i] = line;
+    else lines.push(line);
+    fs.writeFileSync(ENV_FILE, lines.join('\n'), 'utf8');
+}
+
+const DEFAULT_VIEW_OPTIONS = ['graph', 'flow', 'kanban', 'chat', 'home']; // ключи App.VIEWS, доступные для вкладки по умолчанию
+
 const PORT = Number(process.env.PORT) || 3001;
 const LIVE_RELOAD = process.env.NO_RELOAD !== '1';
 const POLL_MS = 400; // как часто сверяем время изменения файлов
+const EXIT_PORT_BUSY = 3; // код выхода дочернего процесса, по которому сторож уходит следом
 
 // ---------- перезапуск при изменении самого server.js ----------
 // Node читает файл один раз при старте, поэтому сервер работает в дочернем процессе,
@@ -50,14 +72,23 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
     let busy = false;          // дочерний процесс сейчас ведёт запрос к Claude
     let waiting = false;       // файл изменился, но перезапуск отложен до конца запроса
 
+    // server.js подключает через require и серверные модули вне себя самого
+    // (например PROJECTS/Edit/screenshot.js) — их правки тоже должны рестартовать
+    // сервер, иначе Node продолжает работать со старой версией из памяти
+    const WATCHED_FILES = [
+        __filename,
+        path.join(ROOT, 'PROJECTS/Edit/screenshot.js'),
+        path.join(ROOT, 'PROJECTS/Graph/graph-server.js'),
+    ];
+
     // сломанная правка не должна ронять сторожа вместе с сервером:
     // файл с синтаксической ошибкой не запускаем, старый процесс продолжает работать
     const isValid = () => {
         try {
-            execFileSync(process.execPath, ['--check', __filename], { stdio: 'ignore' });
+            for (const file of WATCHED_FILES) execFileSync(process.execPath, ['--check', file], { stdio: 'ignore' });
             return true;
         } catch {
-            console.error('server.js не парсится — оставляю работать прежнюю версию');
+            console.error('один из файлов сервера не парсится — оставляю работать прежнюю версию');
             return false;
         }
     };
@@ -65,7 +96,7 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
     const restart = () => {
         waiting = false;
         if (!isValid()) return; // починят файл — mtime изменится, и мы придём сюда снова
-        console.log('server.js изменён — перезапускаю сервер...');
+        console.log('файл сервера изменён — перезапускаю сервер...');
         if (!child) return start(); // прошлый процесс упал сам — просто поднимаем заново
         restarting = true;
         child.kill();
@@ -93,18 +124,23 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
                 return;
             }
             if (signal || code === 0) process.exit(0); // остановлен снаружи или завершился штатно
+            // порт занят: правкой server.js это не лечится, ждать нечего. иначе сторож
+            // жил бы вечно — крутил опрос файлов и держал cwd проекта, из-за чего папку
+            // проекта нельзя переименовать, пока процесс не убьют вручную
+            if (code === EXIT_PORT_BUSY) process.exit(EXIT_PORT_BUSY);
             // упал сам (например, ошибка в коде): сторож остаётся жив и поднимет
             // сервер, как только server.js поправят — иначе чинить было бы нечем
             console.error(`сервер упал (код ${code}) — жду исправления server.js`);
         });
     };
 
-    let mtime = fs.statSync(__filename).mtimeMs;
+    const latestMtime = () => Math.max(...WATCHED_FILES.map((file) => fs.statSync(file).mtimeMs));
+    let mtime = latestMtime();
 
     setInterval(() => {
         let current;
         try {
-            current = fs.statSync(__filename).mtimeMs;
+            current = latestMtime();
         } catch {
             return;
         }
@@ -113,7 +149,7 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
         mtime = current;
 
         if (busy) {
-            if (!waiting) console.log('server.js изменён — перезапущу после текущего запроса');
+            if (!waiting) console.log('файл сервера изменён — перезапущу после текущего запроса');
             waiting = true;
             return;
         }
@@ -219,8 +255,10 @@ function notifyClients(event = 'reload') {
 
 // fs.watch не даёт событий на некоторых ФС (диски Windows в WSL, сетевые шары),
 // поэтому следим за временем изменения файлов опросом — работает везде
-const VAULT_DIR = 'vault'; // Obsidian vault проекта: создаётся сам, лежит рядом с кодом
-const SKIP = new Set(['node_modules', '.git', VAULT_DIR]);
+const { DATA_DIR } = graph; // 'DATA': папку заводит модуль графа при загрузке
+// DATA целиком: vault переписывается при каждой пересборке, и сторож гонял бы
+// страницу по кругу — правка → пересборка → правка
+const SKIP = new Set(['node_modules', '.git', DATA_DIR]);
 
 function snapshot(dir, acc = new Map()) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -469,11 +507,14 @@ async function checkFileLock(file, sessionId) {
     // sessionId известен хуку с самого начала (в отличие от нашего run.sessionId,
     // который заполняется только после первой строки стрима) — но пока запрос
     // самый первый, стрим мог не успеть догнать: тогда берём самый свежий безымянный,
-    // как и в stopActiveRun. Вызов извне (например, интерактивная сессия в этом же
-    // проекте) сюда просто не попадёт — caller останется null, и это нормально
-    const caller = sessionId
-        ? all.find((r) => r.sessionId === sessionId) || null
-        : all.filter((r) => !r.sessionId).pop() || null;
+    // как и в stopActiveRun
+    const caller = (sessionId && all.find((r) => r.sessionId === sessionId))
+        || all.filter((r) => !r.sessionId).pop()
+        || null;
+
+    // не наш запуск (интерактивная сессия в терминале, другой инструмент) — очередь
+    // панели Sessions его не касается: ждать 85 секунд и получить отказ он не должен
+    if (!caller) return { ok: true };
 
     const files = new Set([resolved]);
     const deadline = Date.now() + LOCK_CHECK_TIMEOUT_MS;
@@ -542,12 +583,23 @@ const CHAT_PREAMBLE = `Режим обсуждения. Отвечай текс�
 
 async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
     if (!activeTarget) return send({ type: 'error', error: 'Claude не подключён' });
+    // цель фиксируем на весь запуск: пока идёт работа, в настройках могли переключить CLI
+    const target = activeTarget;
     if (!prompt) return send({ type: 'error', error: 'Пустой запрос' });
     if (model && !CLAUDE_MODELS.includes(model)) {
         return send({ type: 'error', error: `Неизвестная модель: ${model}` });
     }
     if (effort && !EFFORT_LEVELS.includes(effort)) {
         return send({ type: 'error', error: `Неизвестный уровень effort: ${effort}` });
+    }
+
+    // история сессий у каждого CLI своя (~/.claude/projects/<путь проекта>), а путь
+    // к проекту у Windows и WSL разный (C:\... и /mnt/c/...) — «--resume» чужого id
+    // всё равно вернёт ошибку CLI, поэтому объясняем причину сразу
+    const owner = sessionId ? getSessionTarget.get(sessionId)?.target : null;
+    if (owner && owner !== target.id) {
+        const label = TARGETS.find((t) => t.id === owner)?.label || owner;
+        return send({ type: 'error', error: `Сессия начата через ${label} — продолжить её можно только тем же CLI` });
     }
 
     const args = ['-p', '--output-format', 'stream-json', '--verbose'];
@@ -596,7 +648,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
         if (event.session_id && !startedSession) {
             startedSession = event.session_id;
             run.sessionId = startedSession;
-            startExchange(startedSession, prompt);
+            startExchange(startedSession, prompt, target.id);
             runs.set(startedSession, new Set());
             emit({ type: 'session', id: startedSession });
         }
@@ -622,6 +674,16 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
         if (event.type === 'result') {
             if (event.is_error) emit({ type: 'error', error: event.result || 'CLI вернул ошибку' });
             else answer = event.result || answer;
+
+            // usage.*_tokens — это состав контекста последнего запроса к модели;
+            // ponytail: окно фиксировано в 200k для всех моделей, свои размеры на модель — потом
+            const u = event.usage;
+            if (u) {
+                const used = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+                const percent = Math.min(100, Math.round(used / 200000 * 100));
+                if (startedSession) setSessionContext.run(percent, startedSession);
+                emit({ type: 'context', percent });
+            }
         }
 
         // лимиты подписки (5 часов / 7 дней) CLI присылает сам, на каждый запрос —
@@ -633,7 +695,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
 
     try {
         const input = mode === 'Chat' ? CHAT_PREAMBLE + prompt : prompt;
-        await runClaude(activeTarget, args, {
+        await runClaude(target, args, {
             input, timeoutMs: 600000, onLine,
             onSpawn: (child) => { run.child = child; },
         });
@@ -684,9 +746,9 @@ function readJson(req, limit = 100_000) {
 
 // ---------- хранилище сессий (SQLite) ----------
 
-// файл базы начинается с точки, поэтому слежение за файлами его не замечает
-// и правки базы не вызывают перезагрузку страницы
-const DB_FILE = path.join(ROOT, '.sessions.db');
+// база лежит в DATA, а эту папку слежение за файлами не обходит,
+// поэтому правки базы не вызывают перезагрузку страницы
+const DB_FILE = path.join(ROOT, DATA_DIR, '.sessions.db');
 const db = new DatabaseSync(DB_FILE);
 // WAL: чтение не блокирует запись, поэтому сборка карты и поиск не мешают чату.
 // busy_timeout: если папку обслуживает второй экземпляр сервера, ждём его
@@ -716,11 +778,65 @@ try {
     db.exec('ALTER TABLE sessions ADD COLUMN thumb TEXT');
 } catch { /* колонка уже есть */ }
 
+try {
+    db.exec('ALTER TABLE sessions ADD COLUMN context_percent INTEGER');
+} catch { /* колонка уже есть */ }
+
+// каким CLI начата сессия: у Windows-claude и WSL-claude свои хранилища истории
+// (~/.claude/projects/<путь проекта>, а путь к проекту у них разный), поэтому
+// «--resume» чужого id всегда возвращает ошибку — см. askClaude
+try {
+    db.exec('ALTER TABLE sessions ADD COLUMN target TEXT');
+} catch { /* колонка уже есть */ }
+
+// хранилище вкладки Flow (PROJECTS/Flow/flow.js): раньше жило в localStorage
+// браузера, теперь — здесь, ключ в ключ с прежними именами localStorage,
+// чтобы не переписывать код вокруг чтения/записи каждого поля отдельно
+db.exec(`
+    CREATE TABLE IF NOT EXISTS flow_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+`);
+const listFlowState = db.prepare('SELECT key, value FROM flow_state');
+const setFlowStateRow = db.prepare(`
+    INSERT INTO flow_state (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+`);
+
+// страницы, создаваемые кнопкой «+» в тулбаре (SYSTEM/new-button.js) — каждая
+// заводит настоящую папку в PROJECTS/ с README.md, чтобы попасть в общий список
+// разделов (PROJECTS/Projects/projects-tab.js) наравне со встроенными
+db.exec(`
+    CREATE TABLE IF NOT EXISTS pages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL
+    );
+`);
+try {
+    db.exec("ALTER TABLE pages ADD COLUMN folder TEXT NOT NULL DEFAULT ''");
+} catch { /* колонка уже есть */ }
+const listPages = db.prepare('SELECT id, title, folder FROM pages ORDER BY id');
+const getPage = db.prepare('SELECT folder FROM pages WHERE id = ?');
+const insertPage = db.prepare('INSERT INTO pages (title, folder) VALUES (?, ?)');
+const deletePage = db.prepare('DELETE FROM pages WHERE id = ?');
+
+// имя папки из заголовка: только буквы/цифры/пробелы/дефисы, без выхода за PROJECTS/
+function folderNameFromTitle(title) {
+    const base = title.replace(/[\\/:*?"<>|]/g, '').trim() || 'Проект';
+    let folder = base;
+    let n = 2;
+    while (fs.existsSync(path.join(ROOT, 'PROJECTS', folder))) folder = `${base} ${n++}`;
+    return folder;
+}
+
 const upsertSession = db.prepare(`
-    INSERT INTO sessions (id, title, updated_at)
-    VALUES (?, ?, ?)
+    INSERT INTO sessions (id, title, updated_at, target)
+    VALUES (?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at
 `);
+
+const getSessionTarget = db.prepare('SELECT target FROM sessions WHERE id = ?');
 
 const upsertMessage = db.prepare(`
     INSERT INTO messages (session_id, position, role, text)
@@ -730,6 +846,8 @@ const upsertMessage = db.prepare(`
 
 const touchSession = db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?');
 const setSessionThumb = db.prepare('UPDATE sessions SET thumb = ? WHERE id = ?');
+const setSessionContext = db.prepare('UPDATE sessions SET context_percent = ? WHERE id = ?');
+const getSessionContext = db.prepare('SELECT context_percent AS contextPercent FROM sessions WHERE id = ?');
 
 const listSessions = db.prepare(`
     SELECT s.id, s.title, s.updated_at AS updatedAt, s.thumb AS thumb,
@@ -761,9 +879,22 @@ function deleteSession(id) {
 
 // вопрос записываем сразу, как CLI сообщил id: сессия появляется в списке
 // в начале работы, а не после ответа
-function startExchange(sessionId, question) {
-    upsertSession.run(sessionId, extractTitle(question, 120), new Date().toISOString());
+function startExchange(sessionId, question, target) {
+    upsertSession.run(sessionId, extractTitle(question, 120), new Date().toISOString(), target || null);
     upsertMessage.run(sessionId, countMessages.get(sessionId).n, 'user', question);
+}
+
+// тема сессии: режим комментариев кладёт в вопрос «Элемент интерфейса… Комментарий: …»,
+// и настоящее намерение — именно текст комментария
+function extractTitle(raw, maxLen) {
+    const text = String(raw || '').trim();
+    const comment = text.match(/Комментарий:\s*([\s\S]+)/);
+    const line = (comment ? comment[1] : text).split(/\r?\n/)[0].trim();
+    return line.slice(0, maxLen) || 'Без темы';
+}
+
+function sessionTitle(session) {
+    return extractTitle(session.title, 80);
 }
 
 // шаги работы (вызовы инструментов) хранятся вместе с перепиской,
@@ -779,804 +910,17 @@ function finishExchange(sessionId, answer) {
 
 // ---------- граф Obsidian ----------
 
-// vault читаем прямо с диска: Local REST API требует запущенного Obsidian и токена,
-// а нам нужны только имена заметок и ссылки [[...]] между ними
-const VAULT = process.env.OBSIDIAN_VAULT || path.join(ROOT, VAULT_DIR);
-
-// подпапка vault под карту файлов проекта. её содержимое генерируем мы, поэтому
-// перезаписываем целиком; заметки, написанные руками, лежат вне её и не страдают
-const MAP_DIR = 'Проект';
-const UNIT_DIR = 'Секции';   // заметки секций и функций внутри крупных файлов
-const API_SUBDIR = 'API';    // заметки API-роутов: стык клиента и сервера
-const SESSION_DIR = 'Сессии'; // память о прошлых сессиях, эту папку не сносим
-
-// в этих файлах ищем упоминания других файлов проекта — из них и получаются рёбра
-const TEXT_FILES = /\.(js|mjs|cjs|ts|tsx|jsx|json|html|css|md|txt|yml|yaml|sh|py|sql)$/i;
-const MAX_SCAN_BYTES = 512 * 1024; // огромные файлы (дампы, бандлы) не сканируем
-
-// служебные папки Obsidian: настройки и корзина — не заметки
-const VAULT_SKIP = new Set(['.obsidian', '.trash', '.git']);
-
-function collectNotes(dir, base, acc = []) {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (VAULT_SKIP.has(entry.name)) continue;
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) collectNotes(full, base, acc);
-        else if (entry.name.endsWith('.md')) acc.push(path.relative(base, full).split(path.sep).join('/'));
-    }
-    return acc;
-}
-
-// в карту идёт всё, что физически лежит в папке проекта, включая скрытые файлы
-// и то, что игнорирует git (.sessions.db, .env, локальные настройки).
-// исключений ровно два, и оба вынужденные:
-//   .git — служебная база на тысячи объектов, содержимое проекта в ней дублируется
-//   vault — сама карта: заметки о заметках плодились бы с каждой пересборкой
-const MAP_SKIP = new Set(['.git', 'node_modules', VAULT_DIR]);
-
-function projectFiles(dir = ROOT, acc = []) {
-    let entries;
-    try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-        return acc; // папка исчезла или недоступна — пропускаем её целиком
-    }
-    for (const entry of entries) {
-        if (MAP_SKIP.has(entry.name)) continue;
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) projectFiles(full, acc);
-        else acc.push(path.relative(ROOT, full).split(path.sep).join('/'));
-    }
-    return dir === ROOT ? acc.sort() : acc;
-}
-
-// карта проекта в виде заметок Obsidian. рёбра берём только из якорных мест —
-// строковых литералов, атрибутов и wikilinks. свободный поиск имени файла в тексте
-// даёт слишком много ложных связей, поэтому от него отказались
-const API_REF = /['"`](\/api\/[a-z0-9/_-]+)['"`]/gi;      // и fetch('/api/…'), и api('/api/…'), и path: в хуках
-const API_ROUTE = /urlPath === '(\/api\/[a-z0-9/_-]+)'/g; // объявление роута в server.js
-const HTML_REF = /(?:src|href)\s*=\s*["']([^"':#?]+)["']/gi;
-const MODULE_REF = /(?:require\(|from\s+|import\()\s*['"](\.[^'"]+)['"]/g;
-const SECTION = /^\s*\/\/ -{3,} (.+?) -{3,}\s*$/;
-const TOP_FUNCTION = /^(\s*)(?:async )?function ([A-Za-z0-9_$]+)\s*\(/;
-const BIG_FILE_LINES = 200; // мелкие файлы на секции не режем — только зашумит граф
-
-// имя заметки должно быть уникальным по всему vault: buildVaultGraph резолвит
-// [[ссылки]] по basename, как это делает сам Obsidian
-function noteName(text) {
-    return text.replace(/[\\/:*?"<>|]/g, '-').trim();
-}
-
-// секции (комментарии-разделители) и функции верхнего уровня — узлы внутри файла.
-// тело функции считаем до следующего объявления того же отступа: без AST, но
-// этого хватает, чтобы увидеть, кто кого вызывает
-// перед поиском вызовов вычищаем строки и комментарии: имя функции, упомянутое
-// в тексте сообщения или в пояснении, вызовом не является. содержимое заменяем
-// пробелами, а не выкусываем — так не склеятся соседние идентификаторы
-function stripStringsAndComments(code) {
-    let out = '';
-    let mode = null;      // '//' | '/*' | "'" | '"' | '`'
-    const inserts = [];   // вложенные ${...}: в них лежит код, его сохраняем
-    let braces = 0;       // глубина фигурных скобок внутри текущей подстановки
-
-    for (let i = 0; i < code.length; i++) {
-        const ch = code[i];
-        const next = code[i + 1];
-
-        if (mode === '//') {
-            if (ch === '\n') { mode = null; out += ch; } else out += ' ';
-            continue;
-        }
-        if (mode === '/*') {
-            if (ch === '*' && next === '/') { mode = null; out += '  '; i++; }
-            else out += ch === '\n' ? ch : ' ';
-            continue;
-        }
-        if (mode) { // внутри строки или шаблона
-            if (ch === '\\') { out += '  '; i++; continue; } // экранированный символ целиком
-            // ${...} в шаблоне — это выражение, а не текст: возвращаемся к разбору кода
-            if (mode === '`' && ch === '$' && next === '{') {
-                inserts.push(braces);
-                braces = 0;
-                mode = null;
-                out += '  ';
-                i++;
-                continue;
-            }
-            if (ch === mode) { mode = null; out += ' '; continue; }
-            out += ch === '\n' ? ch : ' ';
-            continue;
-        }
-
-        if (ch === '/' && next === '/') { mode = '//'; out += '  '; i++; continue; }
-        if (ch === '/' && next === '*') { mode = '/*'; out += '  '; i++; continue; }
-        if (ch === "'" || ch === '"' || ch === '`') { mode = ch; out += ' '; continue; }
-
-        // выходим из подстановки только по её закрывающей скобке, а не по вложенной
-        if (inserts.length) {
-            if (ch === '{') braces++;
-            else if (ch === '}') {
-                if (braces === 0) { braces = inserts.pop(); mode = '`'; out += ' '; continue; }
-                braces--;
-            }
-        }
-        out += ch;
-    }
-    return out;
-}
-
-function parseUnits(file, text) {
-    const lines = text.split(/\r?\n/); // файлы проекта в CRLF
-    if (lines.length < BIG_FILE_LINES) return [];
-
-    const units = [];
-    lines.forEach((line, i) => {
-        const section = line.match(SECTION);
-        if (section) {
-            units.push({ kind: 'section', title: section[1], line: i + 1, indent: 0 });
-            return;
-        }
-        const fn = line.match(TOP_FUNCTION);
-        if (fn) units.push({ kind: 'function', title: fn[2], line: i + 1, indent: fn[1].length });
-    });
-
-    // границы: юнит тянется до следующего юнита с тем же или меньшим отступом
-    units.forEach((unit, i) => {
-        const next = units.slice(i + 1).find((other) => other.indent <= unit.indent);
-        unit.body = lines.slice(unit.line, next ? next.line - 1 : lines.length).join('\n');
-        unit.code = stripStringsAndComments(unit.body); // по нему ищем вызовы
-        unit.note = `${MAP_DIR}/${UNIT_DIR}/${noteName(`${path.basename(file)} ${unit.title}`)}`;
-        // функция принадлежит последней секции выше себя — так граф становится
-        // деревом файл → секция → функция, а не плоским веером от файла
-        if (unit.kind === 'function') {
-            const owner = units.slice(0, i).reverse().find((other) => other.kind === 'section');
-            unit.parent = owner ? owner.note : null;
-        }
-    });
-    return units;
-}
-
-// история git: когда файл появился, как часто меняется и с чем меняется вместе
-function gitHistory() {
-    const empty = { byFile: new Map(), pairs: new Map(), commits: 0 };
-    let out;
-    try {
-        out = execFileSync('git', ['log', '--pretty=format:%h|%ad|%s', '--date=short', '--name-only'], {
-            cwd: ROOT,
-            encoding: 'utf8',
-            windowsHide: true,
-            maxBuffer: 16 * 1024 * 1024,
-        });
-    } catch {
-        return empty; // не репозиторий или пустая история
-    }
-
-    const commits = out.split(/\r?\n\s*\r?\n/).map((block) => {
-        const [head, ...rest] = block.split(/\r?\n/);
-        const [hash, date, subject] = (head || '').split('|');
-        return { hash, date, subject, files: rest.filter(Boolean) };
-    }).filter((commit) => commit.hash);
-    if (!commits.length) return empty;
-
-    const byFile = new Map();
-    for (const commit of commits) {
-        for (const file of commit.files) {
-            const entry = byFile.get(file) || { commits: 0, last: commit, first: commit };
-            entry.commits++;
-            entry.first = commit; // log идёт от новых к старым, последний перезаписавший — самый старый
-            byFile.set(file, entry);
-        }
-    }
-
-    // файл, который меняется почти в каждом коммите (VERSION.md), связан со всем
-    // подряд и превратился бы в ложный хаб — из пар его исключаем
-    const noisy = new Set([...byFile].filter(([, e]) => e.commits / commits.length > 0.6).map(([f]) => f));
-    const pairs = new Map();
-    for (const commit of commits) {
-        const files = commit.files.filter((file) => !noisy.has(file));
-        for (let i = 0; i < files.length; i++) {
-            for (let j = i + 1; j < files.length; j++) {
-                const key = JSON.stringify([files[i], files[j]].sort());
-                pairs.set(key, (pairs.get(key) || 0) + 1);
-            }
-        }
-    }
-    return { byFile, pairs, commits: commits.length };
-}
-
-function readText(file) {
-    try {
-        if (fs.statSync(path.join(ROOT, file)).size > MAX_SCAN_BYTES) return '';
-        return fs.readFileSync(path.join(ROOT, file), 'utf8');
-    } catch {
-        return ''; // файл исчез между обходом и чтением
-    }
-}
-
-// заметки, записанные в текущую пересборку: по ним видно, что устарело
-let writtenNotes = new Set();
-
-// правки идут пачками, а меняется обычно одна заметка из двух сотен. переписывать
-// весь vault каждые три секунды — лишняя работа и лишний износ диска
-function writeNote(notePath, frontmatter, body) {
-    const note = [
-        '---',
-        ...Object.entries(frontmatter).filter(([, value]) => value !== undefined && value !== '').map(([k, v]) => `${k}: ${v}`),
-        '---',
-        '',
-        ...body,
-        '',
-    ].join('\n');
-
-    writtenNotes.add(path.resolve(notePath));
-    try {
-        if (fs.readFileSync(notePath, 'utf8') === note) return; // содержимое то же — не трогаем
-    } catch {
-        // заметки ещё нет — создадим ниже
-    }
-    fs.mkdirSync(path.dirname(notePath), { recursive: true });
-    fs.writeFileSync(notePath, note);
-}
-
-// осиротевшие заметки: файл удалили или переименовали, а заметка о нём осталась
-function dropStaleNotes(dir) {
-    let entries;
-    try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-        return;
-    }
-    for (const entry of entries) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-            dropStaleNotes(full);
-            try {
-                if (!fs.readdirSync(full).length) fs.rmdirSync(full); // папка опустела
-            } catch {
-                // не удалось — не беда, попробуем в следующий раз
-            }
-            continue;
-        }
-        if (entry.name.endsWith('.md') && !writtenNotes.has(path.resolve(full))) fs.unlinkSync(full);
-    }
-}
-
-function syncProjectMap() {
-    const files = projectFiles();
-    const known = new Set(files);
-    const history = gitHistory();
-
-    const mapRoot = path.join(VAULT, MAP_DIR);
-    writtenNotes = new Set(); // начинаем новый круг: что не запишем — то устарело
-
-    // первый проход: разбираем тексты, собираем роуты и юниты
-    const texts = new Map();
-    const units = new Map();
-    const routeImpl = new Map(); // роут → файл, где он объявлен
-    for (const file of files) {
-        if (!TEXT_FILES.test(file)) continue;
-        const text = readText(file);
-        texts.set(file, text);
-        units.set(file, parseUnits(file, text));
-        for (const match of text.matchAll(API_ROUTE)) routeImpl.set(match[1], file);
-    }
-
-    // второй проход: заметки файлов со ссылками
-    const routeCallers = new Map();
-    for (const file of files) {
-        const text = texts.get(file) || '';
-        const links = new Set();
-
-        for (const match of text.matchAll(API_REF)) {
-            const route = match[1];
-            if (!routeImpl.has(route)) continue; // роут, которого нет — не узел
-            links.add(`${MAP_DIR}/${API_SUBDIR}/${noteName(route.slice(5))}`);
-            if (routeImpl.get(route) !== file) {
-                const callers = routeCallers.get(route) || new Set();
-                callers.add(file);
-                routeCallers.set(route, callers);
-            }
-        }
-        for (const match of [...text.matchAll(HTML_REF), ...text.matchAll(MODULE_REF)]) {
-            const target = resolveRef(match[1], file, known);
-            if (target && target !== file) links.add(`${MAP_DIR}/${target}`);
-        }
-        if (file.endsWith('.md')) {
-            for (const match of text.matchAll(/\[\[([^\]|#^]+)/g)) links.add(match[1].trim());
-        }
-
-        const git = history.byFile.get(file);
-        const fileUnits = units.get(file) || [];
-        writeNote(path.join(mapRoot, `${file}.md`), {
-            kind: 'file',
-            file,
-            lines: text ? text.split(/\r?\n/).length : undefined,
-            commits: git ? git.commits : undefined,
-            first_seen: git ? git.first.date : undefined,
-            last_commit: git ? `${git.last.date} ${git.last.subject}` : undefined,
-        }, [
-            `Файл проекта: \`${file}\``,
-            '',
-            ...section('Ссылается на', [...links].sort().map((target) => `- [[${target}]]`)),
-            ...section('Внутри', fileUnits
-                .filter((unit) => !unit.parent) // функции внутри секций перечислит сама секция
-                .map((unit) => `- [[${unit.note}]] (строка ${unit.line})`)),
-        ]);
-    }
-
-    // заметки секций и функций: связь с родителем и вызовы соседей
-    for (const [file, fileUnits] of units) {
-        const names = new Map(fileUnits.filter((u) => u.kind === 'function').map((u) => [u.title, u]));
-        for (const unit of fileUnits) {
-            // секция не «вызывает» свои функции — она их содержит, иначе одна и та же
-            // связь попадёт в граф дважды и разными смыслами
-            const own = unit.kind === 'section'
-                ? fileUnits.filter((other) => other.parent === unit.note)
-                : [];
-            const calls = new Set();
-            if (unit.kind === 'function') {
-                for (const [name, target] of names) {
-                    // (?<![.\w$]) отсекает методы объектов: res.close(), Promise.resolve() —
-                    // иначе общие имена вроде open/close дают лавину ложных вызовов
-                    if (target !== unit && new RegExp(`(?<![.\\w$])${name}\\s*\\(`).test(unit.code)) calls.add(target.note);
-                }
-            }
-            writeNote(path.join(VAULT, `${unit.note}.md`), {
-                kind: unit.kind,
-                file,
-                line: unit.line,
-            }, [
-                // ссылаемся только на прямого родителя: функция внутри секции —
-                // на секцию, иначе в графе появится второе ребро до файла
-                `${unit.kind === 'section' ? 'Секция' : 'Функция'} \`${unit.title}\` в [[${unit.parent || `${MAP_DIR}/${file}`}]], строка ${unit.line}.`,
-                '',
-                ...section('Внутри', own.map((other) => `- [[${other.note}]] (строка ${other.line})`)),
-                ...section('Вызывает', [...calls].sort().map((note) => `- [[${note}]]`)),
-            ]);
-        }
-    }
-
-    // заметки API-роутов: точка стыковки клиента и сервера
-    for (const [route, impl] of routeImpl) {
-        const callers = [...(routeCallers.get(route) || [])].sort();
-        writeNote(path.join(mapRoot, API_SUBDIR, `${noteName(route.slice(5))}.md`), {
-            kind: 'route',
-            route,
-        }, [
-            `API-роут \`${route}\`, реализован в [[${MAP_DIR}/${impl}]].`,
-            '',
-            ...section('Вызывают', callers.map((file) => `- [[${MAP_DIR}/${file}]]`)),
-        ]);
-    }
-
-    // заметка «менялись вместе»: рёбра из истории git, вес = число общих коммитов
-    const pairs = [...history.pairs].filter(([, weight]) => weight >= 2);
-    if (pairs.length) {
-        writeNote(path.join(mapRoot, 'История git.md'), {
-            kind: 'history',
-            commits: history.commits,
-        }, [
-            `Файлы, которые меняются вместе (из ${history.commits} коммитов).`,
-            '',
-            ...pairs.sort((a, b) => b[1] - a[1]).flatMap(([key, weight]) => {
-                const [a, b] = JSON.parse(key);
-                return known.has(a) && known.has(b) ? [`- ${weight}× [[${MAP_DIR}/${a}]] ↔ [[${MAP_DIR}/${b}]]`] : [];
-            }),
-        ]);
-    }
-}
-
-// путь из src=/href=/require() относительно файла, где встретился
-function resolveRef(ref, from, known) {
-    if (/^[a-z]+:/i.test(ref)) return null; // http:, data:, obsidian: — не файлы проекта
-    const base = ref.startsWith('.') ? path.posix.join(path.posix.dirname(from), ref) : ref.replace(/^\//, '');
-    for (const candidate of [base, `${base}.js`, `${base}.mjs`, `${base}/index.js`]) {
-        if (known.has(candidate)) return candidate;
-    }
-    return null;
-}
-
-function section(title, items) {
-    return items.length ? [`## ${title}`, ...items, ''] : [];
-}
-
-// vault заводим и наполняем при старте сервера, дальше обновляем после правок —
-// к моменту, когда пользователь откроет вкладку Graph, карта уже готова
-function prepareVault() {
-    try {
-        fs.mkdirSync(VAULT, { recursive: true });
-        syncProjectMap();
-        syncSessionNotes();
-        dropStaleNotes(path.join(VAULT, MAP_DIR)); // карта: файл исчез — заметка тоже
-        dropStaleNotes(path.join(VAULT, SESSION_DIR)); // сессию удалили из списка — и заметку
-    } catch (error) {
-        console.error(`Не удалось собрать карту проекта в vault: ${error.message}`);
-    }
-    rebuildSearchIndex(); // индекс строим и при частичной карте: поиск лучше устаревшего ничего
-    if (clients.size) notifyClients('map');
-}
-
-// frontmatter заметки: только простые «ключ: значение», без вложенности —
-// ровно то, что пишет writeNote
-function readFrontmatter(text) {
-    const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-    if (!match) return {};
-    const meta = {};
-    for (const line of match[1].split(/\r?\n/)) {
-        const pair = line.match(/^([a-z_]+):\s*(.*)$/i);
-        if (pair) meta[pair[1]] = pair[2];
-    }
-    return meta;
-}
-
-function buildVaultGraph() {
-    if (!fs.existsSync(VAULT)) return { ok: false, error: `Vault не найден: ${VAULT}` };
-
-    const paths = collectNotes(VAULT, VAULT);
-
-    // ссылку ищем сначала по полному пути — так одноимённые файлы из разных папок
-    // остаются разными узлами. по короткому имени резолвим только то, что однозначно:
-    // именно так ведёт себя и сам Obsidian, требуя путь при совпадении имён
-    const byPath = new Map(paths.map((note) => [note.toLowerCase(), note]));
-    const byName = new Map();
-    const ambiguous = new Set();
-    for (const note of paths) {
-        const name = path.basename(note, '.md').toLowerCase();
-        if (byName.has(name)) ambiguous.add(name);
-        byName.set(name, note);
-    }
-    for (const name of ambiguous) byName.delete(name);
-
-    function resolveLink(raw) {
-        const link = raw.trim().replace(/\.md$/i, '');
-        return byPath.get(`${link.toLowerCase()}.md`) || byName.get(path.basename(link).toLowerCase());
-    }
-
-    const notes = [];
-    const links = new Set();
-    for (const note of paths) {
-        let text;
-        try {
-            text = fs.readFileSync(path.join(VAULT, note), 'utf8');
-        } catch {
-            continue; // заметку удалили между обходом и чтением
-        }
-
-        const meta = readFrontmatter(text);
-        notes.push({
-            path: note,
-            kind: meta.kind || 'note', // написанные руками заметки без frontmatter
-            file: meta.file,
-            line: meta.line ? Number(meta.line) : undefined,
-            route: meta.route,
-            date: meta.date,
-            group: note.split('/')[0],
-        });
-
-        // из [[Имя|подпись#заголовок]] нужна только часть до | # ^
-        for (const match of text.matchAll(/\[\[([^\]|#^]+)/g)) {
-            const target = resolveLink(match[1]);
-            // пара нормализуется: заметка ссылается на родителя, родитель — на неё,
-            // но в графе это одно ребро
-            if (target && target !== note) links.add(JSON.stringify([note, target].sort()));
-        }
-    }
-
-    return {
-        ok: true,
-        vault: path.basename(VAULT),
-        notes,
-        links: [...links].map((pair) => JSON.parse(pair)),
-    };
-}
-
-// ---------- память о сессиях ----------
-
-// заметки сессий лежат вне MAP_DIR и потому переживают пересборку карты.
-// это память: её не сносим даже при сбросе списка сессий
-const EDITING_TOOLS = /^(Edit|Write|NotebookEdit) (.+)$/;
-
-// тема сессии: режим комментариев кладёт в вопрос «Элемент интерфейса… Комментарий: …»,
-// и настоящее намерение — именно текст комментария
-function extractTitle(raw, maxLen) {
-    const text = String(raw || '').trim();
-    const comment = text.match(/Комментарий:\s*([\s\S]+)/);
-    const line = (comment ? comment[1] : text).split(/\r?\n/)[0].trim();
-    return line.slice(0, maxLen) || 'Без темы';
-}
-
-function sessionTitle(session) {
-    return extractTitle(session.title, 80);
-}
-
-function sessionNote(session) {
-    const date = String(session.updatedAt || '').slice(0, 10);
-    return noteName(`${date} ${sessionTitle(session)} ${String(session.id).slice(0, 8)}`);
-}
-
-function syncSessionNotes() {
-    const files = projectFiles();
-    const byName = new Map();
-    for (const file of files) byName.set(path.basename(file).toLowerCase(), file);
-
-    const noteDir = path.join(VAULT, SESSION_DIR);
-    for (const session of listSessions.all()) {
-        const messages = listMessages.all(session.id);
-        const spoken = messages.filter((m) => m.role === 'user' || m.role === 'assistant');
-        const touched = new Set();
-        for (const message of messages) {
-            if (message.role !== 'tool') continue;
-            const edit = message.text.match(EDITING_TOOLS);
-            const target = edit && byName.get(path.basename(edit[2]).toLowerCase());
-            if (target) touched.add(target);
-        }
-
-        // оборванные сессии без ответа и без правок памяти не заслуживают
-        if (!spoken.some((m) => m.role === 'assistant') && !touched.size) continue;
-
-        // сессия устарела, если затронутые файлы правились уже после неё —
-        // иначе прошлое решение читалось бы как актуальное
-        const when = Date.parse(session.updatedAt) || 0;
-        const changed = [...touched].filter((file) => {
-            try {
-                return fs.statSync(path.join(ROOT, file)).mtimeMs > when + 60_000;
-            } catch {
-                return false;
-            }
-        });
-
-        const answer = [...spoken].reverse().find((m) => m.role === 'assistant');
-        writeNote(path.join(noteDir, `${sessionNote(session)}.md`), {
-            kind: 'session',
-            date: String(session.updatedAt || '').slice(0, 10),
-            messages: session.messageCount,
-            stale: changed.length ? 'true' : undefined,
-        }, [
-            ...(changed.length ? [`⚠ После этой сессии менялись: ${changed.join(', ')}`, ''] : []),
-            `## Что просили`,
-            sessionTitle(session),
-            '',
-            ...section('Чем закончилось', answer ? [answer.text.split(/\r?\n\r?\n/)[0].slice(0, 400)] : []),
-            ...section('Файлы', [...touched].sort().map((file) => `- [[${MAP_DIR}/${file}]]`)),
-        ]);
-    }
-}
-
-// ---------- поиск по проекту (FTS5) ----------
-
-// индекс — производный кэш, его можно удалить и пересобрать, поэтому он живёт
-// отдельно от .sessions.db, где переписка существует в единственном экземпляре.
-// имя с точки: snapshot() такие пропускает, и запись в базу не вызовет перезагрузку
-const INDEX_FILE = path.join(ROOT, '.index.db');
-const searchDb = new DatabaseSync(INDEX_FILE);
-searchDb.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
-
-// unicode61 нужен для кириллицы, prefix — чтобы работал поиск по началу слова
-searchDb.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(
-        kind UNINDEXED,
-        ref  UNINDEXED,
-        title,
-        body,
-        tokenize = 'unicode61 remove_diacritics 2',
-        prefix = '2 3'
-    );
-`);
-
-const insertDoc = searchDb.prepare('INSERT INTO docs(kind, ref, title, body) VALUES (?, ?, ?, ?)');
-
-// сырой ввод в MATCH роняет запрос («fts5: syntax error near "."»), поэтому каждое
-// слово оборачиваем в кавычки, а последнему разрешаем префиксный поиск
-function ftsQuery(raw) {
-    const terms = String(raw || '')
-        .split(/\s+/)
-        .filter(Boolean)
-        .map((term) => `"${term.replace(/"/g, '""')}"`);
-    if (!terms.length) return '';
-    terms[terms.length - 1] += '*';
-    return terms.join(' ');
-}
-
-// индекс собираем целиком: весь проект — сотни килобайт, полная пересборка
-// занимает единицы миллисекунд, инкрементальность тут не окупается
-function rebuildSearchIndex() {
-    searchDb.exec('BEGIN');
-    try {
-        searchDb.exec('DELETE FROM docs');
-
-        // код: крупные файлы режем по секциям, чтобы попадание указывало на узел графа
-        for (const file of projectFiles()) {
-            if (!TEXT_FILES.test(file)) continue;
-            const text = readText(file);
-            if (!text) continue;
-
-            const units = parseUnits(file, text).filter((unit) => unit.kind === 'section');
-            if (units.length) {
-                for (const unit of units) insertDoc.run('code', unit.note, `${file} › ${unit.title}`, unit.body);
-            } else {
-                insertDoc.run('code', `${MAP_DIR}/${file}`, file, text);
-            }
-        }
-
-        // заметки vault: и сгенерированные, и написанные руками
-        for (const note of collectNotes(VAULT, VAULT)) {
-            const text = readText(path.join(VAULT_DIR, note)) || safeRead(path.join(VAULT, note));
-            if (text) insertDoc.run('note', note.replace(/\.md$/, ''), note, text);
-        }
-
-        // сессии: только человеческая часть переписки. вывод инструментов — это
-        // 1500 строк вида «Read index.html», в поиске от них один шум
-        for (const session of listSessions.all()) {
-            const messages = listMessages.all(session.id).filter((m) => m.role === 'user' || m.role === 'assistant');
-            if (!messages.length) continue;
-            insertDoc.run(
-                'session',
-                `${SESSION_DIR}/${sessionNote(session)}`,
-                sessionTitle(session),
-                messages.map((m) => m.text).join('\n\n'),
-            );
-        }
-
-        searchDb.exec('COMMIT');
-    } catch (error) {
-        searchDb.exec('ROLLBACK');
-        console.error(`Не удалось собрать поисковый индекс: ${error.message}`);
-    }
-}
-
-function safeRead(file) {
-    try {
-        return fs.readFileSync(file, 'utf8');
-    } catch {
-        return '';
-    }
-}
-
-function searchProject(query, limit = 20) {
-    const match = ftsQuery(query);
-    if (!match) return { ok: true, hits: [] };
-    try {
-        // веса по колонкам: совпадение в заголовке важнее, чем в теле
-        const hits = searchDb.prepare(`
-            SELECT kind, ref, title, snippet(docs, 3, '«', '»', '…', 12) AS snippet
-            FROM docs WHERE docs MATCH ? ORDER BY bm25(docs, 0, 0, 10.0, 1.0) LIMIT ?
-        `).all(match, Math.min(Number(limit) || 20, 100));
-        return { ok: true, hits };
-    } catch (error) {
-        return { ok: false, error: `Не удалось выполнить поиск: ${error.message}` };
-    }
-}
-
-// ---------- чтение и правка файла из графа ----------
-
-// узел графа открывается в окне с содержимым, поэтому нужен доступ к самому файлу.
-// путь приходит от клиента — проверяем его так же, как при раздаче статики
-const MAX_EDIT_BYTES = 2 * 1024 * 1024; // больше в textarea всё равно не отредактировать
-
-// сравнивать надо реальные пути: символическая ссылка внутри проекта указывала бы
-// наружу, а обычная склейка строк этого не заметила бы
-const ROOT_REAL = fs.realpathSync(ROOT);
-
-function resolveInsideRoot(relative) {
-    const candidate = path.resolve(ROOT_REAL, String(relative || ''));
-    let real;
-    try {
-        real = fs.realpathSync(candidate);
-    } catch {
-        // файла может не быть — тогда проверяем папку, в которой он должен лежать
-        try {
-            real = path.join(fs.realpathSync(path.dirname(candidate)), path.basename(candidate));
-        } catch {
-            return null;
-        }
-    }
-    return real === ROOT_REAL || real.startsWith(ROOT_REAL + path.sep) ? real : null;
-}
-
-function readProjectFile(relative) {
-    const full = resolveInsideRoot(relative);
-    if (!full) return { ok: false, error: 'Путь за пределами проекта' };
-
-    let stat;
-    try {
-        stat = fs.statSync(full);
-    } catch {
-        return { ok: false, error: `Файл не найден: ${relative}` };
-    }
-    if (stat.isDirectory()) return { ok: false, error: 'Это папка, а не файл' };
-
-    const rel = path.relative(ROOT_REAL, full).split(path.sep).join('/');
-    if (!TEXT_FILES.test(rel)) {
-        return { ok: true, path: rel, binary: true, size: stat.size, editable: false };
-    }
-    if (stat.size > MAX_EDIT_BYTES) {
-        return { ok: true, path: rel, binary: true, size: stat.size, editable: false, note: 'Файл слишком велик для правки' };
-    }
-
-    // заметки vault генерируются заново при каждой пересборке: править их бессмысленно,
-    // правка исчезнет через несколько секунд
-    const generated = rel.startsWith(`${VAULT_DIR}/`);
-    return {
-        ok: true,
-        path: rel,
-        text: fs.readFileSync(full, 'utf8'),
-        size: stat.size,
-        editable: !generated,
-        note: generated ? 'Заметка собирается сервером — правки затрутся при следующей пересборке' : undefined,
-    };
-}
-
-function writeProjectFile(relative, text) {
-    const full = resolveInsideRoot(relative);
-    if (!full) return { ok: false, error: 'Путь за пределами проекта' };
-
-    const rel = path.relative(ROOT_REAL, full).split(path.sep).join('/');
-    if (rel.startsWith(`${VAULT_DIR}/`)) return { ok: false, error: 'Заметки vault пересобираются автоматически' };
-    if (!TEXT_FILES.test(rel)) return { ok: false, error: 'Двоичные файлы не редактируются' };
-    if (!fs.existsSync(full)) return { ok: false, error: `Файл не найден: ${rel}` };
-    if (typeof text !== 'string') return { ok: false, error: 'Нет текста для записи' };
-
-    try {
-        fs.writeFileSync(full, text);
-    } catch (error) {
-        return { ok: false, error: `Не удалось записать файл: ${error.message}` };
-    }
-    return { ok: true, path: rel, size: Buffer.byteLength(text) };
-}
+// вся вкладка Graph живёт в PROJECTS/Graph; здесь остаются её точки входа
+const {
+    prepareVault, buildVaultGraph, searchProject, readProjectFile, writeProjectFile, projectFiles, MAX_EDIT_BYTES,
+} = graph.init({
+    listSessions,
+    listMessages,
+    sessionTitle,
+    onMapReady: () => { if (clients.size) notifyClients('map'); },
+});
 
 // ---------- API коннектора ----------
-
-// снимок экрана для миниатюры сессии: canvas на фронтенде не видит ничего
-// за пределами вкладки браузера, поэтому реальный скриншот системы делает
-// сервер — PowerShell копирует экран через System.Drawing и сохраняет JPEG во
-// временный файл, который потом сам читает и кодирует в base64 Node. Раньше
-// кодировали в base64 прямо в PowerShell через ImageCodecInfo/EncoderParameters
-// (ручной контроль quality) — эта связка «скриншот экрана + ручное JPEG-
-// кодирование» ловится антивирусом как эвристика скрин-скрейпинга
-// (ScriptContainedMaliciousContent) и скрипт блокируется целиком. Save(path,
-// ImageFormat.Jpeg) без EncoderParameters под ту же эвристику не попадает.
-// Ширину держим заметно больше старых 192px, чтобы миниатюру можно было
-// разобрать, не оставляя мыло. 'powershell.exe' с расширением, а не
-// 'powershell': под WSL это тот же самый Windows-хост, но interop ищет
-// исполняемый файл по точному имени с .exe — без расширения Linux не найдёт
-// его в PATH. На нативном Windows работает так же
-const SCREENSHOT_WIDTH = 480;
-
-function captureScreenshot() {
-    const tmpFile = path.join(os.tmpdir(), `noname-shot-${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`);
-    const script = `
-        Add-Type -AssemblyName System.Windows.Forms
-        Add-Type -AssemblyName System.Drawing
-        $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
-        $full = New-Object System.Drawing.Bitmap $b.Width, $b.Height
-        $g = [System.Drawing.Graphics]::FromImage($full)
-        $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
-        $w = ${SCREENSHOT_WIDTH}
-        $h = [Math]::Max(1, [int]([double]$b.Height / $b.Width * $w))
-        $thumb = New-Object System.Drawing.Bitmap $full, $w, $h
-        $thumb.Save('${tmpFile.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Jpeg)
-    `;
-    const encoded = Buffer.from(script, 'utf16le').toString('base64');
-
-    return new Promise((resolve) => {
-        const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true });
-        child.on('error', () => resolve(null));
-        child.on('close', (code) => {
-            if (code !== 0 || !fs.existsSync(tmpFile)) {
-                resolve(null);
-                return;
-            }
-            try {
-                const base64 = fs.readFileSync(tmpFile).toString('base64');
-                resolve(base64 ? `data:image/jpeg;base64,${base64}` : null);
-            } catch {
-                resolve(null);
-            } finally {
-                fs.unlink(tmpFile, () => {});
-            }
-        });
-    });
-}
 
 function sendJson(res, payload, status = 200) {
     const body = JSON.stringify(payload);
@@ -1734,12 +1078,41 @@ async function handleApi(req, res, urlPath) {
         // снимок экрана из режима Edit: клиент попросил его сразу после отправки
         // комментария, пока выбранный элемент ещё обведён рамкой
         if (urlPath === '/api/screenshot') {
-            const thumb = await captureScreenshot();
+            const thumb = await captureScreenshot(Number(process.env.SCREENSHOT_SCREEN) || 0);
             if (!thumb) {
                 sendJson(res, { ok: false, error: 'Не удалось сделать скриншот' });
                 return;
             }
             sendJson(res, { ok: true, thumb });
+            return;
+        }
+
+        // список мониторов и текущий выбор — для настройки в Settings
+        if (urlPath === '/api/screenshot/screens') {
+            sendJson(res, { screens: await listScreens(), current: Number(process.env.SCREENSHOT_SCREEN) || 0 });
+            return;
+        }
+
+        if (urlPath === '/api/screenshot/screen') {
+            const { index } = await readJson(req);
+            if (!Number.isInteger(index) || index < 0) {
+                sendJson(res, { ok: false, error: 'Некорректный индекс экрана' });
+                return;
+            }
+            setEnvValue('SCREENSHOT_SCREEN', String(index));
+            sendJson(res, { ok: true });
+            return;
+        }
+
+        // какая вкладка открывается по умолчанию при заходе на страницу — настройка из Settings
+        if (urlPath === '/api/default-view') {
+            const { view } = await readJson(req);
+            if (!DEFAULT_VIEW_OPTIONS.includes(view)) {
+                sendJson(res, { ok: false, error: 'Неизвестная вкладка' });
+                return;
+            }
+            setEnvValue('DEFAULT_VIEW', view);
+            sendJson(res, { ok: true });
             return;
         }
 
@@ -1762,7 +1135,61 @@ async function handleApi(req, res, urlPath) {
 
         if (urlPath === '/api/sessions/messages') {
             const { id } = await readJson(req);
-            sendJson(res, { ok: true, messages: listMessages.all(id) });
+            sendJson(res, { ok: true, messages: listMessages.all(id), contextPercent: getSessionContext.get(id)?.contextPercent ?? null });
+            return;
+        }
+
+        // хранилище вкладки Flow целиком: список пунктов меню, позиции/тексты
+        // нод, граф связей, зум/пан каждого канваса — см. flow_state выше
+        if (urlPath === '/api/flow/state') {
+            const state = {};
+            for (const row of listFlowState.all()) {
+                try {
+                    state[row.key] = JSON.parse(row.value);
+                } catch { /* битая строка — пропускаем, лучше потерять одно поле, чем всё */ }
+            }
+            sendJson(res, { ok: true, state });
+            return;
+        }
+
+        if (urlPath === '/api/flow/state/set') {
+            const { key, value } = await readJson(req);
+            if (typeof key !== 'string' || !key) {
+                sendJson(res, { ok: false, error: 'Нужен key' });
+                return;
+            }
+            setFlowStateRow.run(key, JSON.stringify(value ?? null));
+            sendJson(res, { ok: true });
+            return;
+        }
+
+        if (urlPath === '/api/pages') {
+            sendJson(res, { ok: true, pages: listPages.all() });
+            return;
+        }
+
+        if (urlPath === '/api/pages/create') {
+            const { title } = await readJson(req);
+            if (typeof title !== 'string' || !title) {
+                sendJson(res, { ok: false, error: 'Нужен title' });
+                return;
+            }
+            const folder = folderNameFromTitle(title);
+            fs.mkdirSync(path.join(ROOT, 'PROJECTS', folder), { recursive: true });
+            fs.writeFileSync(path.join(ROOT, 'PROJECTS', folder, 'README.md'), `# ${title}\n`, 'utf8');
+            const info = insertPage.run(title, folder);
+            sendJson(res, { ok: true, id: info.lastInsertRowid, title, folder, readme: `PROJECTS/${folder}/README.md` });
+            return;
+        }
+
+        if (urlPath === '/api/pages/delete') {
+            const { id } = await readJson(req);
+            // страница создаётся вместе с настоящей папкой (см. /api/pages/create) —
+            // удаляем вместе с ней, иначе на диске остаётся мусор
+            const page = getPage.get(id);
+            if (page?.folder) fs.rmSync(path.join(ROOT, 'PROJECTS', page.folder), { recursive: true, force: true });
+            deletePage.run(id);
+            sendJson(res, { ok: true });
             return;
         }
 
@@ -1783,8 +1210,37 @@ function isLocalRequest(req) {
         || address.startsWith('127.');
 }
 
+// адрес из WSL: в виртуалке живёт свой Claude CLI, и его PreToolUse-хук
+// (.claude/hooks/file-lock.js) до 127.0.0.1 хоста не достучится — при обычной (NAT)
+// сети WSL2 это loopback самой виртуалки. Запрос приходит с адреса на адаптере
+// «vEthernet (WSL)» — его и узнаём по маске самого адаптера, а не по зашитой
+// подсети: она меняется при каждом перезапуске WSL
+function ipToInt(ip) {
+    const parts = String(ip).split('.');
+    return parts.length === 4 ? parts.reduce((acc, part) => acc * 256 + (Number(part) & 255), 0) : null;
+}
+
+function isWslRequest(req) {
+    const value = ipToInt((req.socket.remoteAddress || '').replace(/^::ffff:/, ''));
+    if (value === null) return false;
+    for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
+        if (!/WSL/i.test(name)) continue;
+        for (const item of addresses || []) {
+            if (item.family !== 'IPv4') continue;
+            const net = ipToInt(item.address);
+            const mask = ipToInt(item.netmask);
+            if (net !== null && mask !== null && (value & mask) === (net & mask)) return true;
+        }
+    }
+    return false;
+}
+
 const server = http.createServer((req, res) => {
-    if (!isLocalRequest(req)) {
+    // из WSL пускаем ровно один маршрут — сверку блокировок для хука.
+    // остальное API читает и пишет файлы проекта и запускает CLI — открывать
+    // его виртуалке целиком незачем
+    if (!isLocalRequest(req)
+        && !(isWslRequest(req) && (req.url || '').startsWith('/api/claude/lock-check'))) {
         res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('403 Forbidden: сервер отвечает только на локальные запросы');
         return;
@@ -1809,7 +1265,8 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    const filePath = path.join(ROOT, urlPath === '/' ? 'index.html' : urlPath);
+    // страница лежит в SYSTEM, но отдаётся по «/»: адреса в браузере от этого не зависят
+    const filePath = path.join(ROOT, urlPath === '/' ? 'SYSTEM/index.html' : urlPath);
 
     // не выпускаем запросы за пределы каталога проекта
     if (!filePath.startsWith(ROOT + path.sep)) {
@@ -1829,7 +1286,8 @@ const server = http.createServer((req, res) => {
         if (ext === '.html') {
             let html = data.toString('utf8')
                 .replace('{{APP_VERSION}}', currentVersion())
-                .replace('{{VERSION_LIST}}', versionHistory());
+                .replace('{{VERSION_LIST}}', versionHistory())
+                .replace('{{DEFAULT_VIEW}}', escapeHtml(process.env.DEFAULT_VIEW || 'home'));
             if (LIVE_RELOAD) {
                 html = html.includes('</body>')
                     ? html.replace('</body>', `${RELOAD_SNIPPET}</body>`)
@@ -1853,7 +1311,7 @@ server.on('error', (err) => {
     if (err.code !== 'EADDRINUSE') throw err;
     console.error(`Порт ${PORT} занят — скорее всего, сервер уже запущен: http://localhost:${PORT}`);
     console.error('Другой порт задаётся строкой PORT= в .env');
-    process.exit(1);
+    process.exit(EXIT_PORT_BUSY); // отдельный код: по нему сторож понимает, что ждать правок бессмысленно
 });
 
 server.listen(PORT, () => {

@@ -2,6 +2,15 @@
     "enabledPlugins": {
         "typescript-lsp@claude-plugins-official": false
     },
+    "permissions": {
+        "allow": [
+            "Bash(node --check *)",
+            "Bash(node PROJECTS/Graph/search.js *)",
+            "mcp__playwright__browser_take_screenshot",
+            "mcp__playwright__browser_console_messages",
+            "mcp__playwright__browser_snapshot"
+        ]
+    },
     "hooks": {
         "PreToolUse": [
             {
@@ -11,6 +20,16 @@
                         "type": "command",
                         "command": "node .claude/hooks/file-lock.js",
                         "timeout": 100
+                    }
+                ]
+            },
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node .claude/hooks/no-bg-server.js",
+                        "timeout": 10
                     }
                 ]
             }

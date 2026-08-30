@@ -9,6 +9,59 @@ const http = require('http');
 
 const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit']);
 const REQUEST_TIMEOUT_MS = 90_000; // чуть больше LOCK_CHECK_TIMEOUT_MS на сервере (85с)
+const CONNECT_TIMEOUT_MS = 2_000; // столько ждём само соединение: если адрес не тот,
+// надо узнать это быстро и попробовать следующий, а не висеть все 90 секунд
+
+// под WSL сервер живёт на стороне Windows: 127.0.0.1 — это loopback самой виртуалки.
+// хост доступен по адресу шлюза по умолчанию; берём его из /proc/net/route, где
+// Gateway лежит шестнадцатеричным задом наперёд. При networkingMode=mirrored работает
+// и 127.0.0.1 — поэтому его пробуем первым, а этот адрес идёт запасным
+function wslHostIp() {
+    try {
+        if (!/microsoft/i.test(fs.readFileSync('/proc/version', 'utf8'))) return null;
+        for (const line of fs.readFileSync('/proc/net/route', 'utf8').split('\n').slice(1)) {
+            const [, destination, gateway] = line.split(/\s+/);
+            if (destination !== '00000000' || !gateway) continue;
+            return gateway.match(/../g).reverse().map((byte) => parseInt(byte, 16)).join('.');
+        }
+    } catch { /* не Linux или /proc недоступен — значит и не WSL */ }
+    return null;
+}
+
+// null — по этому адресу сервера нет (или ответил не он): решает следующий адрес
+function askServer(host, port, body) {
+    return new Promise((resolve) => {
+        const req = http.request({
+            hostname: host,
+            port,
+            path: '/api/claude/lock-check',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            timeout: REQUEST_TIMEOUT_MS,
+        }, (res) => {
+            let raw = '';
+            res.on('data', (chunk) => { raw += chunk; });
+            res.on('end', () => {
+                try {
+                    const parsed = JSON.parse(raw);
+                    resolve(parsed.ok ? { ok: true } : { ok: false, reason: parsed.reason });
+                } catch {
+                    resolve(null); // 403 или мусор вместо JSON — отвечал не наш сервер
+                }
+            });
+        });
+
+        req.on('socket', (socket) => {
+            const guard = setTimeout(() => req.destroy(), CONNECT_TIMEOUT_MS);
+            socket.on('connect', () => clearTimeout(guard));
+            socket.on('close', () => clearTimeout(guard));
+        });
+        req.on('timeout', () => req.destroy());
+        req.on('error', () => resolve(null)); // сервер недоступен/упал посреди ответа
+        req.write(body);
+        req.end();
+    });
+}
 
 function allow() {
     console.log(JSON.stringify({
@@ -58,31 +111,14 @@ async function main() {
     const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
     const body = JSON.stringify({ file: resolved, sessionId: input.session_id || null });
 
-    const req = http.request({
-        hostname: '127.0.0.1',
-        port,
-        path: '/api/claude/lock-check',
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-        timeout: REQUEST_TIMEOUT_MS,
-    }, (res) => {
-        let raw = '';
-        res.on('data', (chunk) => { raw += chunk; });
-        res.on('end', () => {
-            try {
-                const parsed = JSON.parse(raw);
-                if (parsed.ok) allow();
-                else deny(parsed.reason || 'файл сейчас редактирует другая сессия');
-            } catch {
-                allow();
-            }
-        });
-    });
+    for (const host of ['127.0.0.1', wslHostIp()]) {
+        if (!host) continue;
+        const verdict = await askServer(host, port, body);
+        if (!verdict) continue;
+        return verdict.ok ? allow() : deny(verdict.reason || 'файл сейчас редактирует другая сессия');
+    }
 
-    req.on('timeout', () => req.destroy());
-    req.on('error', () => allow()); // сервер недоступен/упал посреди ответа — пропускаем
-    req.write(body);
-    req.end();
+    allow(); // сервера нет ни по одному адресу — блокировать нечем
 }
 
 main();

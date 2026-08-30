@@ -4,7 +4,7 @@
 
 ## 🧭 Что это
 
-Одна из вкладок Mission Control — кнопка `kanbanButton` в тулбаре, вид `kanbanView`, код в `kanban.js` (30 строк). Задумана как доска, по которой задача едет от «New» до «Done».
+Одна из вкладок Mission Control — кнопка `kanbanButton` в тулбаре, вид `kanbanView`, код в `PROJECTS/Kanban/kanban.js` (30 строк). Задумана как доска, по которой задача едет от «New» до «Done».
 
 Сейчас раздел честно находится в начальном состоянии: доска рисует колонки и умеет ровно одно действие — завести новую сессию с заданием. Всё остальное ещё впереди.
 
@@ -35,7 +35,7 @@
 **Данные доски живут прямо в коде.** Никакой базы, никакого API у доски нет:
 
 - названия колонок — массив `BOARD_COLUMNS` в `app.js`, экспортируется через `window.App`;
-- содержимое колонок — строка `Пока пусто` в шаблоне внутри `kanban.js`;
+- содержимое колонок — строка `Пока пусто` в шаблоне внутри `PROJECTS/Kanban/kanban.js`;
 - счётчик `0` — тоже литерал в шаблоне.
 
 В `server.js` нет ни одного роута про доску. Перезагрузка страницы возвращает доску ровно в то же состояние — сохранять пока попросту нечего.
@@ -48,7 +48,7 @@
 </div>
 ```
 
-Всё остальное — колонки `.board__column`, шапки `.board__header`, счётчики `.board__count`, кнопку `.board__add` и тело `.board__body` — `kanban.js` собирает в цикле и дописывает в `#board`. Стили лежат в `index.html` в секции «вид Kanban».
+Всё остальное — колонки `.board__column`, шапки `.board__header`, счётчики `.board__count`, кнопку `.board__add` и тело `.board__body` — `kanban.js` собирает в цикле и дописывает в `#board`. Стили — в `PROJECTS/Kanban/kanban.css`, он подключён из `index.html` отдельным `<link>`.
 
 **Показ вкладки** — забота `tabs.js`: он прячет все виды, кроме нужного, и выставляет `aria-pressed` на кнопке. Для Kanban никакой дополнительной инициализации при показе не вызывается — доска построена один раз при загрузке.
 
@@ -64,10 +64,11 @@
 
 | Файл | Что делает |
 |---|---|
-| `kanban.js` | Строит колонки и вешает обработчик на «+» |
-| `index.html` | Контейнер `#kanbanView` / `#board`, стили `.board*`, кнопка `kanbanButton` |
-| `app.js` | `BOARD_COLUMNS`, `VIEWS.kanban`, `startCommentSession()` |
-| `tabs.js` | Переключение на вид `kanban` |
+| `PROJECTS/Kanban/kanban.js` | Строит колонки и вешает обработчик на «+» |
+| `PROJECTS/Kanban/kanban.css` | Стили доски: `.view--board`, `.board*` |
+| `SYSTEM/index.html` | Контейнер `#kanbanView` / `#board`, кнопка `kanbanButton`, подключение `kanban.css` и `kanban.js` |
+| `SYSTEM/app.js` | `BOARD_COLUMNS`, `VIEWS.kanban`, `startCommentSession()` |
+| `SYSTEM/tabs.js` | Переключение на вид `kanban` |
 
 ---
 

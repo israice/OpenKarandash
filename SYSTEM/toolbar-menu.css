@@ -1,0 +1,106 @@
+/* Меню кнопки "+" в тулбаре табов: список остальных кнопок тулбара
+   с переключателем показать/скрыть у каждой. Разметку создаёт toolbar-menu.js. */
+
+.toolbar-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    min-width: 220px;
+    margin: 0;
+    padding: 6px;
+    list-style: none;
+    border: 1px solid #2e3138;
+    border-radius: 10px;
+    background: #1a1c21;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+    z-index: 20;
+}
+
+.toolbar-menu[hidden] {
+    display: none;
+}
+
+.toolbar-menu__item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 8px;
+    border-radius: 6px;
+}
+
+.toolbar-menu__item:hover {
+    background: #272a31;
+}
+
+.toolbar-menu__icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    color: #a9adb6;
+}
+
+.toolbar-menu__name {
+    flex: 1;
+    font-size: 0.85rem;
+    color: #e9e9ec;
+    white-space: nowrap;
+}
+
+.toolbar-menu__toggle {
+    display: flex;
+    align-items: center;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+}
+
+.toolbar-menu__toggle-track {
+    position: relative;
+    width: 34px;
+    height: 18px;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.18);
+    transition: background 0.2s ease;
+}
+
+.toolbar-menu__toggle-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #cfd2d8;
+    transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.toolbar-menu__toggle[aria-checked="true"] .toolbar-menu__toggle-track {
+    background: rgba(110, 168, 254, 0.55);
+}
+
+.toolbar-menu__toggle[aria-checked="true"] .toolbar-menu__toggle-thumb {
+    background: #6ea8fe;
+    transform: translateX(16px);
+}
+
+.toolbar-menu__delete {
+    display: flex;
+    align-items: center;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: #e9696c;
+    cursor: pointer;
+}
+
+.toolbar-menu__delete:hover {
+    color: #ff8b8e;
+}
+
+.toolbar-menu__delete[disabled] {
+    color: #4a4d54;
+    cursor: not-allowed;
+}

@@ -1,0 +1,632 @@
+/* Вкладка Flow: канвас, узлы, рёбра и панель зума в шапке.
+   Вынесено из index.html — вся вкладка (стили и скрипт) живёт в PROJECTS/Flow.
+   Общие стили бокового меню (.view--side, .side-nav*) остались в index.html:
+   их делит с Flow панель сессий. */
+
+
+.flow-canvas {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    cursor: grab;
+    background-color: #131417;
+    /* точки — бесконечно повторяющийся фон на самом контейнере, а не на
+       ограниченном по размеру слое узлов, иначе за краем слоя фон обрывается */
+    background-image: radial-gradient(circle, #2b2e35 1.5px, transparent 1.5px);
+    background-size: 28px 28px;
+    background-position: 0 0;
+}
+
+.flow-canvas--panning {
+    cursor: grabbing;
+}
+
+.flow-canvas__surface {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 6000px;
+    height: 6000px;
+    transform-origin: 0 0;
+}
+
+.flow-canvas__edges {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 6000px;
+    height: 6000px;
+    overflow: visible;
+    pointer-events: none;
+}
+
+/* плюс посередине ребра — появляется по наведению на линию, кликом вставляет ноду */
+.flow-edge__add {
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    margin: -11px 0 0 -11px;
+    border-radius: 50%;
+    border: 1px solid #6ea8fe;
+    background: #1c1f26;
+    color: #6ea8fe;
+    font-size: 15px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.flow-edge__add:hover {
+    background: #6ea8fe;
+    color: #16181c;
+}
+
+/* плюс у нижнего края ноды — добавляет новый дочерний узел вниз */
+.flow-node__add-bottom {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    transform: translate(-50%, 50%);
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px solid #6ea8fe;
+    background: #1c1f26;
+    color: #6ea8fe;
+    font-size: 15px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 3;
+}
+
+.flow-node__add-bottom:hover {
+    background: #6ea8fe;
+    color: #16181c;
+}
+
+/* плюс у правого края ноды — добавляет новый дочерний узел вправо */
+.flow-node__add-right {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    transform: translate(50%, -50%);
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px solid #6ea8fe;
+    background: #1c1f26;
+    color: #6ea8fe;
+    font-size: 15px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 3;
+}
+
+.flow-node__add-right:hover {
+    background: #6ea8fe;
+    color: #16181c;
+}
+
+.flow-node {
+    position: absolute;
+    width: 250px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #1c1f26, #16181c);
+    border: 1px solid #2e3138;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(110, 168, 254, 0.06);
+    user-select: none;
+    /* длинные слова без пробелов (URL, хэши) переносятся, а не вылезают за фиксированную ширину */
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+.flow-node--selected {
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), 0 0 0 2px #6ea8fe;
+}
+
+/* нода-цель при перетаскивании стрелки от плюса — подсказывает, куда отпустить */
+.flow-node--drop-target {
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), 0 0 0 2px #7bffb0;
+}
+
+
+.flow-node__edit {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid #2e3138;
+    border-radius: 7px;
+    background: #22252b;
+    color: #a9adb6;
+    font-size: 0.8rem;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 1;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+
+.flow-node__edit:hover { background: #2b4d78; color: #f2f2f4; }
+
+.flow-node__edit:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: 2px;
+}
+
+.flow-node__header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px 12px;
+}
+
+.flow-node__header--stacked { flex-direction: column; align-items: stretch; gap: 8px; }
+
+.flow-node__header-top { display: flex; align-items: center; gap: 12px; }
+
+.flow-node__title-line { display: flex; align-items: center; gap: 12px; }
+
+.flow-node__scope { position: relative; flex: 0 0 auto; }
+
+.flow-node__scope-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid #2e3138;
+    border-radius: 6px;
+    background: #22252b;
+    color: #a9adb6;
+    font-size: 0.72rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+
+.flow-node__scope-btn:hover { background: #2b4d78; color: #f2f2f4; }
+
+.flow-node__scope-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 3px;
+    background: #1c1e23;
+    border: 1px solid #2e3138;
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    z-index: 5;
+}
+
+.flow-node__scope-menu[hidden] { display: none; }
+
+.flow-node__scope-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: #d7d9dd;
+    font-size: 0.7rem;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.flow-node__scope-item:hover { background: #2b4d78; color: #f2f2f4; }
+
+.flow-node__avatar-picker { position: relative; flex-shrink: 0; }
+
+.flow-node__avatar {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #6ea8fe, #2b4d78);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    font-size: 18px;
+    cursor: pointer;
+}
+
+.flow-node__avatar-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 4px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 2px;
+    padding: 4px;
+    background: #1c1e23;
+    border: 1px solid #2e3138;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    z-index: 5;
+}
+
+.flow-node__avatar-menu[hidden] { display: none; }
+
+.flow-node__avatar-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.flow-node__avatar-item:hover { background: #2b4d78; }
+
+.flow-node__titles {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.flow-node__title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.flow-node__title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #f2f2f4;
+}
+
+.flow-node__subtitle {
+    display: flex;
+    flex-direction: column;
+    font-size: 0.72rem;
+    color: #7c818b;
+}
+
+.flow-node__body {
+    padding: 0 16px 14px;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: #9a9ea6;
+    cursor: text;
+}
+
+.flow-node__body[contenteditable="true"] {
+    outline: 1px dashed #6ea8fe;
+    outline-offset: 2px;
+    color: #e6e8ea;
+}
+
+/* группа вопросов под телом ноды — отделена пунктиром, каждый вопрос —
+   своё резиновое (растущее вместе с текстом) поле, плюс кнопка добавить ещё */
+.flow-node__questions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0 16px 14px;
+    padding-top: 12px;
+    border-top: 1px dashed #2e3138;
+}
+
+.flow-node__questions[hidden] {
+    display: none;
+}
+
+.flow-node__question {
+    position: relative;
+    padding: 6px 8px 6px 26px;
+    border: 1px dashed #3a3e46;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: #d7d9dd;
+}
+
+/* ручка drag-n-drop для смены порядка вопросов — настоящий элемент (не ::after),
+   чтобы её можно было выделить кнопкой Edit наравне с остальным интерфейсом */
+.flow-node__question-handle {
+    position: absolute;
+    top: 50%;
+    left: 6px;
+    transform: translateY(-50%);
+    color: #7c818b;
+    cursor: grab;
+}
+
+.flow-node__question-text {
+    display: block;
+    cursor: text;
+    outline: none;
+}
+
+.flow-node__question-text:empty::before {
+    content: attr(data-placeholder);
+    color: #7c818b;
+}
+
+.flow-node__question-text:focus {
+    outline: none;
+}
+
+.flow-node__question:focus-within {
+    border-color: #6ea8fe;
+}
+
+/* режим перетаскивания вопросов — та же анимация toolbar-shake, но в 60 раз слабее */
+@keyframes flow-question-shake {
+    0%, 100% { transform: rotate(-0.5deg); }
+    50% { transform: rotate(0.5deg); }
+}
+
+.flow-node__questions--reorder .flow-node__question {
+    animation: flow-question-shake 0.16s ease-in-out infinite;
+    user-select: none;
+}
+
+.flow-node__questions--reorder .flow-node__question--dragging {
+    animation: none;
+    cursor: grabbing;
+    opacity: 0.85;
+    position: relative;
+    z-index: 5;
+}
+
+.flow-node__questions-add {
+    align-self: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 26px;
+    padding: 0;
+    border: 1px dashed #3a3e46;
+    border-radius: 4px;
+    background: transparent;
+    color: #6ea8fe;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.flow-node__questions-add:hover {
+    background: #2b4d78;
+    color: #f2f2f4;
+    border-color: #6ea8fe;
+}
+
+.flow-node__footer {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    border-top: 1px solid #2e3138;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.flow-node__badge {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    margin-left: auto;
+    gap: 6px;
+    margin-left: auto;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: #22252b;
+    font-size: 0.68rem;
+    color: #9a9ea6;
+}
+
+.flow-node__badge-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #6ea8fe;
+}
+
+/* группа селектов провайдер/модель/effort — пилюли вместо серых select впритык;
+   ширина ноды фиксирована (250px), поэтому строка резиновая: контролы переносятся
+   на вторую строку, если не помещаются, вместо того чтобы схлопываться в нечитаемые полоски */
+.flow-node__footer--controls {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 12px;
+}
+
+.flow-node__footer--controls .flow-node__control,
+.chat__session-bar .flow-node__control {
+    flex: 1 1 64px;
+    min-width: 64px;
+    padding: 4px 10px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: #22252b;
+    font-size: 0.68rem;
+    color: #9a9ea6;
+    text-align: center;
+    text-align-last: center;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.flow-node__footer--controls .flow-node__control:hover,
+.chat__session-bar .flow-node__control:hover {
+    background: #2a2d34;
+    color: #f2f2f4;
+}
+
+.flow-node__footer--controls .flow-node__control:focus-visible,
+.chat__session-bar .flow-node__control:focus-visible {
+    outline: none;
+    border-color: #6ea8fe;
+    color: #f2f2f4;
+}
+
+/* toggle «Context» — 30% строки типа узла, остальное — select. Стиль переключателя в духе uiverse.io */
+.flow-node__footer--controls .flow-node__context-toggle {
+    flex: 0 0 30%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border-color: transparent;
+    cursor: pointer;
+}
+
+.flow-node__context-toggle-track {
+    position: relative;
+    width: 34px;
+    height: 14px;
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.18);
+    transition: background 0.2s ease;
+}
+
+.flow-node__context-toggle-thumb {
+    position: absolute;
+    top: -3px;
+    left: -2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    color: #22252b;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+    transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.flow-node__context-toggle[aria-pressed="true"] .flow-node__context-toggle-track {
+    background: rgba(110, 168, 254, 0.55);
+}
+
+.flow-node__context-toggle[aria-pressed="true"] .flow-node__context-toggle-thumb {
+    background: #6ea8fe;
+    transform: translateX(16px);
+}
+
+.flow-canvas__zoom {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid #2e3138;
+    border-radius: 10px;
+    background: #1a1c21;
+}
+
+.flow-canvas__zoom-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 0;
+    border-radius: 7px;
+    background: none;
+    color: #a9adb6;
+    cursor: pointer;
+    font-size: 15px;
+    transition: background 0.15s, color 0.15s;
+}
+
+.flow-canvas__zoom-btn:hover {
+    background: #262930;
+    color: #f2f2f4;
+}
+
+.flow-canvas__zoom-select {
+    max-width: 160px;
+    height: 34px;
+    border: 0;
+    border-radius: 7px;
+    background: none;
+    color: #a9adb6;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+.flow-canvas__zoom-select:hover {
+    background: #262930;
+    color: #f2f2f4;
+}
+
+.flow-canvas__zoom-value {
+    min-width: 42px;
+    text-align: center;
+    font-size: 0.75rem;
+    color: #9a9ea6;
+}
+
+.flow-canvas__zoom[hidden] {
+    display: none;
+}
+
+
+/* окно редактирования ноды на канвасе Flows — задел: самого окна
+   ещё нет ни в разметке, ни в flow.js, класс .node-modal никто не ставит */
+.node-modal__field {
+    display: block;
+    width: 100%;
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border: 1px solid #2e3138;
+    border-radius: 8px;
+    background: #131417;
+    color: #d8dce4;
+    font: inherit;
+    font-size: 0.85rem;
+}
+
+.node-modal__field:focus {
+    outline: none;
+    border-color: #6ea8fe;
+}
+
+textarea.node-modal__field {
+    min-height: 90px;
+    line-height: 1.45;
+    resize: vertical;
+}
+
+.node-modal__footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 4px;
+}

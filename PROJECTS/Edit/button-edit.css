@@ -1,0 +1,118 @@
+/* Кнопка Edit: стили режима комментариев. Лежат рядом с button-edit.js —
+   вся кнопка Edit собрана в одной папке. Подключается <link> из index.html. */
+
+/* ---------- режим комментариев ---------- */
+
+body.edit-mode,
+body.edit-mode * {
+    cursor: crosshair;
+}
+
+/* внутри окна комментария курсор обычный: там уже не выбирают элемент */
+body.edit-mode .comment-popover,
+body.edit-mode .comment-popover * {
+    cursor: default;
+}
+
+body.edit-mode .comment-popover__field {
+    cursor: text;
+}
+
+body.edit-mode .comment-popover__button {
+    cursor: pointer;
+}
+
+/* рамка рисуется отдельным слоем, чтобы не менять стили самой страницы */
+.hover-frame {
+    position: fixed;
+    /* выше .topbar и .app-version (макс. z-index на странице — 1500),
+       иначе рамка прячется под ними при наведении на их элементы */
+    z-index: 1510;
+    border: 2px solid #e5484d;
+    border-radius: 3px;
+    background: rgba(229, 72, 77, 0.08);
+    pointer-events: none;
+}
+
+.hover-frame[hidden],
+.comment-popover[hidden] {
+    display: none;
+}
+
+.hover-frame--picked {
+    background: rgba(229, 72, 77, 0.14);
+}
+
+.comment-popover {
+    position: fixed;
+    z-index: 1520;
+    width: 280px;
+    padding: 12px;
+    border: 1px solid #2e3138;
+    border-radius: 10px;
+    background: #1a1c21;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.6);
+}
+
+.comment-popover__target {
+    margin-bottom: 8px;
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    font-size: 0.74rem;
+    color: #e5848a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.comment-popover__field {
+    width: 100%;
+    min-height: 80px;
+    padding: 8px 10px;
+    border: 1px solid #2e3138;
+    border-radius: 7px;
+    background: #131417;
+    font: inherit;
+    font-size: 0.85rem;
+    color: #e9e9ec;
+    resize: vertical;
+}
+
+.comment-popover__field::placeholder { color: #6a6f78; }
+
+.comment-popover__field:focus {
+    outline: none;
+    border-color: #6ea8fe;
+}
+
+.comment-popover__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.comment-popover__button {
+    padding: 7px 14px;
+    border: 1px solid #2e3138;
+    border-radius: 7px;
+    background: #22252b;
+    font: inherit;
+    font-size: 0.82rem;
+    color: #e9e9ec;
+    cursor: pointer;
+}
+
+.comment-popover__button:hover { background: #2a2e35; }
+
+.comment-popover__button--primary {
+    border-color: #e5484d;
+    background: #e5484d;
+    color: #fff;
+}
+
+.comment-popover__button--primary:hover { background: #d43b40; }
+
+.comment-popover__button:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: 2px;
+}

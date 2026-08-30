@@ -188,7 +188,7 @@
 
         if (picked) {
             drawFrame(picked);
-            placePopover(picked);
+            placePopover(picked, popover);
             return;
         }
 

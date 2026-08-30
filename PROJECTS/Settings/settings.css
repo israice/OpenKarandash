@@ -1,0 +1,293 @@
+/* Настройки: кнопка-шестерёнка, её меню, окно настроек (список провайдеров,
+   лимиты подписки, экран для скриншотов Edit, вкладка по умолчанию) и окно
+   выбора окружения Claude CLI. Разметку для всего этого создаёт settings.js,
+   стили общих модальных окон (.modal, .modal__*) остаются в index.html —
+   ими пользуются и версии, и файловый редактор. */
+
+/* кнопка настроек стоит отдельно, поэтому у неё своя рамка */
+.settings {
+    position: relative;
+}
+
+.settings__button {
+    width: 40px;
+    height: 40px;
+    border: 1px solid #2e3138;
+    border-radius: 8px;
+    background: #1c1e23;
+}
+
+/* меню: под кнопкой, выровнено по её правому краю — раскрывается влево */
+.settings__menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    min-width: 200px;
+    margin: 0;
+    padding: 6px;
+    list-style: none;
+    border: 1px solid #2e3138;
+    border-radius: 10px;
+    background: #1a1c21;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+}
+
+.settings__menu[hidden] {
+    display: none;
+}
+
+.settings__item {
+    display: block;
+    width: 100%;
+    padding: 9px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    font: inherit;
+    font-size: 0.9rem;
+    color: #e9e9ec;
+    text-align: left;
+    cursor: pointer;
+}
+
+.settings__item:hover,
+.settings__item:focus-visible {
+    background: #272a31;
+    outline: none;
+}
+
+.settings__separator {
+    height: 1px;
+    margin: 6px 4px;
+    background: #2c2f36;
+}
+
+/* ---------- инлайн-строка usage провайдера (над выбором модели) ---------- */
+
+.provider__usage {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #26292f;
+    font-size: 0.82rem;
+}
+
+.provider__usage-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 2px 0;
+}
+
+.provider__usage-row:not(:first-child) {
+    border-top: 1px solid #2e3138;
+    margin-top: 4px;
+    padding-top: 6px;
+}
+
+.provider__usage-label { color: #8b909a; }
+
+.provider__usage-value { font-weight: 600; color: #e9e9ec; }
+
+.provider__usage-reset {
+    padding-bottom: 2px;
+    font-size: 0.72rem;
+    color: #6a6f78;
+}
+
+.provider__usage-empty {
+    padding: 4px 0;
+    color: #8b909a;
+}
+
+/* ---------- список провайдеров ---------- */
+
+.provider-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.provider {
+    padding: 12px 14px;
+    border: 1px solid #2e3138;
+    border-radius: 10px;
+    background: #16181c;
+}
+
+.provider__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.provider__name {
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
+.provider__note {
+    margin-top: 2px;
+    font-size: 0.76rem;
+    color: #8b909a;
+}
+
+.provider__status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.76rem;
+    color: #5fd08a;
+}
+
+.provider__status::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #5fd08a;
+}
+
+.provider__actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.provider__button {
+    padding: 7px 14px;
+    border: 1px solid #2e3138;
+    border-radius: 7px;
+    background: #22252b;
+    font: inherit;
+    font-size: 0.8rem;
+    color: #e9e9ec;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.provider__button:hover { background: #2a2e35; }
+
+.provider__button:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: 2px;
+}
+
+.provider__button--connect {
+    border-color: #3b6ea8;
+    background: #2b4d78;
+}
+
+.provider__button--connect:hover { background: #33598a; }
+
+/* блок модели — отдельная карточка под провайдером после подключения */
+.provider__model {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.provider__model-label {
+    font-size: 0.78rem;
+    color: #8b909a;
+    white-space: nowrap;
+}
+
+.provider__select {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 10px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: #22252b;
+    font: inherit;
+    font-size: 0.78rem;
+    color: #9a9ea6;
+    text-align: center;
+    text-align-last: center;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.provider__select:hover {
+    background: #2a2d34;
+    color: #f2f2f4;
+}
+
+.provider__select:focus-visible {
+    outline: none;
+    border-color: #6ea8fe;
+    color: #f2f2f4;
+}
+
+.provider__select--effort,
+.provider__select--source {
+    flex: 0 0 auto;
+    width: auto;
+}
+
+.screenshot-screen {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.screenshot-screen__preview {
+    display: block;
+    width: 100%;
+    max-width: 160px;
+    margin: 0 auto;
+    border-radius: 6px;
+    border: 1px solid #333;
+}
+
+/* ---------- выбор окружения Claude CLI ---------- */
+
+.picker {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.picker__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid #2e3138;
+    border-radius: 10px;
+    background: #16181c;
+    font: inherit;
+    font-size: 0.88rem;
+    color: #e9e9ec;
+    text-align: left;
+    cursor: pointer;
+}
+
+.picker__item:hover { background: #22252b; border-color: #3b6ea8; }
+
+.picker__item:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: 2px;
+}
+
+.picker__version {
+    font-size: 0.76rem;
+    color: #8b909a;
+}
+
+.provider__error {
+    margin-top: 8px;
+    font-size: 0.78rem;
+    color: #ff9a9d;
+}

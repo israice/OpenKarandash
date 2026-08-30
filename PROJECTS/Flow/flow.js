@@ -1,7 +1,58 @@
-// Вкладка Flow: полотно с зумом и панорамированием плюс карточка ноды.
+// Вкладка Flow целиком: полотно с зумом и панорамированием плюс карточка ноды
+// (стили — PROJECTS/Flow/flow.css, разметка #flowView — в SYSTEM/index.html рядом с остальными видами).
 // Центрирование ноды отложено до первого показа вкладки — панель вкладок
 // дёргает MissionFlow.center(), когда размеры канваса уже посчитаны.
 (function () {
+            // window.MissionFlow публикуем сразу и синхронно: панель вкладок (tabs.js)
+            // может дёрнуть center() ещё до того, как ниже отработает await загрузки
+            // состояния с сервера — тогда центрирование просто откладывается флагом
+            // pendingCenter и срабатывает, как только canvas будет готов
+            let centerFlowNode = null;
+            let buildSessionFlow = null;
+            let pendingCenter = false;
+            window.MissionFlow = {
+                center() {
+                    if (centerFlowNode) {
+                        centerFlowNode();
+                        centerFlowNode = null;
+                    } else {
+                        pendingCenter = true;
+                    }
+                },
+                // вызывается из PROJECTS/Flow/flow-session-sync.js по кнопке в тулбаре
+                buildFromSession(flow, messages) {
+                    if (buildSessionFlow) buildSessionFlow(flow, messages);
+                },
+            };
+
+            init();
+            async function init() {
+
+            // хранилище вкладки Flow целиком — раньше localStorage, теперь БД
+            // (см. /api/flow/state в server.js); ключи 1-в-1 со старыми именами
+            // localStorage, читаем их разом одним запросом при открытии страницы
+            const { state = {} } = await App.api('/api/flow/state', {});
+            const flowState = state;
+            // разовая миграция: то, что ещё лежит в localStorage с прошлой версии,
+            // перекладываем в БД и подчищаем за собой
+            for (const key of ['flowCustomFlows', 'flowCustomTemps', 'flowCustomAgents', 'flowCanvasViews', 'flowNodeText', 'flowNodeQuestions', 'flowNodePositions2', 'flowNodeGraph3', 'flowNodeSecretaryAgent']) {
+                if (flowState[key] !== undefined) continue;
+                const raw = localStorage.getItem(key);
+                if (raw === null) continue;
+                try {
+                    flowState[key] = JSON.parse(raw);
+                    await App.api('/api/flow/state/set', { key, value: flowState[key] });
+                } catch { /* битое значение — просто не переносим */ }
+                localStorage.removeItem(key);
+            }
+            function flowGet(key, fallback) {
+                return flowState[key] !== undefined ? flowState[key] : fallback;
+            }
+            function flowSet(key, value) {
+                flowState[key] = value;
+                App.api('/api/flow/state/set', { key, value });
+            }
+
             // нода «New»: дата/время открытия и имя проекта
             const startMeta = document.getElementById('flowNodeStartMeta');
             if (startMeta) {
@@ -13,6 +64,41 @@
                 startMeta.append(projectLine, dateLine);
             }
 
+            // мусорка справа от строки, как в списке сессий (.session-row/.session-delete,
+            // см. SYSTEM/app.js): свой элемент рядом с кнопкой пункта, а не внутри неё
+            function makeNavDeleteBtn() {
+                const del = document.createElement('button');
+                del.type = 'button';
+                del.className = 'side-nav__delete';
+                del.title = 'Удалить';
+                del.setAttribute('aria-label', 'Удалить');
+                del.innerHTML = `
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                `;
+                return del;
+            }
+            // onRemove чистит связанное хранилище (кастомные flows/temps/minions) —
+            // у встроенных пунктов (колонки доски, дефолтные minion'ы) его
+            // нет, и клик просто убирает строку из DOM до перезагрузки страницы
+            function wrapNavItem(item, onRemove) {
+                const row = document.createElement('div');
+                row.className = 'side-nav__row';
+                const del = makeNavDeleteBtn();
+                del.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const title = item.dataset.flow || item.textContent;
+                    const ok = await App.confirmModal(`Удалить «${title}» из меню?`, { title: 'Удалить пункт меню' });
+                    if (!ok) return;
+                    if (onRemove) onRemove();
+                    row.remove();
+                });
+                row.append(item, del);
+                return row;
+            }
+
             // меню Flows повторяет разделы доски
             const flowNav = document.getElementById('flowNav');
             for (const title of App.BOARD_COLUMNS) {
@@ -21,31 +107,224 @@
                 item.className = 'side-nav__item';
                 item.dataset.flow = title;
                 item.textContent = title;
-                flowNav.append(item);
+                flowNav.append(wrapNavItem(item));
             }
+
+            // кастомные flow-пункты (заведённые кнопкой + у «Flows»)
+            // переживают перезагрузку отдельно от разделов доски
+            const CUSTOM_FLOWS_KEY = 'flowCustomFlows';
+            function loadCustomFlows() {
+                return flowGet(CUSTOM_FLOWS_KEY, []);
+            }
+            function saveCustomFlows(list) {
+                flowSet(CUSTOM_FLOWS_KEY, list);
+            }
+            function addFlowItem(title) {
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'side-nav__item';
+                item.dataset.flow = title;
+                item.textContent = title;
+                const row = wrapNavItem(item, () => {
+                    saveCustomFlows(loadCustomFlows().filter((t) => t !== title));
+                });
+                // строка должна лечь в конец своей группы (Flows), а не в конец
+                // всего меню — иначе клик по + после того, как отрисованы
+                // следующие группы (Temp/Minions), кидает новую строку под них
+                flowNav.insertBefore(row, flowNav.querySelector('[data-flow-group="temp"]'));
+            }
+            for (const title of loadCustomFlows()) {
+                addFlowItem(title);
+            }
+            const flowsAddBtn = document.getElementById('flowFlowsAddBtn');
+            flowsAddBtn.addEventListener('click', () => {
+                const title = prompt('Имя нового flow:');
+                if (!title || !title.trim()) return;
+                const name = title.trim();
+                const custom = loadCustomFlows();
+                if (custom.includes(name)) return;
+                custom.push(name);
+                saveCustomFlows(custom);
+                addFlowItem(name);
+            });
 
             // отдельная категория Temp — черновые кнопки, не связанные с колонками доски
             const tempTitle = document.createElement('h2');
-            tempTitle.className = 'side-nav__title';
-            tempTitle.textContent = 'Temp';
+            tempTitle.className = 'side-nav__title side-nav__title--collapsible';
+            tempTitle.dataset.flowGroup = 'temp';
+            const tempTitleText = document.createElement('span');
+            tempTitleText.textContent = 'Temp';
+            const tempAddBtn = document.createElement('button');
+            tempAddBtn.type = 'button';
+            tempAddBtn.className = 'side-nav__arrow side-nav__arrow--active';
+            tempAddBtn.textContent = '+';
+            tempAddBtn.title = 'Добавить черновик';
+            tempTitle.append(tempTitleText, tempAddBtn);
             flowNav.append(tempTitle);
 
-            const sandboxItem = document.createElement('button');
-            sandboxItem.type = 'button';
-            sandboxItem.className = 'side-nav__item';
-            sandboxItem.dataset.flow = 'sandbox';
-            sandboxItem.textContent = 'sandbox';
-            flowNav.append(sandboxItem);
+            // кастомные черновики (заведённые кнопкой +) переживают перезагрузку
+            const CUSTOM_TEMPS_KEY = 'flowCustomTemps';
+            function loadCustomTemps() {
+                return flowGet(CUSTOM_TEMPS_KEY, []);
+            }
+            function saveCustomTemps(list) {
+                flowSet(CUSTOM_TEMPS_KEY, list);
+            }
+            function addTempItem(title) {
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'side-nav__item';
+                item.dataset.flow = title;
+                item.textContent = title;
+                const row = wrapNavItem(item, () => {
+                    saveCustomTemps(loadCustomTemps().filter((t) => t !== title));
+                });
+                // строка должна лечь в конец своей группы (Temp), а не в конец
+                // всего меню — та же причина, что и в addFlowItem выше
+                flowNav.insertBefore(row, flowNav.querySelector('[data-flow-group="minions"]'));
+            }
+            for (const title of loadCustomTemps()) {
+                addTempItem(title);
+            }
+            tempAddBtn.addEventListener('click', () => {
+                const title = prompt('Имя нового черновика:');
+                if (!title || !title.trim()) return;
+                const name = title.trim();
+                const custom = loadCustomTemps();
+                if (custom.includes(name)) return;
+                custom.push(name);
+                saveCustomTemps(custom);
+                addTempItem(name);
+            });
+
+            // категория Minions — у каждого свой личный Flow (собственный
+            // канвас с изолированными нодами/рёбрами, как у любого пункта меню)
+            const agentsTitle = document.createElement('h2');
+            agentsTitle.className = 'side-nav__title side-nav__title--nav side-nav__title--collapsible';
+            agentsTitle.dataset.flowGroup = 'minions';
+            const agentsTitleText = document.createElement('span');
+            agentsTitleText.textContent = 'Minions';
+            const agentsAddBtn = document.createElement('button');
+            agentsAddBtn.type = 'button';
+            agentsAddBtn.className = 'side-nav__arrow side-nav__arrow--active';
+            agentsAddBtn.textContent = '+';
+            agentsAddBtn.title = 'Добавить minion';
+            agentsTitle.append(agentsTitleText, agentsAddBtn);
+            flowNav.append(agentsTitle);
+
+            const AGENT_ICONS = {
+                'Секретарь': '📋',
+                'Разработчик UI': '🎨',
+                'Разработчик backend': '⚙️',
+                'QA': '🐞',
+                'HR': '🧑‍💼',
+            };
+            const DEFAULT_AGENT_ICON = '🧩';
+
+            // кастомные minion'ы (заведённые кнопкой +) переживают перезагрузку
+            // отдельно от встроенных пяти — те всегда одни и те же
+            const CUSTOM_AGENTS_KEY = 'flowCustomAgents';
+            function loadCustomAgents() {
+                return flowGet(CUSTOM_AGENTS_KEY, []);
+            }
+            function saveCustomAgents(list) {
+                flowSet(CUSTOM_AGENTS_KEY, list);
+            }
+
+            function addAgentItem(title, icon, isCustom) {
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'side-nav__item side-nav__item--agent';
+                item.dataset.flow = title;
+                const iconEl = document.createElement('span');
+                iconEl.className = 'side-nav__item-icon';
+                iconEl.textContent = icon;
+                item.append(iconEl, document.createTextNode(title));
+                const row = wrapNavItem(item, isCustom ? () => {
+                    saveCustomAgents(loadCustomAgents().filter((t) => t !== title));
+                } : null);
+                flowNav.append(row);
+            }
+
+            for (const title of ['Секретарь', 'Разработчик UI', 'Разработчик backend', 'QA', 'HR']) {
+                addAgentItem(title, AGENT_ICONS[title]);
+            }
+            for (const title of loadCustomAgents()) {
+                addAgentItem(title, DEFAULT_AGENT_ICON, true);
+            }
+
+            agentsAddBtn.addEventListener('click', () => {
+                const title = prompt('Имя нового minion’а:');
+                if (!title || !title.trim()) return;
+                const name = title.trim();
+                const custom = loadCustomAgents();
+                if (custom.includes(name)) return;
+                custom.push(name);
+                saveCustomAgents(custom);
+                addAgentItem(name, DEFAULT_AGENT_ICON, true);
+            });
+
+            // последний открытый пункт меню переживает перезагрузку — при заходе
+            // на вкладку подсвечиваем именно его, а не всегда один и тот же
+            const ACTIVE_FLOW_KEY = 'flowActiveFlow';
+            const savedActiveFlow = flowGet(ACTIVE_FLOW_KEY, 'New');
+            const initialActiveItem = flowNav.querySelector(`.side-nav__item[data-flow="${CSS.escape(savedActiveFlow)}"]`) || flowNav.querySelector('.side-nav__item[data-flow="New"]');
+            if (initialActiveItem) {
+                initialActiveItem.classList.add('side-nav__item--active');
+                const initialSessionSelect = document.getElementById('flowSessionSelect');
+                if (initialSessionSelect) initialSessionSelect.hidden = initialActiveItem.dataset.flow !== '321';
+            }
+
+            // заголовки групп сворачиваются кликом, как гормошка;
+            // по умолчанию все группы открыты
+            function syncGroupCollapse(title) {
+                const collapsed = title.classList.contains('side-nav__title--collapsed');
+                let el = title.nextElementSibling;
+                while (el && !el.classList.contains('side-nav__title')) {
+                    el.hidden = collapsed;
+                    el = el.nextElementSibling;
+                }
+            }
+            for (const title of flowNav.querySelectorAll('.side-nav__title--collapsible')) {
+                syncGroupCollapse(title);
+            }
+            flowNav.addEventListener('click', (e) => {
+                if (e.target.closest('.side-nav__arrow')) return;
+                const title = e.target.closest('.side-nav__title--collapsible');
+                if (!title) return;
+                title.classList.toggle('side-nav__title--collapsed');
+                syncGroupCollapse(title);
+            });
+
+            // клик по пункту меню переключает подсветку и видимый канвас;
+            // сам канвас общий (один surface/zoom/pan), но у каждого пункта
+            // свой набор нод — переключение просто прячет чужие
+            flowNav.addEventListener('click', (e) => {
+                const btn = e.target.closest('.side-nav__item');
+                if (!btn) return;
+                for (const b of flowNav.querySelectorAll('.side-nav__item')) {
+                    b.classList.toggle('side-nav__item--active', b === btn);
+                }
+                flowSet(ACTIVE_FLOW_KEY, btn.dataset.flow);
+                // выбор сессии показываем только на черновике «321» — остальным
+                // разделам (включая другие черновики Temp) сессия чата не нужна
+                const sessionSelect = document.getElementById('flowSessionSelect');
+                if (sessionSelect) sessionSelect.hidden = btn.dataset.flow !== '321';
+                if (setActiveFlow) setActiveFlow(btn.dataset.flow);
+            });
+            let setActiveFlow = null;
 
             // канвас Flows: пока только полотно — zoom колёсиком/кнопками и pan перетаскиванием фона
-            let centerFlowNode = null;
+            // (centerFlowNode и buildSessionFlow объявлены в начале файла — здесь их не переобъявляем,
+            // иначе присваивания ниже уйдут в теневую переменную, а window.MissionFlow её не увидит)
             (() => {
                 const canvas = document.getElementById('flowCanvas');
                 const surface = document.getElementById('flowSurface');
                 const zoomValue = document.getElementById('flowZoomValue');
                 const zoomIn = document.getElementById('flowZoomIn');
                 const zoomOut = document.getElementById('flowZoomOut');
-                const zoomReset = document.getElementById('flowZoomReset');
+                const layoutReset = document.getElementById('flowLayoutReset');
+                const canvasReset = document.getElementById('flowCanvasReset');
 
                 const MIN_SCALE = 0.3;
                 const MAX_SCALE = 2;
@@ -58,22 +337,31 @@
 
                 const GRID_SIZE = 28;
 
-                // положение и зум канваса переживают перезагрузку страницы, как и
-                // позиции нод — иначе при возврате на вкладку Flow пользователя каждый
-                // раз кидает в исходную точку вместо того места, где он остановился
-                const VIEW_KEY = 'flowCanvasView';
+                // каждый пункт меню слева — свой канвас: свой набор нод (nodeFlow)
+                // и свой zoom/pan (VIEWS), общий только сам механизм отрисовки
+                let currentFlow = initialActiveItem ? initialActiveItem.dataset.flow : 'New';
+                const nodeFlow = new Map();
+
+                // положение и зум канваса переживают перезагрузку страницы отдельно
+                // для каждого пункта меню — иначе переключение на другой канвас или
+                // возврат на вкладку Flow каждый раз кидает в исходную точку вместо
+                // того места, где пользователь остановился
+                const VIEW_KEY = 'flowCanvasViews';
+                function loadViews() {
+                    return flowGet(VIEW_KEY, {});
+                }
                 function saveView() {
-                    localStorage.setItem(VIEW_KEY, JSON.stringify({ x, y, scale }));
+                    const views = loadViews();
+                    views[currentFlow] = { x, y, scale };
+                    flowSet(VIEW_KEY, views);
                 }
                 (() => {
-                    try {
-                        const saved = JSON.parse(localStorage.getItem(VIEW_KEY));
-                        if (saved) {
-                            x = saved.x;
-                            y = saved.y;
-                            scale = saved.scale;
-                        }
-                    } catch {}
+                    const saved = loadViews()[currentFlow];
+                    if (saved) {
+                        x = saved.x;
+                        y = saved.y;
+                        scale = saved.scale;
+                    }
                 })();
 
                 function apply() {
@@ -111,8 +399,22 @@
                     const rect = canvas.getBoundingClientRect();
                     zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, 1 / 1.2);
                 });
-                zoomReset.addEventListener('click', () => autoLayoutAndFit());
-
+                // раскладка по дереву гарантированно без наложений — на случай,
+                // если ноды уже наехали друг на друга (старая сохранённая позиция,
+                // накопившийся сдвиг раздвижки и т.п.)
+                layoutReset.addEventListener('click', () => autoLayoutAndFit());
+                // обнуление канваса: убираем всё, что накидали поверх нод по умолчанию
+                // (на New это стартовая пара node/startNode, на остальных канвасах
+                // дефолта нет — ensureRootNode сразу поставит пустую ноду-заглушку)
+                canvasReset.addEventListener('click', async () => {
+                    const ok = await App.confirmModal('Удалить все добавленные ноды на этом канвасе?', { title: 'Очистить канвас' });
+                    if (!ok) return;
+                    const keep = currentFlow === 'New' ? new Set([node, startNode]) : new Set();
+                    for (const n of [...nodeFlow.keys()]) {
+                        if (nodeFlow.get(n) === currentFlow && !keep.has(n)) deleteNode(n);
+                    }
+                    ensureRootNode(currentFlow);
+                });
                 // drag-n-drop полотна: тянем только за пустой фон, не за ноду
                 let panning = false;
                 let startX = 0;
@@ -152,22 +454,252 @@
                 const node = document.getElementById('flowNodeSecretary');
                 const startNode = document.getElementById('flowNodeStart');
                 const NODE_GAP = 96;
+                // вертикальный зазор меньше горизонтального — цепочка шагов вниз
+                // (см. buildSessionFlow) не должна растягиваться так же далеко,
+                // как соседи по строке
+                const NODE_GAP_Y = 40;
+                nodeFlow.set(node, 'New');
+                nodeFlow.set(startNode, 'New');
+
+                // текст заголовка, строки под ним и тела ноды переживает перезагрузку
+                // через localStorage, как и позиции; #flowNodeStartMeta не трогаем —
+                // там дата/проект, подставляемые заново при каждой загрузке
+                const TEXT_KEY = 'flowNodeText';
+                const EDITABLE_SELECTOR = '.flow-node__title, .flow-node__subtitle, .flow-node__body';
+                function loadTexts() {
+                    return flowGet(TEXT_KEY, {});
+                }
+                function fieldName(el) {
+                    if (el.classList.contains('flow-node__title')) return 'title';
+                    if (el.classList.contains('flow-node__subtitle')) return 'subtitle';
+                    return 'body';
+                }
+                function applyTexts(n) {
+                    const saved = loadTexts();
+                    for (const el of n.querySelectorAll(EDITABLE_SELECTOR)) {
+                        if (el.id) continue;
+                        const text = saved[`${n.id}:${fieldName(el)}`];
+                        if (text !== undefined) el.textContent = text;
+                    }
+                }
+                applyTexts(node);
+                applyTexts(startNode);
+
+                // вопросы под телом ноды — переменное число полей (кнопка + добавляет
+                // ещё), поэтому хранятся отдельно от заголовка/тела/тела: там всегда
+                // ровно одно значение на поле, а тут список произвольной длины
+                const QUESTIONS_KEY = 'flowNodeQuestions';
+                function loadQuestions() {
+                    return flowGet(QUESTIONS_KEY, {});
+                }
+                function saveQuestionsFor(n) {
+                    const all = loadQuestions();
+                    all[n.id] = [...n.querySelectorAll('.flow-node__question-text')].map((q) => q.textContent);
+                    flowSet(QUESTIONS_KEY, all);
+                }
+                function addQuestionField(group, text) {
+                    const btn = group.querySelector('.flow-node__questions-add');
+                    const field = document.createElement('div');
+                    field.className = 'flow-node__question';
+                    field.innerHTML = '<span class="flow-node__question-handle" aria-hidden="true">⠿</span><span class="flow-node__question-text" data-placeholder="Вопрос"></span>';
+                    const textEl = field.querySelector('.flow-node__question-text');
+                    textEl.contentEditable = 'false';
+                    textEl.textContent = text || '';
+                    group.insertBefore(field, btn);
+                    return field;
+                }
+                // поле растянуто на всю ширину ноды (см. CSS), но текста в нём обычно
+                // меньше — считаем прямоугольник именно текста, чтобы клик по пустому
+                // месту справа от текста не включал редактирование
+                function questionTextRect(field) {
+                    const textEl = field.querySelector('.flow-node__question-text');
+                    if (!textEl.textContent) return textEl.getBoundingClientRect();
+                    const range = document.createRange();
+                    range.selectNodeContents(textEl);
+                    return range.getBoundingClientRect();
+                }
+                function applyQuestions(n) {
+                    const saved = loadQuestions()[n.id];
+                    if (!saved) return;
+                    const group = n.querySelector('.flow-node__questions');
+                    const fields = [...group.querySelectorAll('.flow-node__question')];
+                    saved.forEach((text, i) => {
+                        if (fields[i]) fields[i].querySelector('.flow-node__question-text').textContent = text;
+                        else addQuestionField(group, text);
+                    });
+                }
+                applyQuestions(node);
+                applyQuestions(startNode);
+
+                surface.addEventListener('input', (e) => {
+                    const field = e.target.closest('.flow-node__question');
+                    if (!field) return;
+                    saveQuestionsFor(field.closest('.flow-node'));
+                });
+                surface.addEventListener('click', (e) => {
+                    const addBtn = e.target.closest('.flow-node__questions-add');
+                    if (!addBtn) return;
+                    const group = addBtn.closest('.flow-node__questions');
+                    const field = addQuestionField(group);
+                    const textEl = field.querySelector('.flow-node__question-text');
+                    textEl.contentEditable = 'true';
+                    textEl.focus();
+                    saveQuestionsFor(group.closest('.flow-node'));
+                });
+                surface.addEventListener('click', (e) => {
+                    const field = e.target.closest('.flow-node__question');
+                    if (!field) return;
+                    const textEl = field.querySelector('.flow-node__question-text');
+                    if (textEl.isContentEditable) return;
+                    const rect = questionTextRect(field);
+                    if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
+                    textEl.contentEditable = 'true';
+                    textEl.focus();
+                });
+                surface.addEventListener('focusout', (e) => {
+                    const field = e.target.closest('.flow-node__question');
+                    if (!field) return;
+                    field.querySelector('.flow-node__question-text').contentEditable = 'false';
+                });
+
+                // перетаскивание вопросов за ручку слева — тот же приём, что и у кнопок
+                // тулбара (см. toolbar-reorder.js): долгое нажатие (>2с) включает "тряску",
+                // в которой вопрос можно перетащить на новое место; выход — Esc
+                const Q_LONG_PRESS_MS = 2000;
+                const Q_MOVE_CANCEL_PX = 8;
+                const Q_HANDLE_WIDTH = 26;
+                let qPressTimer = null;
+                let qPressStart = null;
+                let qActiveGroup = null;
+                let qDragField = null;
+
+                function isQuestionHandle(e, field) {
+                    const rect = field.getBoundingClientRect();
+                    return e.clientX - rect.left < Q_HANDLE_WIDTH;
+                }
+                function clearQPress() {
+                    clearTimeout(qPressTimer);
+                    qPressTimer = null;
+                    qPressStart = null;
+                }
+                function enterQuestionReorder(group) {
+                    qActiveGroup = group;
+                    group.classList.add('flow-node__questions--reorder');
+                }
+                function exitQuestionReorder() {
+                    if (!qActiveGroup) return;
+                    saveQuestionsFor(qActiveGroup.closest('.flow-node'));
+                    qActiveGroup.classList.remove('flow-node__questions--reorder');
+                    qActiveGroup = null;
+                }
+                function startQuestionDrag(field) {
+                    qDragField = field;
+                    field.classList.add('flow-node__question--dragging');
+                }
+                function stopQuestionDrag() {
+                    if (!qDragField) return;
+                    qDragField.classList.remove('flow-node__question--dragging');
+                    qDragField = null;
+                }
+                function updateQuestionDrag(clientY) {
+                    if (!qDragField || !qActiveGroup) return;
+                    for (const sib of qActiveGroup.querySelectorAll('.flow-node__question')) {
+                        if (sib === qDragField) continue;
+                        const rect = sib.getBoundingClientRect();
+                        if (clientY < rect.top + rect.height / 2) {
+                            if (sib.previousElementSibling !== qDragField) qActiveGroup.insertBefore(qDragField, sib);
+                            return;
+                        }
+                    }
+                    const addBtn = qActiveGroup.querySelector('.flow-node__questions-add');
+                    if (addBtn.previousElementSibling !== qDragField) qActiveGroup.insertBefore(qDragField, addBtn);
+                }
+
+                surface.addEventListener('pointerdown', (e) => {
+                    const field = e.target.closest('.flow-node__question');
+                    if (!field || !isQuestionHandle(e, field)) return;
+                    const group = field.closest('.flow-node__questions');
+
+                    if (qActiveGroup === group) {
+                        e.preventDefault();
+                        startQuestionDrag(field);
+                        return;
+                    }
+                    if (qActiveGroup) return;
+
+                    qPressStart = { x: e.clientX, y: e.clientY };
+                    qPressTimer = setTimeout(() => {
+                        qPressTimer = null;
+                        enterQuestionReorder(group);
+                        startQuestionDrag(field);
+                    }, Q_LONG_PRESS_MS);
+                });
+                surface.addEventListener('pointermove', (e) => {
+                    if (qPressTimer && qPressStart) {
+                        if (Math.hypot(e.clientX - qPressStart.x, e.clientY - qPressStart.y) > Q_MOVE_CANCEL_PX) clearQPress();
+                        return;
+                    }
+                    if (qDragField) {
+                        e.preventDefault();
+                        updateQuestionDrag(e.clientY);
+                    }
+                });
+                surface.addEventListener('pointerup', () => {
+                    clearQPress();
+                    stopQuestionDrag();
+                });
+                window.addEventListener('keydown', (e) => {
+                    if (e.key !== 'Escape' || !qActiveGroup) return;
+                    stopQuestionDrag();
+                    exitQuestionReorder();
+                });
+
+                // клик по заголовку, строке под ним или телу ноды превращает поле в
+                // резиновое (растущее вместе с текстом) редактируемое; клик мимо — сохраняет
+                surface.addEventListener('click', (e) => {
+                    const field = e.target.closest(EDITABLE_SELECTOR);
+                    if (!field || field.isContentEditable || field.id) return;
+                    field.contentEditable = 'true';
+                    field.focus();
+                    // без этого курсор при входе в редактирование всегда прыгает
+                    // в начало текста, а не встаёт туда, где кликнул пользователь
+                    const range = document.caretRangeFromPoint
+                        ? document.caretRangeFromPoint(e.clientX, e.clientY)
+                        : document.caretPositionFromPoint
+                            ? (() => {
+                                const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+                                const r = document.createRange();
+                                r.setStart(pos.offsetNode, pos.offset);
+                                return r;
+                            })()
+                            : null;
+                    if (range) {
+                        const sel = window.getSelection();
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                    }
+                });
+                surface.addEventListener('focusout', (e) => {
+                    const field = e.target.closest(EDITABLE_SELECTOR);
+                    if (!field || field.id) return;
+                    field.contentEditable = 'false';
+                    const n = field.closest('.flow-node');
+                    const all = loadTexts();
+                    all[`${n.id}:${fieldName(field)}`] = field.textContent;
+                    flowSet(TEXT_KEY, all);
+                });
 
                 // позиции нод переживают перезагрузку страницы через localStorage
                 // v2: старые сохранённые позиции ставили новые ноды впритык к соседям —
                 // сбрасываем кеш, чтобы раздвижка при вставке отработала на чистом layout'е
                 const POS_KEY = 'flowNodePositions2';
                 function loadPositions() {
-                    try {
-                        return JSON.parse(localStorage.getItem(POS_KEY)) || {};
-                    } catch {
-                        return {};
-                    }
+                    return flowGet(POS_KEY, {});
                 }
                 function savePosition(el) {
                     const all = loadPositions();
                     all[el.id] = { left: el.offsetLeft, top: el.offsetTop };
-                    localStorage.setItem(POS_KEY, JSON.stringify(all));
+                    flowSet(POS_KEY, all);
                 }
 
                 // граф вставленных узлов (id-рёбра + счётчик id) переживает перезагрузку
@@ -176,19 +708,21 @@
                 // v2: старые графы сохранялись без direction — при восстановлении ребро
                 // получало undefined и createEdge молча превращал его в 'horizontal',
                 // из-за чего кнопка reset схлопывала любое дерево в одну строку
-                const GRAPH_KEY = 'flowNodeGraph2';
+                // v3: у каждой ноды теперь есть свой канвас (flow) — храним его
+                // вместе с рёбрами, иначе после reload все ноды всех канвасов
+                // окажутся смешаны в одном
+                const GRAPH_KEY = 'flowNodeGraph3';
                 function loadGraph() {
-                    try {
-                        return JSON.parse(localStorage.getItem(GRAPH_KEY));
-                    } catch {
-                        return null;
-                    }
+                    return flowGet(GRAPH_KEY, null);
                 }
                 function saveGraph() {
-                    localStorage.setItem(GRAPH_KEY, JSON.stringify({
+                    flowSet(GRAPH_KEY, {
                         nodeSeq,
+                        nodes: [...nodeFlow.entries()]
+                            .filter(([n]) => n !== startNode && n !== node)
+                            .map(([n, flow]) => ({ id: n.id, flow })),
                         edges: edges.map((e) => ({ from: e.from.id, to: e.to.id, direction: e.direction })),
-                    }));
+                    });
                 }
 
                 // восстанавливаем клоны шаблона по id из графа и перестраиваем рёбра;
@@ -198,6 +732,9 @@
                     if (!graph || !graph.edges || !graph.edges.length) return;
 
                     const positions = loadPositions();
+                    const flowById = {};
+                    for (const n of graph.nodes || []) flowById[n.id] = n.flow;
+
                     const byId = { [startNode.id]: startNode, [node.id]: node };
                     for (const e of graph.edges) {
                         for (const id of [e.from, e.to]) {
@@ -207,10 +744,14 @@
                             surface.append(clone);
                             attachAddBottom(clone);
                             attachAddRight(clone);
+                            populateNodeAgentSelects(clone);
                             if (positions[id]) {
                                 clone.style.left = positions[id].left + 'px';
                                 clone.style.top = positions[id].top + 'px';
                             }
+                            nodeFlow.set(clone, flowById[id] || 'New');
+                            applyTexts(clone);
+                            applyQuestions(clone);
                             byId[id] = clone;
                         }
                     }
@@ -220,6 +761,13 @@
                     for (const e of graph.edges) {
                         if (byId[e.from] && byId[e.to]) createEdge(byId[e.from], byId[e.to], null, e.direction);
                     }
+
+                    // позиции сохранены под старую высоту нод — если разметка ноды
+                    // с тех пор выросла (например, добавили новое поле в шаблон),
+                    // расстояние между соседями по сохранённым top/top съезжает и
+                    // они наезжают друг на друга; пересчёт по факту занимаемого места
+                    // возвращает исходный зазор NODE_GAP
+                    layoutAllNodes();
                 }
 
                 centerFlowNode = () => {
@@ -238,6 +786,7 @@
                         savePosition(startNode);
                     }
                     restoreGraph();
+                    applyFlowVisibility(currentFlow);
                     drawEdge();
                 };
 
@@ -247,6 +796,55 @@
                 const nodeTemplate = document.getElementById('flowNodeTemplate');
                 let nodeSeq = 0;
                 const edges = [];
+
+                // провайдер/модель/effort у обычных узлов — тот же набор, что и у
+                // Секретаря, но без сохранения в localStorage: как type/context/scope
+                // выше, это визуальная заглушка, не переживающая перезагрузку
+                function renderNodeModelEffort(n) {
+                    const providerSelect = n.querySelector('.flow-node__provider');
+                    const modelSelect = n.querySelector('.flow-node__model');
+                    const effortSelect = n.querySelector('.flow-node__effort');
+                    if (!providerSelect) return;
+                    const provider = App.PROVIDERS.find((p) => p.id === providerSelect.value) || App.PROVIDERS[0];
+
+                    modelSelect.innerHTML = '';
+                    for (const model of provider.models) {
+                        const option = document.createElement('option');
+                        option.value = model;
+                        option.textContent = model;
+                        option.selected = model === provider.defaultModel;
+                        modelSelect.append(option);
+                    }
+
+                    effortSelect.innerHTML = '';
+                    effortSelect.hidden = !provider.efforts;
+                    if (provider.efforts) {
+                        for (const effort of provider.efforts) {
+                            const option = document.createElement('option');
+                            option.value = effort;
+                            option.textContent = effort;
+                            option.selected = effort === provider.defaultEffort;
+                            effortSelect.append(option);
+                        }
+                    }
+                }
+
+                function populateNodeAgentSelects(n) {
+                    const providerSelect = n.querySelector('.flow-node__provider');
+                    if (!providerSelect) return;
+                    for (const provider of App.PROVIDERS) {
+                        const option = document.createElement('option');
+                        option.value = provider.id;
+                        option.textContent = provider.name;
+                        providerSelect.append(option);
+                    }
+                    renderNodeModelEffort(n);
+                }
+
+                surface.addEventListener('change', (e) => {
+                    if (!e.target.matches('.flow-node__provider')) return;
+                    renderNodeModelEffort(e.target.closest('.flow-node'));
+                });
 
                 // геометрия дуги: сторона крепления фиксирована типом плюса, которым
                 // ребро создано (горизонтальный — право/лево по центру высоты,
@@ -326,71 +924,30 @@
                     edge.addBtn.remove();
                 }
 
-                // сдвигаем узел и всё, что от него отходит дальше по рёбрам,
-                // на delta вправо (delta < 0 — влево, используется раздвижкой чужих
-                // веток в pushAwayCollisions) — иначе после раздвижки ближайшего
-                // соседа следующие за ним ноды остаются на месте и вставленный узел
-                // наезжает на них визуально
-                function shiftChainRight(startFrom, delta, seen) {
-                    if (!delta) return;
-                    startFrom.style.left = Math.round(startFrom.offsetLeft + delta) + 'px';
-                    savePosition(startFrom);
-                    for (const e of edges) {
-                        if (e.from !== startFrom || seen.has(e.to)) continue;
-                        seen.add(e.to);
-                        shiftChainRight(e.to, delta, seen);
-                    }
-                }
-
-                // та же каскадная раздвижка, но вниз — для вертикальных рёбер
-                function shiftChainDown(startFrom, delta, seen) {
-                    if (delta <= 0) return;
-                    startFrom.style.top = Math.round(startFrom.offsetTop + delta) + 'px';
-                    savePosition(startFrom);
-                    for (const e of edges) {
-                        if (e.from !== startFrom || seen.has(e.to)) continue;
-                        seen.add(e.to);
-                        shiftChainDown(e.to, delta, seen);
-                    }
-                }
-
                 // разрезаем ребро надвое: клон шаблона встаёт в середину дуги,
-                // старое ребро уступает место двум новым
+                // старое ребро уступает место двум новым; точная позиция всё равно
+                // тут же пересчитывается layoutAllNodes(), стартовая нужна только
+                // чтобы edgeGeometry/nodeFlow увидели ноду на канвасе
                 function insertNodeOnEdge(edge) {
                     const g = edgeGeometry(edge.from, edge.to, edge.direction);
                     const mid = edgeMidpoint(g);
+                    const from = edge.from, to = edge.to;
 
                     const newNode = nodeTemplate.content.firstElementChild.cloneNode(true);
                     newNode.id = 'flowNode_' + (++nodeSeq) + '_' + Date.now();
                     surface.append(newNode);
                     attachAddBottom(newNode);
                     attachAddRight(newNode);
+                    populateNodeAgentSelects(newNode);
+                    nodeFlow.set(newNode, nodeFlow.get(from));
                     newNode.style.left = Math.round(mid.x - newNode.offsetWidth / 2) + 'px';
                     newNode.style.top = Math.round(mid.y - newNode.offsetHeight / 2) + 'px';
-
-                    // новая нода встаёт между from и to — раздвигаем их, если места не хватает,
-                    // чтобы она не легла поверх соседей; сдвиг from->to кладём каскадом
-                    // на всю цепочку нод за to, чтобы не наехать и на них
-                    const from = edge.from, to = edge.to;
-                    if (edge.direction === 'vertical') {
-                        const minTop = from.offsetTop + from.offsetHeight + NODE_GAP;
-                        if (newNode.offsetTop < minTop) newNode.style.top = minTop + 'px';
-                        const minToTop = newNode.offsetTop + newNode.offsetHeight + NODE_GAP;
-                        const delta = minToTop - to.offsetTop;
-                        if (delta > 0) shiftChainDown(to, delta, new Set([to]));
-                    } else {
-                        const minLeft = from.offsetLeft + from.offsetWidth + NODE_GAP;
-                        if (newNode.offsetLeft < minLeft) newNode.style.left = minLeft + 'px';
-                        const minToLeft = newNode.offsetLeft + newNode.offsetWidth + NODE_GAP;
-                        const delta = minToLeft - to.offsetLeft;
-                        if (delta > 0) shiftChainRight(to, delta, new Set([to]));
-                    }
-
                     savePosition(newNode);
 
                     removeEdge(edge);
                     createEdge(from, newNode, null, edge.direction);
                     createEdge(newNode, to, null, edge.direction);
+                    layoutAllNodes();
                     saveGraph();
                     drawEdge();
                 }
@@ -474,110 +1031,53 @@
                 // под текущим и соединяет их ребром; вешаем на каждую ноду отдельно,
                 // чтобы кнопка ездила вместе с нодой без пересчёта позиции в drawEdge
                 function attachAddBottom(n) {
-                    const btn = document.createElement('button');
-                    btn.type = 'button';
-                    btn.className = 'flow-node__add-bottom';
-                    btn.textContent = '+';
-                    btn.title = 'Добавить узел (или перетащить к другой ноде, чтобы соединить)';
-                    n.append(btn);
-                    btn.addEventListener('mousedown', (e) => startConnecting(e, n, 'vertical'));
+                    n.querySelector('.flow-node__add-bottom').addEventListener('mousedown', (e) => startConnecting(e, n, 'vertical'));
                 }
 
-                // расставляет все нижние дочерние узлы `from` в один горизонтальный ряд,
-                // чтобы новый добавленный узел не перекрывал уже существующие
-                function layoutBottomChildren(from) {
-                    const children = edges.filter((e) => e.from === from && e.direction === 'vertical').map((e) => e.to);
-                    if (!children.length) return;
-                    const totalWidth = children.reduce((sum, n) => sum + n.offsetWidth, 0) + NODE_GAP * (children.length - 1);
-                    const top = Math.round(from.offsetTop + from.offsetHeight + NODE_GAP);
-                    let left = Math.round(from.offsetLeft + (from.offsetWidth - totalWidth) / 2);
-                    for (const child of children) {
-                        child.style.left = left + 'px';
-                        child.style.top = top + 'px';
-                        savePosition(child);
-                        layoutBottomChildren(child);
-                        left += child.offsetWidth + NODE_GAP;
-                    }
-                }
-
-                // раздвигаем чужие ветки, оказавшиеся под подросшим поддеревом
-                // `subtreeRoot` (после layoutBottomChildren оно могло расшириться и
-                // залезть на соседнюю группу) — иначе новый узел просто ложится
-                // поверх чужих нод вместо того, чтобы потеснить их
-                function pushAwayCollisions(subtreeRoot) {
-                    const own = collectDescendants(subtreeRoot);
-                    own.add(subtreeRoot);
-                    let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
-                    for (const n of own) {
-                        left = Math.min(left, n.offsetLeft);
-                        top = Math.min(top, n.offsetTop);
-                        right = Math.max(right, n.offsetLeft + n.offsetWidth);
-                        bottom = Math.max(bottom, n.offsetTop + n.offsetHeight);
-                    }
-                    const centerX = (left + right) / 2;
-                    const moved = new Set();
-                    // несколько проходов: раздвинутая чужая ветка может задеть следующую
-                    for (let pass = 0; pass < 3; pass++) {
-                        let changed = false;
-                        for (const n of surface.querySelectorAll('.flow-node')) {
-                            if (own.has(n) || moved.has(n)) continue;
-                            const overlapX = n.offsetLeft < right + NODE_GAP && n.offsetLeft + n.offsetWidth > left - NODE_GAP;
-                            const overlapY = n.offsetTop < bottom && n.offsetTop + n.offsetHeight > top;
-                            if (!overlapX || !overlapY) continue;
-                            const seen = new Set([n]);
-                            const nCenter = n.offsetLeft + n.offsetWidth / 2;
-                            const delta = nCenter >= centerX
-                                ? right + NODE_GAP - n.offsetLeft
-                                : -(n.offsetLeft + n.offsetWidth + NODE_GAP - left);
-                            shiftChainRight(n, delta, seen);
-                            for (const s of seen) moved.add(s);
-                            changed = true;
-                        }
-                        if (!changed) break;
-                    }
-                }
-
+                // добавляет дочерний узел снизу; точную сетку тут же расставляет
+                // layoutAllNodes() по всему канвасу — так чинятся и все накопившиеся
+                // наложения, а не только ветка вокруг `from`
                 function addChildNode(from) {
                     const newNode = nodeTemplate.content.firstElementChild.cloneNode(true);
                     newNode.id = 'flowNode_' + (++nodeSeq) + '_' + Date.now();
                     surface.append(newNode);
                     attachAddBottom(newNode);
                     attachAddRight(newNode);
+                    populateNodeAgentSelects(newNode);
+                    nodeFlow.set(newNode, nodeFlow.get(from));
                     newNode.style.left = Math.round(from.offsetLeft + (from.offsetWidth - newNode.offsetWidth) / 2) + 'px';
-                    newNode.style.top = Math.round(from.offsetTop + from.offsetHeight + NODE_GAP) + 'px';
+                    newNode.style.top = Math.round(from.offsetTop + from.offsetHeight + NODE_GAP_Y) + 'px';
                     savePosition(newNode);
                     createEdge(from, newNode, null, 'vertical');
-                    layoutBottomChildren(from);
-                    pushAwayCollisions(from);
+                    layoutAllNodes();
                     saveGraph();
                     drawEdge();
+                    return newNode;
                 }
 
                 // плюс у правого края ноды — добавляет новый узел-заглушку справа
                 // от текущего, по той же логике, что и attachAddBottom/addChildNode
                 function attachAddRight(n) {
-                    const btn = document.createElement('button');
-                    btn.type = 'button';
-                    btn.className = 'flow-node__add-right';
-                    btn.textContent = '+';
-                    btn.title = 'Добавить узел (или перетащить к другой ноде, чтобы соединить)';
-                    n.append(btn);
-                    btn.addEventListener('mousedown', (e) => startConnecting(e, n, 'horizontal'));
+                    n.querySelector('.flow-node__add-right').addEventListener('mousedown', (e) => startConnecting(e, n, 'horizontal'));
                 }
 
+                // добавляет дочерний узел справа — симметрично addChildNode
                 function addChildNodeRight(from) {
                     const newNode = nodeTemplate.content.firstElementChild.cloneNode(true);
                     newNode.id = 'flowNode_' + (++nodeSeq) + '_' + Date.now();
                     surface.append(newNode);
                     attachAddBottom(newNode);
                     attachAddRight(newNode);
+                    populateNodeAgentSelects(newNode);
+                    nodeFlow.set(newNode, nodeFlow.get(from));
                     newNode.style.left = Math.round(from.offsetLeft + from.offsetWidth + NODE_GAP) + 'px';
                     newNode.style.top = Math.round(from.offsetTop + (from.offsetHeight - newNode.offsetHeight) / 2) + 'px';
                     savePosition(newNode);
                     createEdge(from, newNode, null, 'horizontal');
-                    pushAwayCollisions(newNode);
+                    layoutAllNodes();
                     saveGraph();
                     drawEdge();
+                    return newNode;
                 }
 
                 function drawEdge() {
@@ -590,60 +1090,99 @@
                     }
                 }
 
-                // раскладка по дереву для кнопки reset. У каждой ноды не больше
-                // одного входящего ребра (редактор всегда создаёт новый узел вместе
-                // с единственным ребром к нему), поэтому весь граф — дерево, и вместо
-                // того чтобы гадать координаты клетка за клеткой (так рёбра соседних
-                // веток задевали друг друга), раскладываем по нему честно снизу вверх:
-                // горизонтальное ребро продолжает цепочку вправо в той же строке,
-                // вертикальное — открывает дочернюю цепочку строкой ниже, и каждое
-                // поддерево получает свой непересекающийся диапазон колонок — поэтому
-                // ветки никогда не наезжают друг на друга и рёбра не пересекаются
-                function autoLayoutAndFit() {
-                    const nodes = [...surface.querySelectorAll('.flow-node')];
+                // раскладка по дереву всех нод текущего канваса разом — вызывается
+                // после каждого добавления/вставки узла, поэтому чинит не только
+                // только что тронутую ветку, а вообще все накопившиеся наложения.
+                // У каждой ноды не больше одного входящего ребра (редактор всегда
+                // создаёт новый узел вместе с единственным ребром к нему), поэтому
+                // весь граф — дерево, и вместо того чтобы гадать координаты клетка
+                // за клеткой (так рёбра соседних веток задевали друг друга),
+                // раскладываем по нему честно снизу вверх: горизонтальное ребро
+                // продолжает цепочку вправо в той же строке, вертикальное — открывает
+                // дочернюю цепочку строкой ниже, и каждое поддерево получает свой
+                // непересекающийся диапазон колонок — поэтому ветки никогда не
+                // наезжают друг на друга и рёбра не пересекаются
+                function layoutAllNodes() {
+                    const nodes = [...surface.querySelectorAll('.flow-node')].filter((n) => nodeFlow.get(n) === currentFlow);
                     if (!nodes.length) return;
 
                     const cellW = Math.max(...nodes.map((n) => n.offsetWidth)) + NODE_GAP;
-                    const cellH = Math.max(...nodes.map((n) => n.offsetHeight)) + NODE_GAP;
 
                     const parentEdge = new Map();
                     for (const e of edges) if (!parentEdge.has(e.to)) parentEdge.set(e.to, e);
 
                     // горизонтальная цепочка — нода и её последовательные "правые"
                     // продолжения; вся цепочка держится в одной строке
+                    // узел может обзавестись больше чем одним исходящим горизонтальным
+                    // ребром (кнопка "+" справа кликабельна повторно, drag-connect тоже
+                    // не проверяет дубликаты) — тогда идти вверх по parentEdge можно только
+                    // до тех пор, пока предок ещё не разобран в чужую цепочку, иначе "лишний"
+                    // сосед остаётся без записи в chainOf и measure() падает на chain.length
+                    // рёбра, реально ушедшие в продолжение цепочки вправо — остальные
+                    // горизонтальные соседи того же узла (второй, третий "+" клик
+                    // справа) в цепочку не помещаются и ниже отдаются chainRightExtras,
+                    // которая кладёт их в ту же строку, следом за цепочкой, иначе такой
+                    // узел проваливался на строку ниже — под соседей, а не рядом с ними
+                    const usedChainEdge = new Set();
                     const chainOf = new Map();
                     for (const n of nodes) {
                         if (chainOf.has(n)) continue;
                         let head = n;
                         let pe = parentEdge.get(head);
-                        while (pe && pe.direction === 'horizontal') {
+                        while (pe && pe.direction === 'horizontal' && !chainOf.has(pe.from)) {
                             head = pe.from;
                             pe = parentEdge.get(head);
                         }
-                        if (chainOf.has(head)) continue;
                         const chain = [head];
                         let cur = head;
                         for (;;) {
-                            const next = edges.find((e) => e.from === cur && e.direction === 'horizontal');
-                            if (!next) break;
+                            // соседей может быть больше одного (дубль-ребро от повторного
+                            // клика/drag-connect) — из них следующий в цепочке всегда тот,
+                            // что реально стоит правее на канвасе, а не тот, что раньше создан
+                            const candidates = edges.filter((e) => e.from === cur && e.direction === 'horizontal');
+                            if (!candidates.length) break;
+                            const next = candidates.reduce((a, b) => (a.to.offsetLeft <= b.to.offsetLeft ? a : b));
+                            usedChainEdge.add(next);
                             chain.push(next.to);
                             cur = next.to;
                         }
                         for (const c of chain) chainOf.set(c, chain);
                     }
 
-                    // дочерние цепочки — вертикальные рёбра от любой ноды этой цепочки;
-                    // группируем по узлу-креплению (anchor), чтобы несколько прямых
-                    // детей одного узла лечь вместе, а не вперемешку с детьми других узлов
+                    // дочерние цепочки — только вертикальные рёбра от любой ноды этой
+                    // цепочки; группируем по узлу-креплению (anchor), чтобы несколько
+                    // прямых детей одного узла лечь вместе, а не вперемешку с детьми
+                    // других узлов. Горизонтальные рёбра сюда не попадают — линия,
+                    // выходящая вбок, обязана вести к соседу по той же строке
+                    // (см. chainRightExtras), а не проваливаться на строку ниже.
+                    // порядок детей внутри группы — по их текущему offsetLeft, а не по
+                    // порядку создания рёбер: иначе перетаскивание ребёнка налево-направо
+                    // не меняло раскладку, и кнопка ⤾ откатывала его обратно на старое место
                     function chainChildGroups(chain) {
                         const own = new Set(chain);
                         const byAnchor = new Map();
                         for (const e of edges) {
-                            if (e.direction !== 'vertical' || !own.has(e.from)) continue;
+                            if (!own.has(e.from) || e.direction === 'horizontal') continue;
                             if (!byAnchor.has(e.from)) byAnchor.set(e.from, { anchor: e.from, items: [] });
                             byAnchor.get(e.from).items.push(chainOf.get(e.to));
                         }
+                        for (const g of byAnchor.values()) {
+                            g.items.sort((a, b) => a[0].offsetLeft - b[0].offsetLeft);
+                        }
                         return [...byAnchor.values()].sort((a, b) => chain.indexOf(a.anchor) - chain.indexOf(b.anchor));
+                    }
+
+                    // "лишние" горизонтальные рёбра узла (второй, третий "+" клик справа
+                    // помимо основного продолжения цепочки) — ведут вправо, в ту же
+                    // строку, следом за самой цепочкой, а не вниз к следующему ряду
+                    function chainRightExtras(chain) {
+                        const own = new Set(chain);
+                        const extras = [];
+                        for (const e of edges) {
+                            if (!own.has(e.from) || e.direction !== 'horizontal' || usedChainEdge.has(e)) continue;
+                            extras.push(chainOf.get(e.to));
+                        }
+                        return extras.sort((a, b) => a[0].offsetLeft - b[0].offsetLeft);
                     }
 
                     // два прохода, как в классической раскладке дерева: сперва снизу
@@ -667,28 +1206,38 @@
                                 const start = Math.max(cursor, prevCol + 1);
                                 g.start = start;
                                 cursor = start + g.width;
-                                prevCol = Math.max(Math.round(start + (g.width - 1) / 2), prevCol + 1);
+                                // центр держим дробным (не округляем) — иначе на чётной ширине
+                                // группы Math.round всегда съезжал к правому ребёнку, и колонка
+                                // родителя переставала совпадать с занятыми им колонками: цепочка
+                                // после родителя резервировала на одну колонку меньше, чем он
+                                // реально накрывал, и следующий брат наезжал на его же детей
+                                memberCol[idx] = start + (g.width - 1) / 2;
+                                prevCol = start + g.width - 1;
                             } else {
                                 prevCol += 1;
                                 cursor = Math.max(cursor, prevCol + 1);
+                                memberCol[idx] = prevCol;
                             }
-                            memberCol[idx] = prevCol;
                         }
                         return { memberCol, cursor, prevCol };
                     }
 
                     const widthOf = new Map();
                     const groupsOf = new Map();
+                    const extrasOf = new Map();
                     function measure(chain) {
                         if (widthOf.has(chain)) return widthOf.get(chain);
                         const groups = chainChildGroups(chain);
                         const byIdx = new Map(groups.map((g) => [chain.indexOf(g.anchor), g]));
                         for (const g of groups) g.width = g.items.reduce((sum, c) => sum + measure(c), 0);
                         const { cursor, prevCol } = layoutChainRow(chain, byIdx, 0);
-                        const width = Math.max(chain.length, cursor, prevCol + 1);
-                        widthOf.set(chain, width);
+                        const baseWidth = Math.max(chain.length, cursor, prevCol + 1);
+                        const rightExtras = chainRightExtras(chain);
+                        const extraWidth = rightExtras.reduce((sum, c) => sum + measure(c), 0);
+                        widthOf.set(chain, baseWidth + extraWidth);
                         groupsOf.set(chain, byIdx);
-                        return width;
+                        extrasOf.set(chain, { list: rightExtras, baseWidth });
+                        return baseWidth + extraWidth;
                     }
 
                     const colStart = new Map();
@@ -711,16 +1260,44 @@
                                 col += widthOf.get(childChain);
                             }
                         }
+                        // лишние горизонтальные ветки — сразу следом за цепочкой, в той
+                        // же строке, а не ниже: строго родитель-справа, а не родитель-сверху
+                        const { list: rightExtras, baseWidth } = extrasOf.get(chain);
+                        let rightCol = minCol + baseWidth;
+                        for (const extraChain of rightExtras) {
+                            place(extraChain, rightCol, chainRow);
+                            rightCol += widthOf.get(extraChain);
+                        }
                     }
 
-                    measure(chainOf.get(startNode));
-                    place(chainOf.get(startNode), 0, 0);
+                    // startNode принадлежит только канвасу New — на остальных
+                    // канвасах его цепочки нет вовсе, все ноды раскладываются
+                    // ниже как отдельные деревья
+                    const startChain = chainOf.get(startNode);
+                    if (startChain) {
+                        measure(startChain);
+                        place(startChain, 0, 0);
+                    }
                     // ноды без пути от startNode — отдельными деревьями строками ниже
                     for (const n of nodes) {
                         const chain = chainOf.get(n);
                         if (seenChains.has(chain)) continue;
                         measure(chain);
                         place(chain, 0, maxRowSeen + 1);
+                    }
+
+                    // высота строки — по самой высокой ноде именно в этой строке, а не
+                    // во всём канвасе: иначе одна высокая нода где-нибудь в дереве
+                    // раздвигала зазор между вообще всеми соседними строками, включая
+                    // пары коротких нод, у которых с ней нет ничего общего
+                    let rowY = 0;
+                    const rowTop = [];
+                    const rowHeight = [];
+                    for (let row = 0; row <= maxRowSeen; row++) {
+                        const h = Math.max(0, ...nodes.filter((n) => rowOf.get(chainOf.get(n)) === row).map((n) => n.offsetHeight));
+                        rowTop[row] = rowY;
+                        rowHeight[row] = h;
+                        rowY += h + NODE_GAP_Y;
                     }
 
                     // left/top ставим по центру клетки, а не по краю: ноды разной
@@ -732,12 +1309,19 @@
                         const col = memberColOf.get(chain)[chain.indexOf(n)];
                         const row = rowOf.get(chain);
                         const colCenterX = col * cellW + cellW / 2;
-                        const rowCenterY = row * cellH + cellH / 2;
+                        const rowCenterY = rowTop[row] + rowHeight[row] / 2;
                         n.style.left = Math.round(colCenterX - n.offsetWidth / 2) + 'px';
                         n.style.top = Math.round(rowCenterY - n.offsetHeight / 2) + 'px';
                         savePosition(n);
                     }
                     drawEdge();
+                }
+
+                // раскладка по дереву + вписать всё в видимую область — для кнопки ⊞
+                function autoLayoutAndFit() {
+                    layoutAllNodes();
+                    const nodes = [...surface.querySelectorAll('.flow-node')].filter((n) => nodeFlow.get(n) === currentFlow);
+                    if (!nodes.length) return;
 
                     const contentW = Math.max(...nodes.map((n) => n.offsetLeft + n.offsetWidth));
                     const contentH = Math.max(...nodes.map((n) => n.offsetTop + n.offsetHeight));
@@ -759,109 +1343,6 @@
                 attachAddBottom(node);
                 attachAddRight(node);
                 createEdge(startNode, node, document.getElementById('flowEdgeStart'), 'horizontal');
-
-                // перетаскивание ноды кликом за карточку (кроме кнопки редактирования);
-                // позиция хранится прямо в left/top ноды — переживает панорамирование и зум
-                let draggedNode = null;
-                let dragStartX = 0;
-                let dragStartY = 0;
-                let dragOriginLeft = 0;
-                let dragOriginTop = 0;
-                let dragGroup = new Map(); // потомки ноды: node -> {left, top} на старте перетаскивания
-
-                // поддерево, которое таскается вместе с `node`: сперва спускаемся только
-                // по вертикальным рёбрам (боковые соседи самой node не в счёт), а дальше
-                // от каждого найденного потомка забираем вообще всё, что растёт из него —
-                // и вниз, и вправо, со всеми их собственными потомками
-                function collectDescendants(node) {
-                    const result = new Set();
-                    const queue = [];
-                    for (const e of edges) {
-                        if (e.from === node && e.direction === 'vertical') {
-                            result.add(e.to);
-                            queue.push(e.to);
-                        }
-                    }
-                    while (queue.length) {
-                        const cur = queue.shift();
-                        for (const e of edges) {
-                            if (e.from === cur && !result.has(e.to)) {
-                                result.add(e.to);
-                                queue.push(e.to);
-                            }
-                        }
-                    }
-                    return result;
-                }
-
-                // минимальная дистанция между нодами при перетаскивании — не даём одной наехать на другую
-                const MIN_NODE_DISTANCE = 24;
-                function resolveCollisions(node, left, top, ignore) {
-                    const w = node.offsetWidth, h = node.offsetHeight;
-                    const others = surface.querySelectorAll('.flow-node');
-                    // несколько проходов: раздвижение от одной ноды может зацепить соседнюю
-                    for (let pass = 0; pass < 3; pass++) {
-                        others.forEach((other) => {
-                            if (other === node || (ignore && ignore.has(other))) return;
-                            const exL = other.offsetLeft - MIN_NODE_DISTANCE;
-                            const exT = other.offsetTop - MIN_NODE_DISTANCE;
-                            const exR = other.offsetLeft + other.offsetWidth + MIN_NODE_DISTANCE;
-                            const exB = other.offsetTop + other.offsetHeight + MIN_NODE_DISTANCE;
-                            const r = left + w, b = top + h;
-                            if (r <= exL || left >= exR || b <= exT || top >= exB) return;
-                            const pushLeft = r - exL;
-                            const pushRight = exR - left;
-                            const pushUp = b - exT;
-                            const pushDown = exB - top;
-                            const min = Math.min(pushLeft, pushRight, pushUp, pushDown);
-                            if (min === pushLeft) left -= pushLeft;
-                            else if (min === pushRight) left += pushRight;
-                            else if (min === pushUp) top -= pushUp;
-                            else top += pushDown;
-                        });
-                    }
-                    return { left, top };
-                }
-
-                surface.addEventListener('mousedown', (e) => {
-                    if (e.target.closest('.flow-node__edit') || e.target.closest('.flow-node__add-bottom') || e.target.closest('.flow-node__add-right') || e.target.closest('select')) return;
-                    const target = e.target.closest('.flow-node');
-                    if (!target) return;
-                    draggedNode = target;
-                    dragStartX = e.clientX;
-                    dragStartY = e.clientY;
-                    dragOriginLeft = draggedNode.offsetLeft;
-                    dragOriginTop = draggedNode.offsetTop;
-                    dragGroup = new Map();
-                    for (const n of collectDescendants(draggedNode)) {
-                        dragGroup.set(n, { left: n.offsetLeft, top: n.offsetTop });
-                    }
-                    e.stopPropagation();
-                });
-
-                window.addEventListener('mousemove', (e) => {
-                    if (!draggedNode) return;
-                    let left = Math.round(dragOriginLeft + (e.clientX - dragStartX) / scale);
-                    let top = Math.round(dragOriginTop + (e.clientY - dragStartY) / scale);
-                    ({ left, top } = resolveCollisions(draggedNode, left, top, dragGroup));
-                    draggedNode.style.left = left + 'px';
-                    draggedNode.style.top = top + 'px';
-                    const dx = left - dragOriginLeft, dy = top - dragOriginTop;
-                    for (const [n, origin] of dragGroup) {
-                        n.style.left = (origin.left + dx) + 'px';
-                        n.style.top = (origin.top + dy) + 'px';
-                    }
-                    drawEdge();
-                });
-
-                window.addEventListener('mouseup', () => {
-                    if (draggedNode) {
-                        savePosition(draggedNode);
-                        for (const n of dragGroup.keys()) savePosition(n);
-                    }
-                    draggedNode = null;
-                    dragGroup = new Map();
-                });
 
                 // выделение ноды кликом и удаление по Delete; стартовая и «Секретарь»
                 // не удаляются — на них завязана логика центрирования канваса
@@ -885,14 +1366,82 @@
                     const path = e.target.closest('path');
                     const edge = path && edges.find((ed) => ed.path === path);
                     if (!edge) return;
+                    e.stopPropagation(); // иначе клик всплывает в surface и тут же снимает выделение
                     selectNode(null);
                     selectEdge(edge);
                 });
 
                 surface.addEventListener('click', (e) => {
-                    if (e.target.closest('.flow-node__edit') || e.target.closest('.flow-node__add-bottom') || e.target.closest('.flow-node__add-right') || e.target.closest('select')) return;
+                    if (e.target.closest('.flow-node__edit') || e.target.closest('.flow-node__add-bottom') || e.target.closest('.flow-node__add-right') || e.target.closest('select') || e.target.closest('.flow-node__scope') || e.target.closest('.flow-node__avatar-picker')) return;
                     selectEdge(null);
                     selectNode(e.target.closest('.flow-node'));
+                });
+
+                // меню «кто видит узел»: один открытый экземпляр на канвас,
+                // клик по пункту красит кнопку выбранной иконкой и закрывает меню
+                surface.addEventListener('click', (e) => {
+                    const scopeBtn = e.target.closest('.flow-node__scope-btn');
+                    const scopeItem = e.target.closest('.flow-node__scope-item');
+                    const openMenu = surface.querySelector('.flow-node__scope-menu:not([hidden])');
+
+                    if (scopeItem) {
+                        const btn = scopeItem.closest('.flow-node__scope').querySelector('.flow-node__scope-btn');
+                        btn.textContent = scopeItem.textContent.trim().split(' ')[0];
+                        btn.title = scopeItem.textContent.trim();
+                        scopeItem.closest('.flow-node__scope-menu').hidden = true;
+                        return;
+                    }
+
+                    if (openMenu && openMenu !== scopeBtn?.nextElementSibling) openMenu.hidden = true;
+                    if (scopeBtn) scopeBtn.nextElementSibling.hidden = !scopeBtn.nextElementSibling.hidden;
+                });
+
+                window.addEventListener('click', (e) => {
+                    if (e.target.closest('.flow-node__scope')) return;
+                    const openMenu = surface.querySelector('.flow-node__scope-menu:not([hidden])');
+                    if (openMenu) openMenu.hidden = true;
+                });
+
+                // меню выбора иконки узла: клик по аватару открывает набор иконок на его месте,
+                // клик по иконке красит аватар выбранным символом и закрывает меню
+                surface.addEventListener('click', (e) => {
+                    const avatarBtn = e.target.closest('.flow-node__avatar');
+                    const avatarItem = e.target.closest('.flow-node__avatar-item');
+                    const openMenu = surface.querySelector('.flow-node__avatar-menu:not([hidden])');
+
+                    if (avatarItem) {
+                        avatarItem.closest('.flow-node__avatar-picker').querySelector('.flow-node__avatar').textContent = avatarItem.dataset.avatar;
+                        avatarItem.closest('.flow-node__avatar-menu').hidden = true;
+                        return;
+                    }
+
+                    if (openMenu && openMenu !== avatarBtn?.nextElementSibling) openMenu.hidden = true;
+                    if (avatarBtn) avatarBtn.nextElementSibling.hidden = !avatarBtn.nextElementSibling.hidden;
+                });
+
+                window.addEventListener('click', (e) => {
+                    if (e.target.closest('.flow-node__avatar-picker')) return;
+                    const openMenu = surface.querySelector('.flow-node__avatar-menu:not([hidden])');
+                    if (openMenu) openMenu.hidden = true;
+                });
+
+                // цвет опции в раскрытом меню браузер не переносит на закрытый select сам —
+                // красим его вручную цветом выбранной опции при каждой смене типа узла
+                surface.addEventListener('change', (e) => {
+                    if (!e.target.matches('.flow-node__type')) return;
+                    e.target.style.color = e.target.selectedOptions[0].style.color;
+                    // блок вопросов имеет смысл только у типа Question
+                    const questions = e.target.closest('.flow-node').querySelector('.flow-node__questions');
+                    if (questions) questions.hidden = e.target.value !== 'question';
+                });
+
+                // toggle «Context on/off» в правой половине строки типа узла
+                surface.addEventListener('click', (e) => {
+                    const toggle = e.target.closest('.flow-node__context-toggle');
+                    if (!toggle) return;
+                    const on = toggle.getAttribute('aria-pressed') !== 'true';
+                    toggle.setAttribute('aria-pressed', String(on));
+                    toggle.setAttribute('aria-label', on ? 'Контекст: включён' : 'Контекст: выключен');
                 });
 
                 canvas.addEventListener('mousedown', (e) => {
@@ -906,13 +1455,70 @@
                         if (e.from === n || e.to === n) removeEdge(e);
                     }
                     n.remove();
+                    nodeFlow.delete(n);
                     const positions = loadPositions();
                     delete positions[n.id];
-                    localStorage.setItem(POS_KEY, JSON.stringify(positions));
+                    flowSet(POS_KEY, positions);
                     selectedNode = null;
                     saveGraph();
                     drawEdge();
                 }
+
+                // на пустом канвасе нечего показать и не от чего плюсовать — заводим
+                // одну ноду-заглушку по центру, чтобы с неё можно было расти
+                function ensureRootNode(flow) {
+                    for (const n of nodeFlow.keys()) if (nodeFlow.get(n) === flow) return n;
+                    const root = nodeTemplate.content.firstElementChild.cloneNode(true);
+                    root.id = 'flowNode_' + (++nodeSeq) + '_' + Date.now();
+                    root.querySelector('.flow-node__title').textContent = 'Start';
+                    surface.append(root);
+                    attachAddBottom(root);
+                    attachAddRight(root);
+                    populateNodeAgentSelects(root);
+                    nodeFlow.set(root, flow);
+                    root.style.left = Math.round((canvas.clientWidth - root.offsetWidth) / 2) + 'px';
+                    root.style.top = Math.round((canvas.clientHeight - root.offsetHeight) / 2) + 'px';
+                    savePosition(root);
+                    saveGraph();
+                    return root;
+                }
+
+                // прячет ноды и рёбра всех канвасов, кроме flow — общая часть
+                // первого показа вкладки (после restoreGraph) и переключения
+                // пунктом меню, чтобы на старте не были видны чужие сохранённые ноды
+                function applyFlowVisibility(flow) {
+                    for (const n of surface.querySelectorAll('.flow-node')) {
+                        n.style.display = nodeFlow.get(n) === flow ? '' : 'none';
+                    }
+                    for (const e of edges) {
+                        const visible = nodeFlow.get(e.from) === flow;
+                        e.path.style.display = visible ? '' : 'none';
+                        e.addBtn.style.display = visible ? '' : 'none';
+                    }
+                }
+
+                // переключение видимого канваса: сам механизм зума/панорамирования/
+                // рёбер общий на все канвасы, переключение просто прячет чужие ноды
+                // и рёбра и подставляет свой сохранённый zoom/pan
+                setActiveFlow = (flow) => {
+                    if (flow === currentFlow) return;
+                    saveView();
+                    currentFlow = flow;
+                    selectNode(null);
+                    selectEdge(null);
+                    ensureRootNode(flow);
+                    applyFlowVisibility(flow);
+                    // тот же пересчёт зазора, что и при первом restoreGraph — на этом
+                    // канвасе сохранённые позиции тоже могли остаться от старой,
+                    // более низкой разметки нод
+                    layoutAllNodes();
+                    const saved = loadViews()[flow];
+                    x = saved ? saved.x : START_X;
+                    y = saved ? saved.y : START_Y;
+                    scale = saved ? saved.scale : 1;
+                    apply();
+                    drawEdge();
+                };
 
                 window.addEventListener('keydown', (e) => {
                     if (e.key !== 'Delete') return;
@@ -927,6 +1533,76 @@
                     if (!selectedNode || selectedNode === node || selectedNode === startNode) return;
                     deleteNode(selectedNode);
                 });
+
+                // записывает текст в title/body ноды и сразу сохраняет его в TEXT_KEY —
+                // так же, как это делает ручное редактирование через focusout выше
+                function setNodeTexts(n, title, body) {
+                    const titleEl = n.querySelector('.flow-node__title');
+                    const bodyEl = n.querySelector('.flow-node__body');
+                    const all = loadTexts();
+                    if (titleEl) {
+                        titleEl.textContent = title;
+                        all[`${n.id}:title`] = title;
+                    }
+                    if (bodyEl) {
+                        bodyEl.textContent = body;
+                        all[`${n.id}:body`] = body;
+                    }
+                    flowSet(TEXT_KEY, all);
+                }
+
+                // ставит ноде пометку из меню «кто видит узел» (.flow-node__scope) —
+                // теми же текстом/title, что и клик по пункту меню вручную
+                function setNodeScope(n, scope) {
+                    const item = n.querySelector(`.flow-node__scope-item[data-scope="${scope}"]`);
+                    const btn = n.querySelector('.flow-node__scope-btn');
+                    if (!item || !btn) return;
+                    btn.textContent = item.textContent.trim().split(' ')[0];
+                    btn.title = item.textContent.trim();
+                }
+
+                // ставит ноде тип из select .flow-node__type — той же покраской
+                // и скрытием блока вопросов, что и ручная смена типа выше
+                function setNodeType(n, type) {
+                    const select = n.querySelector('.flow-node__type');
+                    if (!select) return;
+                    select.value = type;
+                    select.style.color = select.selectedOptions[0].style.color;
+                    const questions = n.querySelector('.flow-node__questions');
+                    if (questions) questions.hidden = type !== 'question';
+                }
+
+                // строит граф канваса `flow` из сообщений сессии: белый текст (роли
+                // user/assistant) идёт цепочкой вправо, серый текст (роль tool, шаги
+                // между вопросом и ответом) — вертикальной цепочкой под ним, потому что
+                // белый текст — причина, по которой эти шаги вообще появились
+                buildSessionFlow = (flow, messages) => {
+                    setActiveFlow(flow);
+                    for (const n of [...nodeFlow.keys()]) {
+                        if (nodeFlow.get(n) === flow) deleteNode(n);
+                    }
+
+                    let lastWhite = null;
+                    let lastGray = null;
+                    for (const m of messages) {
+                        if (m.role === 'tool') {
+                            const from = lastGray || lastWhite;
+                            if (!from) continue;
+                            lastGray = addChildNode(from);
+                            setNodeTexts(lastGray, 'Шаг', m.text);
+                            setNodeScope(lastGray, 'system');
+                            setNodeType(lastGray, 'system');
+                        } else {
+                            lastWhite = lastWhite ? addChildNodeRight(lastWhite) : ensureRootNode(flow);
+                            setNodeTexts(lastWhite, m.role === 'user' ? 'Вопрос' : 'Ответ', m.text);
+                            setNodeScope(lastWhite, 'system');
+                            setNodeType(lastWhite, 'system');
+                            lastGray = null;
+                        }
+                    }
+                    if (!lastWhite) ensureRootNode(flow);
+                    autoLayoutAndFit();
+                };
             })();
 
             // категория «провайдер / модель / effort» ноды Секретаря — какой агент
@@ -938,14 +1614,10 @@
 
                 const AGENT_KEY = 'flowNodeSecretaryAgent';
                 function loadAgent() {
-                    try {
-                        return JSON.parse(localStorage.getItem(AGENT_KEY)) || {};
-                    } catch {
-                        return {};
-                    }
+                    return flowGet(AGENT_KEY, {});
                 }
                 function saveAgent(agent) {
-                    localStorage.setItem(AGENT_KEY, JSON.stringify(agent));
+                    flowSet(AGENT_KEY, agent);
                 }
 
                 const saved = loadAgent();
@@ -996,12 +1668,13 @@
                 });
             })();
 
-    // центрируем один раз: канвас до первого показа скрыт и его размеры нулевые
-    window.MissionFlow = {
-        center() {
-            if (!centerFlowNode) return;
-            centerFlowNode();
-            centerFlowNode = null;
-        },
-    };
+            // window.MissionFlow.center() уже могли дёрнуть, пока грузилось состояние
+            // выше (см. pendingCenter в начале файла) — обрабатываем этот случай сразу
+            // после того, как canvas собран и centerFlowNode получил реальное значение
+            if (pendingCenter && centerFlowNode) {
+                pendingCenter = false;
+                centerFlowNode();
+                centerFlowNode = null;
+            }
+            }
 })();

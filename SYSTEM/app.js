@@ -1,12 +1,12 @@
-// Ядро Mission Control: настройки и провайдеры, панель сессий, лента сообщений.
-// Перенесено из инлайнового <script> в index.html дословно, вместе с отступами —
-// так правки видно построчно. Подключается с defer: код стартует после разбора
-// разметки, поэтому порядок элементов на странице больше ни на что не влияет.
+// Ядро Mission Control: подключение к провайдерам (состояние, на которое опирается
+// лента чата), панель сессий, лента сообщений. Само окно настроек и вся его разметка —
+// в PROJECTS/Settings/settings.js, он и грузится первым (см. порядок <script> в
+// index.html), поэтому здесь можно сразу же находить #settingsModal/#pickerModal в DOM.
 
         (function () {
 
 
-            // ---------- модальное окно Settings ----------
+            // ---------- состояние подключения к провайдерам ----------
 
             // списки моделей — заготовка под реальные данные провайдеров
             const PROVIDERS = [
@@ -39,6 +39,17 @@
             // сессию CLI держим в localStorage, само окружение восстанавливаем на сервере
             const STORE_KEY = 'noname.claude';
 
+            // общий помощник для POST-запросов к серверу — им пользуются и остальные
+            // файлы через window.App.api, каждый второй экран так или иначе ходит на сервер
+            async function api(path, body) {
+                const res = await fetch(path, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body || {}),
+                });
+                return res.json();
+            }
+
             function saveClaudeState() {
                 const state = connections.get('claude');
                 try {
@@ -67,13 +78,14 @@
                 claude.usage = info;
                 saveClaudeState(); // иначе лимиты теряются при live-reload страницы
 
-                // модалка настроек может быть закрыта — тогда просто обновляем данные в connections,
-                // renderProviders перечитает их при следующем открытии
-                const usageRow = providerList.querySelector('.provider__usage');
-                if (usageRow) usageRow.innerHTML = renderUsageInline(info);
+                // модалка настроек (PROJECTS/Settings/settings.js) может быть закрыта —
+                // тогда просто обновляем данные в connections, renderProviders перечитает их
+                // при следующем открытии
+                window.Settings?.refreshUsage?.(info);
             }
 
             const chatSessionBar = document.getElementById('chatSessionBar');
+            const chatSessionIdRow = document.getElementById('chatSessionIdRow');
             const chatSessionIdText = document.getElementById('chatSessionIdText');
             const chatSessionCopyBtn = document.getElementById('chatSessionCopy');
             const chatSessionProviderSelect = document.getElementById('chatSessionProviderSelect');
@@ -111,6 +123,10 @@
 
             function renderSessionBarControls() {
                 const state = connections.get('claude');
+                // строка выбора провайдера/модели/effort видна, как только есть
+                // подключение к claude, и до создания самой сессии — так пользователь
+                // настраивает параметры заранее; строка с id остаётся скрытой отдельно
+                chatSessionBar.hidden = !state || sessionList.hidden;
                 chatSessionProviderSelect.innerHTML = '';
                 chatSessionModelSelect.innerHTML = '';
                 chatSessionEffortSelect.innerHTML = '';
@@ -172,7 +188,7 @@
                 chatSessionId = id;
                 chatSessionIdText.textContent = id ? (sessionTitles.get(id) || maskSessionId(id)) : '—';
                 chatSessionIdText.title = id || '';
-                chatSessionBar.hidden = !id;
+                chatSessionIdRow.hidden = !id;
                 renderSessionBarControls();
                 syncComposerBusy();
             }
@@ -190,111 +206,10 @@
                 }, 1000);
             });
 
+            // оба окна физически создаёт PROJECTS/Settings/settings.js (грузится раньше
+            // app.js, см. порядок <script> в index.html) — здесь только общая логика
+            // закрытия модалок, одна для всех окон проекта
             const modal = document.getElementById('settingsModal');
-            const providerList = document.getElementById('providerList');
-
-            function renderProviders() {
-                providerList.innerHTML = '';
-
-                for (const provider of PROVIDERS) {
-                    const state = connections.get(provider.id);
-
-                    const item = document.createElement('li');
-                    item.className = 'provider';
-
-                    const row = document.createElement('div');
-                    row.className = 'provider__row';
-                    row.innerHTML = `
-                        <div>
-                            <div class="provider__name">${provider.name}</div>
-                            <div class="provider__note">${provider.note}</div>
-                        </div>
-                        <div class="provider__actions">
-                            ${state ? `<span class="provider__status">${state.note || 'Подключено'}</span>` : ''}
-                            <button type="button"
-                                    class="provider__button ${state ? '' : 'provider__button--connect'}"
-                                    data-provider="${provider.id}">
-                                ${state ? 'Отключить' : 'Подключить'}
-                            </button>
-                        </div>
-                    `;
-                    item.append(row);
-
-                    // выбор модели показываем только у подключённого провайдера
-                    if (state) {
-                        if (provider.id === 'claude') {
-                            const usageRow = document.createElement('div');
-                            usageRow.className = 'provider__usage';
-                            usageRow.innerHTML = renderUsageInline(state.usage);
-                            item.append(usageRow);
-                        }
-
-                        const modelRow = document.createElement('div');
-                        modelRow.className = 'provider__model';
-
-                        // ponytail: список провайдеров пока витринный, переключение не подключено — до появления мультипровайдерного роутинга
-                        const sourceSelect = document.createElement('select');
-                        sourceSelect.className = 'provider__select provider__select--source';
-                        sourceSelect.setAttribute('aria-label', 'Провайдер');
-                        for (const p of PROVIDERS) {
-                            const option = document.createElement('option');
-                            option.value = p.id;
-                            option.textContent = p.name;
-                            option.selected = p.id === provider.id;
-                            sourceSelect.append(option);
-                        }
-                        modelRow.append(sourceSelect);
-
-                        const label = document.createElement('span');
-                        label.className = 'provider__model-label';
-                        label.textContent = 'Модель:';
-
-                        const select = document.createElement('select');
-                        select.className = 'provider__select';
-                        select.dataset.providerSelect = provider.id;
-                        select.setAttribute('aria-label', `Модель для ${provider.name}`);
-
-                        for (const model of provider.models) {
-                            const option = document.createElement('option');
-                            option.value = model;
-                            option.textContent = model === provider.defaultModel
-                                ? `${model} (default)`
-                                : model;
-                            option.selected = model === state.model;
-                            select.append(option);
-                        }
-
-                        modelRow.append(label, select);
-
-                        // effort пока умеет только Claude CLI (--effort)
-                        if (provider.efforts) {
-                            const effortSelect = document.createElement('select');
-                            effortSelect.className = 'provider__select provider__select--effort';
-                            effortSelect.dataset.providerEffortSelect = provider.id;
-                            effortSelect.setAttribute('aria-label', `Effort для ${provider.name}`);
-
-                            for (const effort of provider.efforts) {
-                                const option = document.createElement('option');
-                                option.value = effort;
-                                option.textContent = effort === provider.defaultEffort
-                                    ? `${effort} (default)`
-                                    : effort;
-                                option.selected = effort === (state.effort || provider.defaultEffort);
-                                effortSelect.append(option);
-                            }
-
-                            modelRow.append(effortSelect);
-                        }
-
-                        item.append(modelRow);
-                    }
-
-                    providerList.append(item);
-                }
-
-                renderObsConnection();
-            }
-
             const pickerModal = document.getElementById('pickerModal');
 
             function formatResetTime(unixSeconds) {
@@ -329,147 +244,55 @@
             function closeModal(el) {
                 el.hidden = true;
                 if (el === modal) {
-                    button.focus();
+                    document.getElementById('settingsButton').focus();
                 }
             }
 
-            function openSettings() {
-                renderProviders();
-                openModal(modal);
-            }
+            // модальное окно подтверждения взамен нативного confirm() — та же
+            // разметка .modal/.modal__dialog, что у остальных окон, поэтому стиль
+            // не расходится; строится на лету и убирается за собой, чтобы им можно
+            // было пользоваться из любого файла (flow.js, sessions и т.п.) без
+            // добавления своего <div> в index.html под каждый вызов
+            function confirmModal(message, opts = {}) {
+                return new Promise((resolve) => {
+                    const el = document.createElement('div');
+                    el.className = 'modal modal--top';
+                    el.innerHTML = `
+                        <div class="modal__backdrop"></div>
+                        <div class="modal__dialog modal__dialog--confirm" role="alertdialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+                            <div class="modal__header">
+                                <h2 class="modal__title" id="confirmModalTitle"></h2>
+                            </div>
+                            <p class="modal__hint"></p>
+                            <div class="modal__confirm-actions">
+                                <button type="button" class="modal__btn" data-confirm="cancel"></button>
+                                <button type="button" class="modal__btn modal__btn--danger" data-confirm="ok"></button>
+                            </div>
+                        </div>
+                    `;
+                    el.querySelector('.modal__title').textContent = opts.title || 'Подтвердите действие';
+                    el.querySelector('.modal__hint').textContent = message;
+                    el.querySelector('[data-confirm="cancel"]').textContent = opts.cancelText || 'Отмена';
+                    el.querySelector('[data-confirm="ok"]').textContent = opts.confirmText || 'Удалить';
+                    document.body.append(el);
 
-            const pickerList = document.getElementById('pickerList');
-            const pickerHint = document.getElementById('pickerHint');
-
-            async function api(path, body) {
-                const res = await fetch(path, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body || {}),
-                });
-                return res.json();
-            }
-
-            function showProviderError(id, message) {
-                const row = providerList.querySelector(`[data-provider="${id}"]`)?.closest('.provider');
-                if (!row) return;
-                const error = document.createElement('div');
-                error.className = 'provider__error';
-                error.textContent = message;
-                row.append(error);
-            }
-
-            async function connectClaude(install) {
-                const result = await api('/api/claude/connect', { id: install.id });
-                if (!result.ok) {
-                    showProviderError('claude', result.error);
-                    return;
-                }
-
-                const provider = PROVIDERS.find((p) => p.id === 'claude');
-                connections.set('claude', {
-                    installId: result.id,
-                    label: result.label,
-                    version: result.version,
-                    model: connections.get('claude')?.model || provider.defaultModel,
-                    effort: connections.get('claude')?.effort || provider.defaultEffort,
-                    note: `${result.label} · CLI ${result.version}`,
-                });
-                saveClaudeState();
-                renderProviders();
-            }
-
-            // окно выбора открывается, только когда найдено больше одного окружения
-            function pickInstall(installs) {
-                pickerHint.textContent = 'CLI найден в нескольких окружениях — выберите, какое использовать.';
-                pickerList.innerHTML = '';
-
-                for (const install of installs) {
-                    const item = document.createElement('li');
-                    const btn = document.createElement('button');
-                    btn.type = 'button';
-                    btn.className = 'picker__item';
-                    btn.innerHTML = `<span>${install.label}</span><span class="picker__version">CLI ${install.version}</span>`;
-                    btn.addEventListener('click', () => {
-                        closeModal(pickerModal);
-                        connectClaude(install);
+                    function cleanup(result) {
+                        el.remove();
+                        document.removeEventListener('keydown', onKey);
+                        resolve(result);
+                    }
+                    el.addEventListener('click', (e) => {
+                        if (e.target.closest('.modal__backdrop') || e.target.closest('[data-confirm="cancel"]')) cleanup(false);
+                        else if (e.target.closest('[data-confirm="ok"]')) cleanup(true);
                     });
-                    item.append(btn);
-                    pickerList.append(item);
-                }
-
-                openModal(pickerModal);
+                    function onKey(e) {
+                        if (e.key !== 'Escape') return;
+                        cleanup(false);
+                    }
+                    document.addEventListener('keydown', onKey);
+                    el.querySelector('[data-confirm="ok"]').focus();
+                });
             }
-
-            function showNotFound() {
-                pickerHint.textContent = 'Claude CLI не найден ни в Windows, ни в WSL. Установите его или укажите путь через переменную CLAUDE_BIN при запуске сервера.';
-                pickerList.innerHTML = '';
-                openModal(pickerModal);
-            }
-
-            providerList.addEventListener('click', async (e) => {
-                const btn = e.target.closest('[data-provider]');
-                if (!btn) return;
-
-                const id = btn.dataset.provider;
-
-                if (connections.has(id)) {
-                    connections.delete(id);
-                    if (id === 'claude') {
-                        setChatSessionId(null);
-                        saveClaudeState();
-                    }
-                    renderProviders();
-                    return;
-                }
-
-                // у Claude подключение настоящее: ищем CLI в обоих окружениях
-                if (id === 'claude') {
-                    btn.disabled = true;
-                    btn.textContent = 'Ищу Claude...';
-
-                    let installs = [];
-                    try {
-                        ({ installs = [] } = await api('/api/claude/detect'));
-                    } catch (err) {
-                        renderProviders();
-                        showProviderError(id, `Сервер недоступен: ${err.message}`);
-                        return;
-                    }
-
-                    renderProviders();
-
-                    if (installs.length === 0) showNotFound();
-                    else if (installs.length === 1) connectClaude(installs[0]);
-                    else pickInstall(installs);
-                    return;
-                }
-
-                // остальные провайдеры пока переключаются без реального подключения
-                const provider = PROVIDERS.find((p) => p.id === id);
-                connections.set(id, { model: provider.defaultModel });
-                renderProviders();
-            });
-
-            providerList.addEventListener('change', (e) => {
-                const select = e.target.closest('[data-provider-select]');
-                if (select) {
-                    connections.get(select.dataset.providerSelect).model = select.value;
-                    if (select.dataset.providerSelect === 'claude') {
-                        saveClaudeState();
-                        renderSessionBarControls();
-                    }
-                    return;
-                }
-
-                const effortSelect = e.target.closest('[data-provider-effort-select]');
-                if (!effortSelect) return;
-                connections.get(effortSelect.dataset.providerEffortSelect).effort = effortSelect.value;
-                if (effortSelect.dataset.providerEffortSelect === 'claude') {
-                    saveClaudeState();
-                    renderSessionBarControls();
-                }
-            });
 
             // Профиль каждого исполнителя на шкале: чем он владеет и что из этого
             // задействовано именно в текущей задаче (used) — это решает глава компании,
@@ -602,18 +425,26 @@
             const shotLightbox = document.getElementById('shotLightbox');
             const shotLightboxImg = document.getElementById('shotLightboxImg');
 
-            document.addEventListener('click', (e) => {
-                const img = e.target.closest('.task-card__shot img');
-                if (!img) return;
-                shotLightboxImg.src = img.src;
-                shotLightboxImg.alt = img.alt;
+            // единственное место в проекте, которое открывает превью скриншота на весь экран —
+            // им пользуются и task-card__shot, и screenshotScreenPreview, и миниатюры сессий
+            function openShotLightbox(src, alt = '') {
+                shotLightboxImg.src = src;
+                shotLightboxImg.alt = alt;
                 shotLightbox.hidden = false;
-            });
+            }
 
-            shotLightbox.addEventListener('click', () => {
+            function closeShotLightbox() {
                 shotLightbox.hidden = true;
                 shotLightboxImg.src = '';
+            }
+
+            document.addEventListener('click', (e) => {
+                const img = e.target.closest('.task-card__shot img, #screenshotScreenPreview');
+                if (!img || img.hidden) return;
+                openShotLightbox(img.src, img.alt);
             });
+
+            shotLightbox.addEventListener('click', closeShotLightbox);
 
             const versionModal = document.getElementById('versionModal');
             document.getElementById('appVersionButton').addEventListener('click', () => openModal(versionModal));
@@ -630,7 +461,7 @@
             // Esc закрывает верхнее из открытых окон
             document.addEventListener('keydown', (e) => {
                 if (e.key !== 'Escape') return;
-                if (!shotLightbox.hidden) { shotLightbox.hidden = true; shotLightboxImg.src = ''; }
+                if (!shotLightbox.hidden) { closeShotLightbox(); }
                 else if (!fileModal.hidden) closeModal(fileModal);
                 else if (!pickerModal.hidden) closeModal(pickerModal);
                 else if (!versionModal.hidden) closeModal(versionModal);
@@ -656,6 +487,13 @@
             document.body.appendChild(sbProbe);
             document.documentElement.style.setProperty('--sbw', (sbProbe.offsetWidth - sbProbe.clientWidth) + 'px');
             sbProbe.remove();
+
+            // панель датчиков над композером — сейчас только контекст, место под будущие.
+            // видна всегда: до первого ответа показывает «Контекст: —»
+            const chatGaugeContext = document.getElementById('chatGaugeContext');
+            function updateContextGauge(percent) {
+                chatGaugeContext.textContent = percent == null ? 'Контекст: —' : `Контекст: ${percent}%`;
+            }
 
             // поле ввода растёт под текст, Enter отправляет, Shift+Enter переносит строку
             const chatInput = document.getElementById('chatInput');
@@ -920,6 +758,7 @@
 
             // переключение на другую сессию: показываем её переписку и продолжаем её же
             async function openSession(id, running = false) {
+                MissionGraph?.closeFilePanel(); // могла быть открыта панель редактирования файла
                 sessionList.querySelector('.session-item--placeholder')?.closest('li').remove();
                 setChatSessionId(id);
                 saveClaudeState();
@@ -928,13 +767,14 @@
                 chatList.innerHTML = '';
                 chatEmpty.hidden = true;
 
-                const { messages = [] } = await api('/api/sessions/messages', { id });
+                const { messages = [], contextPercent = null } = await api('/api/sessions/messages', { id });
                 for (const message of messages) {
                     if (message.role === 'tool') addStep(message.text);
                     else addMessage(message.text, message.role === 'user' ? 'user' : 'assistant');
                 }
 
                 if (messages.length === 0) chatEmpty.hidden = false;
+                updateContextGauge(contextPercent);
 
                 for (const btn of sessionList.querySelectorAll('.session-item')) {
                     btn.setAttribute('aria-current', String(btn.dataset.sessionId === id));
@@ -947,21 +787,11 @@
                 }
             }
 
-            // клик по превью открывает его на весь экран, повторный клик закрывает — превью не должно выбирать сессию
-            function openThumbLightbox(src) {
-                const overlay = document.createElement('div');
-                overlay.className = 'thumb-lightbox';
-                const img = document.createElement('img');
-                img.src = src;
-                overlay.append(img);
-                overlay.addEventListener('click', () => overlay.remove());
-                document.body.append(overlay);
-            }
-
             sessionList.addEventListener('click', (e) => {
+                // клик по превью открывает его на весь экран, повторный клик закрывает — превью не должно выбирать сессию
                 const thumb = e.target.closest('.session-item__thumb-img');
                 if (thumb) {
-                    openThumbLightbox(thumb.src);
+                    openShotLightbox(thumb.src);
                     return;
                 }
 
@@ -983,11 +813,13 @@
 
             // повторный клик по выбранной (синей) сессии снимает выбор — назад к чату default
             function deselectSession() {
+                MissionGraph?.closeFilePanel(); // могла быть открыта панель редактирования файла
                 setChatSessionId(null);
                 saveClaudeState();
                 chatRun += 1;
                 chatList.innerHTML = chatDefaultHtml;
                 chatEmpty.hidden = false;
+                updateContextGauge(null);
                 for (const btn of sessionList.querySelectorAll('.session-item')) {
                     btn.setAttribute('aria-current', 'false');
                 }
@@ -996,7 +828,8 @@
             // удаление сессии из базы. если удалили открытую — лента чистится,
             // иначе следующий вопрос ушёл бы в --resume несуществующей сессии
             async function removeSession(id) {
-                if (!id || !confirm('Удалить эту сессию из базы? Действие необратимо.')) return;
+                if (!id) return;
+                if (!(await confirmModal('Удалить эту сессию из базы? Действие необратимо.', { title: 'Удалить сессию' }))) return;
 
                 const { ok, error } = await api('/api/sessions/delete', { id });
                 if (!ok) {
@@ -1025,11 +858,12 @@
                 chatList.innerHTML = '';
                 chatEmpty.hidden = false;
                 insertSessionPlaceholder();
+                document.getElementById('chatInput').focus();
             });
 
             // обнулить базу сессий: чистим список и текущую переписку
             document.getElementById('sessionReset').addEventListener('click', async () => {
-                if (!confirm('Удалить все сессии из базы? Действие необратимо.')) return;
+                if (!(await confirmModal('Удалить все сессии из базы? Действие необратимо.', { title: 'Удалить все сессии' }))) return;
 
                 await api('/api/sessions/reset');
                 setChatSessionId(null);
@@ -1061,7 +895,11 @@
                     const active = btn.dataset.running === '1' || (id !== null && id === runningSessionId);
                     btn.classList.toggle('session-item--running', active);
                 }
-                runningCountEl.textContent = sessionList.querySelectorAll('.session-item--running').length;
+                const runningCount = sessionList.querySelectorAll('.session-item--running').length;
+                runningCountEl.textContent = runningCount;
+                document.getElementById('chatButton')?.classList.toggle('icon-button--running', runningCount > 0);
+                const chatButtonBadge = document.getElementById('chatButtonBadge');
+                if (chatButtonBadge) chatButtonBadge.textContent = runningCount;
             }
 
             function setRunningSessionId(id) {
@@ -1216,7 +1054,6 @@
             }
 
             function setComposerBusy(busy) {
-                chatInput.disabled = busy;
                 chatSend.classList.toggle('chat__send--stop', busy);
                 chatSend.textContent = busy ? 'Stop' : 'Send';
             }
@@ -1249,10 +1086,10 @@
             // с первым событием потока — до тех пор снимок ждёт здесь
             let pendingThumb = null;
 
-            // комментарий из режима Edit начинает отдельную сессию с этим вопросом
+            // комментарий из режима Edit начинает отдельную сессию с этим вопросом.
+            // вкладку на Chat не переключаем — пользователь сам перейдёт туда, если захочет
             function startCommentSession(prompt, thumb) {
                 pendingThumb = thumb || null;
-                MissionTabs.show('chat');
                 setChatSessionId(null);
                 saveClaudeState();
                 chatRun += 1;
@@ -1352,6 +1189,7 @@
                 try {
                     await readNdjson(res, (event) => {
                         if (event.type === 'rate_limit') { updateClaudeUsage(event.info); return; }
+                        if (event.type === 'context') { updateContextGauge(event.percent); return; }
                         if (run === chatRun) render(event);
                     });
                 } finally {
@@ -1424,6 +1262,11 @@
                         return;
                     }
 
+                    if (event.type === 'context') {
+                        updateContextGauge(event.percent);
+                        return;
+                    }
+
                     render(event);
                 };
 
@@ -1462,16 +1305,24 @@
 
 
 
-            // что берут вынесенные файлы: вкладки (tabs.js), Flow, Kanban, Edit, меню
+            // что берут вынесенные файлы: вкладки (tabs.js), Flow, Kanban, Edit, Settings
             window.App = {
                 BOARD_COLUMNS,
                 VIEWS,
                 PROVIDERS,
+                api,
+                connections,
+                saveClaudeState,
+                setChatSessionId,
+                renderSessionBarControls,
+                renderObsConnection,
+                renderUsageInline,
                 chatMessages,
                 openModal,
+                confirmModal,
                 closeModal,
-                openSettings,
                 deselectSession,
                 startCommentSession,
+                getChatSessionId: () => chatSessionId,
             };
         })();

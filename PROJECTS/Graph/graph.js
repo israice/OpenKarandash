@@ -1,5 +1,5 @@
 // Вкладка Graph: карта проекта, поиск по ней и окно с содержимым узла.
-// Вынесено из index.html, который иначе разросся бы ещё на шесть сотен строк.
+// Вся вкладка живёт в PROJECTS/Graph: здесь клиент, рядом graph.css и graph-server.js.
 // Подключается с defer и ничего не ждёт от порядка загрузки: общее ядро берём
 // из window.App в момент вызова, а не при старте файла.
 (function () {
@@ -182,6 +182,29 @@
                 a.vy += dy * push;
                 b.vx -= dx * push;
                 b.vy -= dy * push;
+
+                // жёсткий запрет наложения: кружки не должны залезать друг на друга
+                // ни при какой alpha, иначе узлы будут прятаться один под другим
+                const minDist = (a.footprint || a.radius || 3) + (b.footprint || b.radius || 3) + 4;
+                if (dist < minDist) {
+                    const nx = dx / dist;
+                    const ny = dy / dist;
+                    const overlap = minDist - dist;
+                    // перетаскиваемый узел не двигаем сами — его ведёт мышь,
+                    // всю разницу забирает второй узел
+                    if (a === draggedNode) {
+                        b.x -= nx * overlap;
+                        b.y -= ny * overlap;
+                    } else if (b === draggedNode) {
+                        a.x += nx * overlap;
+                        a.y += ny * overlap;
+                    } else {
+                        a.x += nx * overlap / 2;
+                        a.y += ny * overlap / 2;
+                        b.x -= nx * overlap / 2;
+                        b.y -= ny * overlap / 2;
+                    }
+                }
             }
         }
         for (const link of graphLinks) {
@@ -318,6 +341,9 @@
             node.element = group;
             node.labelElement = label;
             node.radius = radius;
+            // подпись рисуется под кружком и часто шире его — если раздвигать
+            // узлы только по радиусу кружка, подписи всё равно налезают друг на друга
+            node.footprint = Math.max(radius, node.label.length * 1.7);
             graphSurface.append(group);
         }
 
@@ -452,143 +478,191 @@
         for (const node of graphNodes) node.element.classList.remove('graph-node--picked');
     });
 
-    // ---------- окно с содержимым узла ----------
-
-    const fileModal = document.getElementById('fileModal');
-    const fileModalTitle = document.getElementById('fileModalTitle');
-    const fileModalMeta = document.getElementById('fileModalMeta');
-    const fileModalLinks = document.getElementById('fileModalLinks');
-    const fileModalText = document.getElementById('fileModalText');
-    const fileModalStatus = document.getElementById('fileModalStatus');
-    const fileModalSave = document.getElementById('fileModalSave');
-
-    let fileModalPath = null;   // что правим на диске
-    let fileModalSaved = '';    // текст на момент открытия — по нему видно, есть ли правки
+    // ---------- содержимое узла: просмотр и правка файла ----------
+    // Общая логика (загрузка, сохранение, Ctrl+S) переиспользуется двумя местами:
+    // окном-модалкой (клик по узлу графа) и панелью справа в чате (карточка проекта)
 
     // узел графа указывает либо на файл проекта (file, section, function, route),
     // либо на саму заметку vault (session, history, рукописные заметки)
     function nodeSource(node) {
         if (node.file) return { path: node.file, line: node.line };
         if (node.kind === 'file') return { path: node.label };
-        return { path: 'vault/' + node.path };
-    }
-
-    async function openFileModal(node) {
-        const source = nodeSource(node);
-        fileModalPath = null;
-        fileModalTitle.textContent = source.path;
-        fileModalMeta.textContent = 'Загружаю…';
-        fileModalText.value = '';
-        fileModalText.readOnly = true;
-        fileModalSave.disabled = true;
-        fileModalStatus.textContent = '';
-        renderModalLinks(node);
-        App.openModal(fileModal); // окно открывает ядро: там управление фокусом
-
-        let data;
-        try {
-            const res = await fetch('/api/file/read', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: source.path }),
-            });
-            data = await res.json();
-        } catch {
-            data = { ok: false, error: 'Сервер не ответил' };
-        }
-
-        if (!data.ok) {
-            fileModalMeta.textContent = data.error;
-            return;
-        }
-        if (data.binary) {
-            fileModalMeta.textContent = `Двоичный файл, ${Math.round(data.size / 1024)} КБ${data.note ? ' · ' + data.note : ''}`;
-            return;
-        }
-
-        fileModalPath = data.path;
-        fileModalSaved = data.text;
-        fileModalText.value = data.text;
-        fileModalText.readOnly = !data.editable;
-        fileModalSave.disabled = true;
-        fileModalMeta.textContent = [
-            `${data.text.split('\n').length} строк`,
-            `${Math.round(data.size / 1024)} КБ`,
-            node.kind === 'section' || node.kind === 'function' ? `${node.kind} «${node.label}»` : node.kind,
-            data.note,
-        ].filter(Boolean).join(' · ');
-
-        if (source.line) scrollToLine(source.line);
+        return { path: 'DATA/vault/' + node.path };
     }
 
     // для секции и функции показываем не начало файла, а нужное место
-    function scrollToLine(line) {
-        const lines = fileModalText.value.split('\n');
+    function scrollToLine(textEl, line) {
+        const lines = textEl.value.split('\n');
         // +1 за перевод строки перед нужной, иначе выделение начинается с него
         const before = lines.slice(0, line - 1).join('\n').length + (line > 1 ? 1 : 0);
-        fileModalText.focus();
-        fileModalText.setSelectionRange(before, before + (lines[line - 1] || '').length);
+        textEl.focus();
+        textEl.setSelectionRange(before, before + (lines[line - 1] || '').length);
         // прокрутка курсора в textarea не гарантирована — считаем позицию сами
-        const lineHeight = parseFloat(getComputedStyle(fileModalText).lineHeight) || 18;
-        fileModalText.scrollTop = Math.max(0, (line - 3) * lineHeight);
+        const lineHeight = parseFloat(getComputedStyle(textEl).lineHeight) || 18;
+        textEl.scrollTop = Math.max(0, (line - 3) * lineHeight);
     }
 
-    function renderModalLinks(node) {
-        fileModalLinks.textContent = '';
-        const neighbours = [...(graphNeighbours && graphNeighbours.get(node.path) || [])].sort();
-        for (const item of neighbours.slice(0, 40)) {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'file-modal__link';
-            button.textContent = item.replace(/\.md$/, '').split('/').pop();
-            button.addEventListener('click', () => {
-                const target = nodeByPath(item);
-                if (target) { showDetails(target); focusNode(target); openFileModal(target); }
-            });
-            fileModalLinks.append(button);
+    // { titleEl, metaEl, linksEl, textEl, statusEl, saveEl } — элементы окна или панели.
+    // onOpen вызывается перед загрузкой файла — там показывают окно/панель.
+    // onLinkClick(path) решает, чем открыть связанный узел — тем же способом
+    function makeFileEditor({ titleEl, metaEl, linksEl, textEl, statusEl, saveEl, onOpen, onLinkClick }) {
+        let path = null;   // что правим на диске
+        let saved = '';    // текст на момент открытия — по нему видно, есть ли правки
+
+        function renderLinks(node) {
+            linksEl.textContent = '';
+            const neighbours = [...(graphNeighbours && graphNeighbours.get(node.path) || [])].sort();
+            for (const item of neighbours.slice(0, 40)) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'file-modal__link';
+                button.textContent = item.replace(/\.md$/, '').split('/').pop();
+                button.addEventListener('click', () => onLinkClick(item));
+                linksEl.append(button);
+            }
         }
+
+        async function open(node) {
+            const source = nodeSource(node);
+            path = null;
+            titleEl.textContent = source.path;
+            metaEl.textContent = 'Загружаю…';
+            textEl.value = '';
+            textEl.readOnly = true;
+            saveEl.disabled = true;
+            statusEl.textContent = '';
+            renderLinks(node);
+            onOpen();
+
+            let data;
+            try {
+                const res = await fetch('/api/file/read', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: source.path }),
+                });
+                data = await res.json();
+            } catch {
+                data = { ok: false, error: 'Сервер не ответил' };
+            }
+
+            if (!data.ok) {
+                metaEl.textContent = data.error;
+                return;
+            }
+            if (data.binary) {
+                metaEl.textContent = `Двоичный файл, ${Math.round(data.size / 1024)} КБ${data.note ? ' · ' + data.note : ''}`;
+                return;
+            }
+
+            path = data.path;
+            saved = data.text;
+            textEl.value = data.text;
+            textEl.readOnly = !data.editable;
+            saveEl.disabled = true;
+            metaEl.textContent = [
+                `${data.text.split('\n').length} строк`,
+                `${Math.round(data.size / 1024)} КБ`,
+                node.kind === 'section' || node.kind === 'function' ? `${node.kind} «${node.label}»` : node.kind,
+                data.note,
+            ].filter(Boolean).join(' · ');
+
+            if (source.line) scrollToLine(textEl, source.line);
+        }
+
+        async function save() {
+            if (!path) return;
+            saveEl.disabled = true;
+            statusEl.textContent = 'Сохраняю…';
+            const text = textEl.value;
+
+            let data;
+            try {
+                const res = await fetch('/api/file/write', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path, text }),
+                });
+                data = await res.json();
+            } catch {
+                data = { ok: false, error: 'Сервер не ответил' };
+            }
+
+            if (!data.ok) {
+                statusEl.textContent = data.error;
+                saveEl.disabled = false;
+                return;
+            }
+            saved = text;
+            statusEl.textContent = 'Сохранено';
+        }
+
+        textEl.addEventListener('input', () => {
+            saveEl.disabled = textEl.readOnly || textEl.value === saved;
+            statusEl.textContent = saveEl.disabled ? '' : 'есть несохранённые правки';
+        });
+
+        saveEl.addEventListener('click', save);
+
+        // Ctrl+S привычнее кнопки, когда правишь код
+        textEl.addEventListener('keydown', (event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+                event.preventDefault();
+                if (!saveEl.disabled) save();
+            }
+        });
+
+        return { open };
     }
 
-    fileModalText.addEventListener('input', () => {
-        fileModalSave.disabled = fileModalText.readOnly || fileModalText.value === fileModalSaved;
-        fileModalStatus.textContent = fileModalSave.disabled ? '' : 'есть несохранённые правки';
+    // окно-модалка: открывается кликом по узлу на канвасе графа
+    const fileModal = document.getElementById('fileModal');
+    const fileModalEditor = makeFileEditor({
+        titleEl: document.getElementById('fileModalTitle'),
+        metaEl: document.getElementById('fileModalMeta'),
+        linksEl: document.getElementById('fileModalLinks'),
+        textEl: document.getElementById('fileModalText'),
+        statusEl: document.getElementById('fileModalStatus'),
+        saveEl: document.getElementById('fileModalSave'),
+        onOpen: () => App.openModal(fileModal), // окно открывает ядро: там управление фокусом
+        onLinkClick: (item) => {
+            const target = nodeByPath(item);
+            if (target) { showDetails(target); focusNode(target); openFileModal(target); }
+        },
     });
 
-    fileModalSave.addEventListener('click', saveFileModal);
+    function openFileModal(node) {
+        return fileModalEditor.open(node);
+    }
 
-    // Ctrl+S привычнее кнопки, когда правишь код
-    fileModalText.addEventListener('keydown', (event) => {
-        if ((event.ctrlKey || event.metaKey) && event.key === 's') {
-            event.preventDefault();
-            if (!fileModalSave.disabled) saveFileModal();
-        }
+    // панель справа в чате: открывается кликом по карточке проекта в панели Sessions,
+    // так же как выбор сессии заменяет содержимое чата — вместо окна посередине
+    const chatFileEditor = document.getElementById('chatFileEditor');
+    const chatMessages = document.getElementById('chatMessages');
+    const chatComposer = document.getElementById('chatComposer');
+    const chatFilePanelEditor = makeFileEditor({
+        titleEl: document.getElementById('chatFileEditorTitle'),
+        metaEl: document.getElementById('chatFileEditorMeta'),
+        linksEl: document.getElementById('chatFileEditorLinks'),
+        textEl: document.getElementById('chatFileEditorText'),
+        statusEl: document.getElementById('chatFileEditorStatus'),
+        saveEl: document.getElementById('chatFileEditorSave'),
+        onOpen: () => {
+            chatMessages.hidden = true;
+            chatComposer.hidden = true;
+            chatFileEditor.hidden = false;
+        },
+        onLinkClick: (item) => {
+            const target = nodeByPath(item);
+            if (target) chatFilePanelEditor.open(target);
+        },
     });
 
-    async function saveFileModal() {
-        if (!fileModalPath) return;
-        fileModalSave.disabled = true;
-        fileModalStatus.textContent = 'Сохраняю…';
-        const text = fileModalText.value;
-
-        let data;
-        try {
-            const res = await fetch('/api/file/write', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: fileModalPath, text }),
-            });
-            data = await res.json();
-        } catch {
-            data = { ok: false, error: 'Сервер не ответил' };
-        }
-
-        if (!data.ok) {
-            fileModalStatus.textContent = data.error;
-            fileModalSave.disabled = false;
-            return;
-        }
-        fileModalSaved = text;
-        fileModalStatus.textContent = 'Сохранено';
+    function closeFilePanel() {
+        chatFileEditor.hidden = true;
+        chatMessages.hidden = false;
+        chatComposer.hidden = false;
+        document.querySelector('.project-card--selected')?.classList.remove('project-card--selected');
     }
 
     // ---------- поиск ----------
@@ -738,5 +812,8 @@
     graphCanvas.addEventListener('pointercancel', endDrag);
     window.MissionGraph = {
         show(force) { showGraph(force); },
+        // открыть панель редактирования произвольного файла по пути, в обход узла графа
+        openFile(path) { chatFilePanelEditor.open({ file: path, kind: 'file', label: path }); },
+        closeFilePanel,
     };
 })();
