@@ -12,8 +12,11 @@
     }
 
     async function syncFromSession(sessionId) {
-        const { messages = [] } = await App.api('/api/sessions/messages', { id: sessionId });
-        MissionFlow.buildFromSession(activeFlow(), messages);
+        const {
+            messages = [], usage = null,
+            contextPercent = null, sessionInfo = null, rateLimit = null,
+        } = await App.api('/api/sessions/messages', { id: sessionId });
+        MissionFlow.buildFromSession(activeFlow(), messages, usage, { contextPercent, sessionInfo, rateLimit });
     }
 
     // список перечитывается при каждом открытии, чтобы не показывать устаревшее
@@ -32,4 +35,15 @@
     select.addEventListener('change', () => {
         if (select.value) syncFromSession(select.value);
     });
+
+    const copyIdBtn = document.getElementById('flowSessionCopyId');
+    if (copyIdBtn) {
+        copyIdBtn.addEventListener('click', () => {
+            if (!select.value) return;
+            navigator.clipboard.writeText(select.value);
+            const original = copyIdBtn.textContent;
+            copyIdBtn.textContent = '✅';
+            setTimeout(() => { copyIdBtn.textContent = original; }, 1000);
+        });
+    }
 })();

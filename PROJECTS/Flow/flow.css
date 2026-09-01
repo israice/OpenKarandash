@@ -140,6 +140,13 @@
     box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), 0 0 0 2px #7bffb0;
 }
 
+/* шаг субагента (Task) — вложен внутрь вызова Task, а не идёт по цепочке
+   верхнего уровня; левая полоса и приглушённый фон отличают такие ноды на глаз */
+.flow-node--sidechain {
+    border-left: 3px solid #b98cff;
+    background: linear-gradient(180deg, #1a1c24, #14151b);
+}
+
 
 .flow-node__edit {
     position: absolute;
@@ -328,6 +335,40 @@
     outline: 1px dashed #6ea8fe;
     outline-offset: 2px;
     color: #e6e8ea;
+}
+
+/* результат вызова инструмента — свёрнут по умолчанию (может быть длинным),
+   но не в hover-подсказке: разворачивается кликом прямо внутри ноды, чтобы
+   ничего из сессии не было доступно только «если повезёт навести мышкой» */
+.flow-node__tool-result {
+    margin: 0 16px 14px;
+    padding-top: 8px;
+    border-top: 1px dashed #2e3138;
+}
+
+.flow-node__tool-result-toggle {
+    background: none;
+    border: 0;
+    padding: 0;
+    font-size: 0.72rem;
+    color: #6ea8fe;
+    cursor: pointer;
+}
+
+.flow-node__tool-result--error .flow-node__tool-result-toggle {
+    color: #ff9800;
+}
+
+.flow-node__tool-result-text {
+    margin-top: 6px;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: #9a9ea6;
+    white-space: pre-wrap;
+}
+
+.flow-node__tool-result-text[hidden] {
+    display: none;
 }
 
 /* группа вопросов под телом ноды — отделена пунктиром, каждый вопрос —

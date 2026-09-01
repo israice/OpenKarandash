@@ -637,6 +637,21 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
     activeRuns.set(runId, run);
     setBusy(1);
 
+    // tool_use_id -> позиция строки шага в messages: tool_result приходит отдельным
+    // событием 'user' уже после того, как шаг записан, и должен лечь в ту же строку
+    const toolPositions = new Map();
+    // usage/cost/duration копим тут по ходу стрима и пишем разом в finishExchange —
+    // событие result может прийти раньше, чем CLI вообще завершит процесс. usage
+    // суммируем по каждому событию assistant, а не берём один раз из result: за
+    // один ход модель может дёргать инструменты десятками раундов, и у каждого
+    // раунда — свой вызов модели с собственным usage; result несёт только
+    // состав контекста последнего из них (см. комментарий ниже), не сумму по ходу
+    const turnMeta = {
+        model: model || null, effort: effort || null,
+        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+        costUsd: null, durationMs: null, stopReason: null,
+    };
+
     const onLine = (line) => {
         let event;
         try {
@@ -648,16 +663,55 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
         if (event.session_id && !startedSession) {
             startedSession = event.session_id;
             run.sessionId = startedSession;
-            startExchange(startedSession, prompt, target.id);
+            startExchange(startedSession, prompt, target.id, turnMeta.model, turnMeta.effort);
             runs.set(startedSession, new Set());
             emit({ type: 'session', id: startedSession });
         }
 
+        // модель CLI мог выбрать сам (флаг --model не передали) — берём из первого
+        // ответа, если раньше не знали её
+        if (!turnMeta.model && event.message?.model) turnMeta.model = event.message.model;
+
+        // событие system/init приходит один раз в самом начале стрима — рабочая
+        // папка, доступные инструменты, режим разрешений, MCP-серверы, слэш-команды.
+        // Раньше нигде не читалось; названия полей — как их шлёт --output-format
+        // stream-json (camelCase у permissionMode, snake_case у остальных)
+        if (event.type === 'system' && event.subtype === 'init' && startedSession) {
+            const info = {
+                cwd: event.cwd || null,
+                permissionMode: event.permissionMode || event.permission_mode || null,
+                tools: Array.isArray(event.tools) ? event.tools : null,
+                mcpServers: Array.isArray(event.mcp_servers)
+                    ? event.mcp_servers.map((s) => (typeof s === 'string' ? s : s?.name || null)).filter(Boolean)
+                    : null,
+                slashCommands: Array.isArray(event.slash_commands) ? event.slash_commands : null,
+            };
+            setSessionInfo.run(JSON.stringify(info), startedSession);
+        }
+
         if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+            // каждое событие assistant — отдельный вызов модели в рамках этого хода
+            // (агентный цикл: модель -> инструмент -> модель -> ...), суммируем все
+            const mu = event.message.usage;
+            if (mu) {
+                turnMeta.usage.inputTokens += mu.input_tokens || 0;
+                turnMeta.usage.outputTokens += mu.output_tokens || 0;
+                turnMeta.usage.cacheReadTokens += mu.cache_read_input_tokens || 0;
+                turnMeta.usage.cacheCreationTokens += mu.cache_creation_input_tokens || 0;
+            }
+            // берём последний непустой — на ход может прийтись несколько вызовов
+            // модели подряд, и только у последнего stop_reason содержателен
+            if (event.message.stop_reason) turnMeta.stopReason = event.message.stop_reason;
+            // вложенный шаг субагента (Task): CLI помечает его тем же id родительского
+            // tool_use, что запустил Task — при отсутствии поля это обычный шаг верхнего уровня
+            const parentToolUseId = event.parent_tool_use_id || event.message?.parent_tool_use_id || null;
             for (const part of event.message.content) {
                 if (part.type === 'tool_use') {
                     const step = toolLabel(part);
-                    if (startedSession) recordStep(startedSession, `${step.name} ${step.detail}`.trim());
+                    if (startedSession) {
+                        const position = recordStep(startedSession, `${step.name} ${step.detail}`.trim(), part.name, part.input, part.id, parentToolUseId);
+                        toolPositions.set(part.id, position);
+                    }
                     emit(step);
                     // уточняем набор файлов по факту — эвристика по промпту могла его не назвать
                     if (WRITE_TOOLS.has(part.name) && part.input?.file_path) {
@@ -668,6 +722,21 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
                     answer = part.text;
                     emit({ type: 'text', text: part.text });
                 }
+                else if (part.type === 'thinking' && part.thinking?.trim()) {
+                    if (startedSession) recordThinking(startedSession, part.thinking);
+                    emit({ type: 'thinking', text: part.thinking });
+                }
+            }
+        }
+
+        // результат вызова инструмента приходит отдельным сообщением роли user —
+        // раньше не читался вовсе, теперь ложится в ту же строку, что и сам вызов
+        if (event.type === 'user' && Array.isArray(event.message?.content)) {
+            for (const part of event.message.content) {
+                if (part.type !== 'tool_result') continue;
+                const position = toolPositions.get(part.tool_use_id);
+                if (position === undefined || !startedSession) continue;
+                setMessageToolResult.run(clip(toolResultText(part.content)), part.is_error ? 1 : 0, startedSession, position);
             }
         }
 
@@ -675,7 +744,9 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
             if (event.is_error) emit({ type: 'error', error: event.result || 'CLI вернул ошибку' });
             else answer = event.result || answer;
 
-            // usage.*_tokens — это состав контекста последнего запроса к модели;
+            // usage.*_tokens здесь — это состав контекста только последнего запроса
+            // к модели за этот ход (не сумма) — то, что реально лежит в окне прямо
+            // сейчас, для этого и берём именно последний, а не накопленный turnMeta.usage;
             // ponytail: окно фиксировано в 200k для всех моделей, свои размеры на модель — потом
             const u = event.usage;
             if (u) {
@@ -684,12 +755,19 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
                 if (startedSession) setSessionContext.run(percent, startedSession);
                 emit({ type: 'context', percent });
             }
+            if (typeof event.total_cost_usd === 'number') turnMeta.costUsd = event.total_cost_usd;
+            if (typeof event.duration_ms === 'number') turnMeta.durationMs = event.duration_ms;
         }
 
         // лимиты подписки (5 часов / 7 дней) CLI присылает сам, на каждый запрос —
         // это те же цифры, что показывает /usage, только уже в JSON
         if (event.type === 'rate_limit_event') {
             emit({ type: 'rate_limit', info: event.rate_limit_info });
+            // раньше уходило только живым слушателям вкладки — при перезагрузке
+            // страницы или просмотре сессии позже эти цифры было не достать
+            if (startedSession && event.rate_limit_info) {
+                setSessionRateLimit.run(JSON.stringify(event.rate_limit_info), startedSession);
+            }
         }
     };
 
@@ -699,7 +777,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
             input, timeoutMs: 600000, onLine,
             onSpawn: (child) => { run.child = child; },
         });
-        if (startedSession && answer) finishExchange(startedSession, answer);
+        if (startedSession && answer) finishExchange(startedSession, answer, turnMeta);
         emit({ type: 'done', text: answer });
     } catch (err) {
         emit({ type: 'error', error: err.message });
@@ -782,6 +860,54 @@ try {
     db.exec('ALTER TABLE sessions ADD COLUMN context_percent INTEGER');
 } catch { /* колонка уже есть */ }
 
+// метаданные сессии, которые CLI присылает только раз — событием system/init
+// в самом начале стрима (рабочая папка, доступные инструменты, режим разрешений,
+// подключённые MCP-серверы, слэш-команды) — и лимиты подписки (rate_limit_event,
+// те же цифры, что показывает /usage): раньше уходили только живым слушателям
+// вкладки и терялись при перезагрузке страницы или просмотре сессии позже
+try {
+    db.exec('ALTER TABLE sessions ADD COLUMN session_info TEXT');
+} catch { /* колонка уже есть */ }
+try {
+    db.exec('ALTER TABLE sessions ADD COLUMN rate_limit TEXT');
+} catch { /* колонка уже есть */ }
+
+// разбор сессии по шагам (Flow, поиск раздувающих контекст мест): время,
+// модель/effort запроса и — только на строке ответа, где CLI реально их
+// присылает (событие result — на весь ход, а не на отдельный вызов инструмента) —
+// потраченные токены/стоимость/длительность. tool_input/tool_result — то, что
+// раньше обрезалось до 120 символов в toolLabel() для строки статуса, здесь
+// хранится с более щедрым лимитом (см. clip ниже), чтобы по нему можно было
+// разобрать, что именно сделал шаг
+for (const [col, type] of [
+    ['created_at', 'TEXT'],
+    ['model', 'TEXT'],
+    ['effort', 'TEXT'],
+    ['input_tokens', 'INTEGER'],
+    ['output_tokens', 'INTEGER'],
+    ['cache_read_tokens', 'INTEGER'],
+    ['cache_creation_tokens', 'INTEGER'],
+    ['cost_usd', 'REAL'],
+    ['duration_ms', 'INTEGER'],
+    ['tool_input', 'TEXT'],
+    ['tool_result', 'TEXT'],
+    ['tool_name', 'TEXT'],
+    ['tool_error', 'INTEGER'],
+    // tool_use_id — id вызова инструмента (part.id из событий assistant/tool_use),
+    // parent_tool_use_id — тот же id, но родительского вызова, если этот шаг выполнен
+    // внутри субагента (Task): CLI шлёт вложенные шаги в тот же стрим, только с этим
+    // полем — раньше они ничем не отличались от шагов верхнего уровня и вклинивались
+    // в общую цепочку. stop_reason — почему модель остановилась на этом ходе
+    // (end_turn/max_tokens/refusal/…), с события assistant.message.stop_reason
+    ['tool_use_id', 'TEXT'],
+    ['parent_tool_use_id', 'TEXT'],
+    ['stop_reason', 'TEXT'],
+]) {
+    try {
+        db.exec(`ALTER TABLE messages ADD COLUMN ${col} ${type}`);
+    } catch { /* колонка уже есть */ }
+}
+
 // каким CLI начата сессия: у Windows-claude и WSL-claude свои хранилища истории
 // (~/.claude/projects/<путь проекта>, а путь к проекту у них разный), поэтому
 // «--resume» чужого id всегда возвращает ошибку — см. askClaude
@@ -839,28 +965,82 @@ const upsertSession = db.prepare(`
 const getSessionTarget = db.prepare('SELECT target FROM sessions WHERE id = ?');
 
 const upsertMessage = db.prepare(`
-    INSERT INTO messages (session_id, position, role, text)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO messages (session_id, position, role, text, created_at, model, effort)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(session_id, position) DO NOTHING
 `);
+
+// usage/cost/duration CLI присылает только раз на весь ход (событие result),
+// а не на отдельный вызов инструмента — поэтому это отдельный UPDATE поверх
+// уже вставленной строки ответа, а не поле в upsertMessage
+const setMessageUsage = db.prepare(`
+    UPDATE messages
+    SET input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cache_creation_tokens = ?, cost_usd = ?, duration_ms = ?
+    WHERE session_id = ? AND position = ?
+`);
+// имя инструмента — отдельной колонкой, а не только первым словом text: клиенту
+// (Flow) нужно название узла как структурные данные, а не парсинг строки статуса
+const setMessageToolCall = db.prepare('UPDATE messages SET tool_name = ?, tool_input = ? WHERE session_id = ? AND position = ?');
+const setMessageToolResult = db.prepare('UPDATE messages SET tool_result = ?, tool_error = ? WHERE session_id = ? AND position = ?');
+const setMessageToolIds = db.prepare('UPDATE messages SET tool_use_id = ?, parent_tool_use_id = ? WHERE session_id = ? AND position = ?');
+const setMessageStopReason = db.prepare('UPDATE messages SET stop_reason = ? WHERE session_id = ? AND position = ?');
 
 const touchSession = db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?');
 const setSessionThumb = db.prepare('UPDATE sessions SET thumb = ? WHERE id = ?');
 const setSessionContext = db.prepare('UPDATE sessions SET context_percent = ? WHERE id = ?');
-const getSessionContext = db.prepare('SELECT context_percent AS contextPercent FROM sessions WHERE id = ?');
+const setSessionInfo = db.prepare('UPDATE sessions SET session_info = ? WHERE id = ?');
+const setSessionRateLimit = db.prepare('UPDATE sessions SET rate_limit = ? WHERE id = ?');
+const getSessionMeta = db.prepare('SELECT context_percent AS contextPercent, session_info AS sessionInfo, rate_limit AS rateLimit FROM sessions WHERE id = ?');
 
 const listSessions = db.prepare(`
     SELECT s.id, s.title, s.updated_at AS updatedAt, s.thumb AS thumb,
-           (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.role <> 'tool') AS messageCount
+           (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.role NOT IN ('tool', 'thinking')) AS messageCount
     FROM sessions s
     ORDER BY s.updated_at DESC
 `);
 
-const listMessages = db.prepare(
-    'SELECT role, text FROM messages WHERE session_id = ? ORDER BY position'
-);
+const listMessages = db.prepare(`
+    SELECT role, text, created_at AS createdAt, model, effort,
+           input_tokens AS inputTokens, output_tokens AS outputTokens,
+           cache_read_tokens AS cacheReadTokens, cache_creation_tokens AS cacheCreationTokens,
+           cost_usd AS costUsd, duration_ms AS durationMs,
+           tool_name AS toolName, tool_input AS toolInput, tool_result AS toolResult, tool_error AS toolError,
+           tool_use_id AS toolUseId, parent_tool_use_id AS parentToolUseId, stop_reason AS stopReason
+    FROM messages WHERE session_id = ? ORDER BY position
+`);
+
+// сводка по сессии целиком — сколько токенов/денег/времени она стоила разом,
+// без пересчёта по сообщениям на клиенте (Flow, панель сессий)
+const sumSessionUsage = db.prepare(`
+    SELECT COALESCE(SUM(input_tokens), 0) AS inputTokens,
+           COALESCE(SUM(output_tokens), 0) AS outputTokens,
+           COALESCE(SUM(cache_read_tokens), 0) AS cacheReadTokens,
+           COALESCE(SUM(cache_creation_tokens), 0) AS cacheCreationTokens,
+           COALESCE(SUM(cost_usd), 0) AS costUsd,
+           COALESCE(SUM(duration_ms), 0) AS durationMs
+    FROM messages WHERE session_id = ?
+`);
 
 const countMessages = db.prepare('SELECT COUNT(*) AS n FROM messages WHERE session_id = ?');
+
+// разумный потолок на tool_input/tool_result/thinking — раньше их не хранили
+// вовсе, теперь хранят, но без лимита один Bash с большим выводом раздул бы
+// .sessions.db на пустом месте
+const DETAIL_CLIP_LEN = 4000;
+function clip(text) {
+    if (typeof text !== 'string') return text;
+    return text.length > DETAIL_CLIP_LEN ? text.slice(0, DETAIL_CLIP_LEN) + '…' : text;
+}
+
+// tool_result приходит как строка либо как массив блоков (text/image/…) —
+// картинки и прочее нетекстовое просто помечаем именем типа
+function toolResultText(content) {
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+        return content.map((part) => (part.type === 'text' ? part.text : `[${part.type}]`)).join('\n');
+    }
+    return '';
+}
 
 // очистка списка: база пустеет. файлы истории Claude CLI не трогаем — они не наши
 function resetSessions() {
@@ -879,9 +1059,9 @@ function deleteSession(id) {
 
 // вопрос записываем сразу, как CLI сообщил id: сессия появляется в списке
 // в начале работы, а не после ответа
-function startExchange(sessionId, question, target) {
+function startExchange(sessionId, question, target, model, effort) {
     upsertSession.run(sessionId, extractTitle(question, 120), new Date().toISOString(), target || null);
-    upsertMessage.run(sessionId, countMessages.get(sessionId).n, 'user', question);
+    upsertMessage.run(sessionId, countMessages.get(sessionId).n, 'user', question, new Date().toISOString(), model || null, effort || null);
 }
 
 // тема сессии: режим комментариев кладёт в вопрос «Элемент интерфейса… Комментарий: …»,
@@ -898,14 +1078,43 @@ function sessionTitle(session) {
 }
 
 // шаги работы (вызовы инструментов) хранятся вместе с перепиской,
-// иначе при открытии сессии от них не остаётся следа
-function recordStep(sessionId, text) {
-    upsertMessage.run(sessionId, countMessages.get(sessionId).n, 'tool', text);
+// иначе при открытии сессии от них не остаётся следа. text — по-прежнему
+// «Bash grep -n ...» для строки статуса чата (короткая, режется в toolLabel());
+// toolName/toolInput — те же данные структурно и без обрезки в 120 символов,
+// ими пользуется Flow, чтобы показать на ноде название инструмента и реальную
+// команду, а не общее слово «Шаг». Возвращаем позицию, чтобы вызывающий код
+// мог позже дописать сюда же tool_result (он приходит отдельным событием)
+function recordStep(sessionId, text, toolName, toolInput, toolUseId, parentToolUseId) {
+    const position = countMessages.get(sessionId).n;
+    upsertMessage.run(sessionId, position, 'tool', text, new Date().toISOString(), null, null);
+    setMessageToolCall.run(toolName || null, toolInput !== undefined ? clip(JSON.stringify(toolInput)) : null, sessionId, position);
+    if (toolUseId || parentToolUseId) setMessageToolIds.run(toolUseId || null, parentToolUseId || null, sessionId, position);
+    return position;
 }
 
-function finishExchange(sessionId, answer) {
+// рассуждения модели (блоки thinking) — раньше терялись целиком, теперь идут
+// отдельной строкой в той же таблице, рядом с шагами
+function recordThinking(sessionId, text) {
+    upsertMessage.run(sessionId, countMessages.get(sessionId).n, 'thinking', clip(text), new Date().toISOString(), null, null);
+}
+
+// usage/cost/duration — только на весь ход (см. setMessageUsage) — приходят
+// с CLI в событии result до того, как известна позиция строки ответа, поэтому
+// finishExchange принимает их вместе с текстом и сам решает, что записать
+function finishExchange(sessionId, answer, meta = {}) {
     touchSession.run(new Date().toISOString(), sessionId);
-    upsertMessage.run(sessionId, countMessages.get(sessionId).n, 'assistant', answer);
+    const position = countMessages.get(sessionId).n;
+    upsertMessage.run(sessionId, position, 'assistant', answer, new Date().toISOString(), meta.model || null, meta.effort || null);
+    const u = meta.usage || {};
+    const hasUsage = u.inputTokens || u.outputTokens || u.cacheReadTokens || u.cacheCreationTokens;
+    if (hasUsage || meta.costUsd != null || meta.durationMs != null) {
+        setMessageUsage.run(
+            u.inputTokens || 0, u.outputTokens || 0, u.cacheReadTokens || 0, u.cacheCreationTokens || 0,
+            meta.costUsd ?? null, meta.durationMs ?? null,
+            sessionId, position,
+        );
+    }
+    if (meta.stopReason) setMessageStopReason.run(meta.stopReason, sessionId, position);
 }
 
 // ---------- граф Obsidian ----------
@@ -917,6 +1126,7 @@ const {
     listSessions,
     listMessages,
     sessionTitle,
+    sumSessionUsage,
     onMapReady: () => { if (clients.size) notifyClients('map'); },
 });
 
@@ -1135,7 +1345,19 @@ async function handleApi(req, res, urlPath) {
 
         if (urlPath === '/api/sessions/messages') {
             const { id } = await readJson(req);
-            sendJson(res, { ok: true, messages: listMessages.all(id), contextPercent: getSessionContext.get(id)?.contextPercent ?? null });
+            const meta = getSessionMeta.get(id) || {};
+            let sessionInfo = null;
+            let rateLimit = null;
+            try { sessionInfo = meta.sessionInfo ? JSON.parse(meta.sessionInfo) : null; } catch { /* битая запись — пропускаем */ }
+            try { rateLimit = meta.rateLimit ? JSON.parse(meta.rateLimit) : null; } catch { /* битая запись — пропускаем */ }
+            sendJson(res, {
+                ok: true,
+                messages: listMessages.all(id),
+                contextPercent: meta.contextPercent ?? null,
+                sessionInfo,
+                rateLimit,
+                usage: sumSessionUsage.get(id),
+            });
             return;
         }
 
