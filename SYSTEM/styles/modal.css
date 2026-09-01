@@ -1,0 +1,126 @@
+/* Модальные окна: общая рамка, окно настроек, окно подтверждения,
+   окно файла и версий.
+
+   Вынесено из <style> в SYSTEM/index.html: у стилей компонента одно место
+   жительства, и правка .css подменяется точечно, без перезагрузки страницы. */
+
+/* ---------- модальное окно настроек ---------- */
+
+.modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.modal[hidden] { display: none; }
+
+/* окно поверх другого модального окна */
+.modal--top { z-index: 1200; }
+
+.modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.modal__dialog {
+    position: relative;
+    width: 100%;
+    max-width: 520px;
+    max-height: 100%;
+    overflow-y: auto;
+    scrollbar-width: none;
+    padding: 20px;
+    border: 1px solid #2e3138;
+    border-radius: 12px;
+    background: #1a1c21;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+}
+
+.modal__dialog::-webkit-scrollbar {
+    display: none;
+}
+
+.modal__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.modal__title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+}
+
+.modal__close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    background: none;
+    font-size: 1.2rem;
+    line-height: 1;
+    color: #a9adb6;
+    cursor: pointer;
+}
+
+.modal__close:hover { background: #262930; color: #f2f2f4; }
+
+.modal__close:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: 2px;
+}
+
+.modal__hint {
+    margin: 6px 0 16px;
+    font-size: 0.82rem;
+    color: #8b909a;
+}
+
+/* ---------- окно подтверждения (App.confirmModal) ---------- */
+
+.modal__dialog--confirm {
+    max-width: 360px;
+}
+
+.modal__confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.modal__btn {
+    padding: 8px 16px;
+    border: 1px solid #2e3138;
+    border-radius: 7px;
+    background: #22252b;
+    color: #e6e8eb;
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.modal__btn:hover { background: #2e3138; }
+
+.modal__btn:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: 2px;
+}
+
+.modal__btn--danger {
+    border-color: #6b3232;
+    background: #4a2c2c;
+    color: #f2b8b8;
+}
+
+.modal__btn--danger:hover { background: #5c3838; }

@@ -1,0 +1,56 @@
+<% /* Выбор провайдера для Hermes — прямо в окне настроек. Отдаётся роутом
+      /api/fragment/hermes-provider. Список провайдеров и текущий выбор знает
+      сервер, поэтому в браузере не хранится ни одной их копии. */ %>
+<% if (!it.ready) { %>
+    <p class="modal__hint">Hermes ещё ставится — выбор провайдера появится, когда установка закончится.</p>
+<% } else { %>
+    <div class="provider">
+        <div class="provider__model">
+            <span class="provider__model-label">Провайдер Hermes:</span>
+            <select class="provider__select" id="hermesProviderSelect" aria-label="Провайдер Hermes">
+                <option value="auto"<% if (it.provider === 'auto' || !it.provider) { %> selected<% } %>>определить по ключам</option>
+                <% it.providers.forEach((provider) => { %>
+                    <option value="<%= provider.id %>"<% if (it.provider === provider.id) { %> selected<% } %>><%= provider.name %><% if (provider.note) { %> — <%= provider.note %><% } %></option>
+                <% }) %>
+            </select>
+        </div>
+
+        <div class="provider__model">
+            <span class="provider__model-label">Модель:</span>
+            <input class="provider__input" id="hermesModelInput" type="text" autocomplete="off"
+                   list="hermesModelOptions" placeholder="оставьте пустым — подставится умолчание провайдера"
+                   value="<%= it.model || '' %>">
+            <% /* известные имена моделей Anthropic: пустое поле раньше давало невнятную 400.
+                  Массив обязательно через const: блок, начинающийся с «[», Eta приклеивает
+                  к предыдущей строке скомпилированного кода как индексацию, и шаблон падает */ %>
+            <% const modelNames = ['claude-sonnet-5', 'claude-opus-4-8', 'claude-opus-4-6', 'claude-haiku-4-5-20251001']; %>
+            <datalist id="hermesModelOptions">
+                <% modelNames.forEach((name) => { %>
+                    <option value="<%= name %>"></option>
+                <% }) %>
+            </datalist>
+        </div>
+
+        <div class="provider__model">
+            <span class="provider__model-label">Модель подзадач:</span>
+            <input class="provider__input" id="hermesWorkerInput" type="text" autocomplete="off"
+                   placeholder="например deepseek/deepseek-chat:free — на ней идут подагенты"
+                   value="<%= it.worker || '' %>">
+        </div>
+
+        <div class="provider__model">
+            <span class="provider__model-label">Ключ API:</span>
+            <input class="provider__input" id="hermesKeyInput" type="password" autocomplete="off"
+                   placeholder="<%= it.keyPlaceholder %>">
+            <button type="button" class="hermes__button" id="hermesProviderSave">Сохранить</button>
+        </div>
+
+        <p class="modal__hint" id="hermesProviderNote">
+            <% if (it.claudeLogin) { %>
+                Вход Claude CLI найден — вариант «Claude по подписке CLI» работает без ключа.
+            <% } else { %>
+                Ключ уходит в <code>.env</code> самого Hermes, выбор — в его конфиг.
+            <% } %>
+        </p>
+    </div>
+<% } %>

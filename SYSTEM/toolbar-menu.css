@@ -41,11 +41,67 @@
     color: #a9adb6;
 }
 
+.toolbar-menu__icon--pickable {
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.toolbar-menu__icon--pickable:hover,
+.toolbar-menu__icon--pickable:focus-visible {
+    color: #e9e9ec;
+    background: #33363e;
+    outline: none;
+}
+
+.toolbar-menu__icon-picker {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 4px;
+    margin: 2px 0 4px;
+    padding: 6px;
+    border-radius: 8px;
+    background: #14161a;
+}
+
+.toolbar-menu__icon-option {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: #a9adb6;
+    cursor: pointer;
+}
+
+.toolbar-menu__icon-option:hover,
+.toolbar-menu__icon-option:focus-visible {
+    color: #e9e9ec;
+    background: #272a31;
+    outline: none;
+}
+
 .toolbar-menu__name {
     flex: 1;
     font-size: 0.85rem;
     color: #e9e9ec;
     white-space: nowrap;
+    cursor: text;
+}
+
+.toolbar-menu__name-input {
+    flex: 1;
+    font: inherit;
+    font-size: 0.85rem;
+    color: #e9e9ec;
+    background: #2a2b31;
+    border: 1px solid #4a4d57;
+    border-radius: 4px;
+    padding: 2px 6px;
+    min-width: 0;
 }
 
 .toolbar-menu__toggle {

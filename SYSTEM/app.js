@@ -14,6 +14,7 @@
                     id: 'claude',
                     name: 'Claude',
                     note: 'Anthropic',
+                    paid: true,
                     models: ['claude-opus-5', 'claude-sonnet-5', 'claude-fable-5', 'claude-haiku-4-5'],
                     defaultModel: 'claude-sonnet-5',
                     efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -23,21 +24,50 @@
                     id: 'codex',
                     name: 'Codex',
                     note: 'OpenAI',
+                    paid: true,
                     models: ['gpt-5-codex', 'gpt-5', 'gpt-5-mini', 'o4-mini'],
                     defaultModel: 'gpt-5-codex',
+                },
+                {
+                    id: 'hermes',
+                    name: 'Hermes',
+                    note: 'оркестратор: сам планирует и помнит',
+                    paid: false,
+                    // модель Hermes выбирает сам по своему конфигу (Settings → провайдер
+                    // Hermes), поэтому списка моделей на клиенте нет
+                    models: [],
+                    defaultModel: undefined,
                 },
                 {
                     id: 'opencode',
                     name: 'OpenCode',
                     note: 'локальные и сторонние модели',
-                    models: ['qwen3-coder', 'kimi-k2', 'glm-4.6', 'deepseek-v3'],
-                    defaultModel: 'qwen3-coder',
+                    paid: false,
+                    // список моделей заранее не хардкодим — CLI отдаёт его сам
+                    // (`opencode models`) при подключении, см. connectOpenCode в settings.js,
+                    // который наполняет этот массив по факту ответа сервера
+                    models: [],
+                    defaultModel: undefined,
+                },
+                // связка, а не CLI: подключать нечего, она доступна ровно тогда,
+                // когда подключены и Claude, и Hermes. Стоит последней, чтобы не
+                // выглядеть заменой кому-то из них
+                {
+                    id: 'hermes-plan',
+                    name: 'Связка: Claude → Hermes',
+                    note: 'Claude составляет задание, Hermes выполняет его дешёвыми моделями. Нужны оба подключения',
+                    paid: false,
+                    models: [],
+                    defaultModel: undefined,
                 },
             ];
 
             // подключение переживает перезагрузку страницы: id окружения, модель и
-            // сессию CLI держим в localStorage, само окружение восстанавливаем на сервере
-            const STORE_KEY = 'noname.claude';
+            // сессию CLI держим в localStorage, само окружение восстанавливаем на сервере.
+            // свой ключ и свой POST на восстановление — на провайдера, чтобы Claude и
+            // OpenCode подключались независимо друг от друга
+            const STORE_KEYS = { claude: 'noname.claude', opencode: 'noname.opencode', hermes: 'noname.hermes', 'hermes-plan': 'noname.hermes-plan' };
+            const STORE_KEY = STORE_KEYS.claude;
 
             // общий помощник для POST-запросов к серверу — им пользуются и остальные
             // файлы через window.App.api, каждый второй экран так или иначе ходит на сервер
@@ -50,22 +80,41 @@
                 return res.json();
             }
 
-            function saveClaudeState() {
-                const state = connections.get('claude');
+            // общий помощник сохранения/восстановления состояния провайдера —
+            // Claude и OpenCode работают через него одинаково, каждый под своим ключом
+            function saveProviderState(providerId) {
+                const key = STORE_KEYS[providerId];
+                if (!key) return;
+                const state = connections.get(providerId);
                 try {
-                    if (!state) localStorage.removeItem(STORE_KEY);
-                    else localStorage.setItem(STORE_KEY, JSON.stringify({ ...state, sessionId: chatSessionId }));
+                    if (!state) localStorage.removeItem(key);
+                    else localStorage.setItem(key, JSON.stringify({ ...state, sessionId: chatSessionId }));
                 } catch {
                     // приватный режим или запрет на хранилище — работаем без сохранения
                 }
             }
 
-            function loadClaudeState() {
+            function loadProviderState(providerId) {
+                const key = STORE_KEYS[providerId];
+                if (!key) return null;
                 try {
-                    return JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+                    return JSON.parse(localStorage.getItem(key) || 'null');
                 } catch {
                     return null;
                 }
+            }
+
+            function saveClaudeState() { saveProviderState('claude'); }
+            function loadClaudeState() { return loadProviderState('claude'); }
+            function saveOpenCodeState() { saveProviderState('opencode'); }
+            function loadOpenCodeState() { return loadProviderState('opencode'); }
+
+            // используется во всех местах, где сохранение зависит не от конкретного
+            // провайдера, а от смены текущей сессии (chatSessionId) — сохраняем состояние
+            // обоих провайдеров, лишний вызов на неподключённого просто удалит его ключ
+            function saveAllProviderStates() {
+                saveClaudeState();
+                saveOpenCodeState();
             }
 
             const connections = new Map();
@@ -85,26 +134,23 @@
             }
 
             const chatSessionBar = document.getElementById('chatSessionBar');
-            const chatSessionIdRow = document.getElementById('chatSessionIdRow');
-            const chatSessionIdText = document.getElementById('chatSessionIdText');
-            const chatSessionCopyBtn = document.getElementById('chatSessionCopy');
             const chatSessionProviderSelect = document.getElementById('chatSessionProviderSelect');
             const chatSessionModelSelect = document.getElementById('chatSessionModelSelect');
             const chatSessionEffortSelect = document.getElementById('chatSessionEffortSelect');
             const claudeProvider = PROVIDERS.find((p) => p.id === 'claude');
 
-            // модель/effort из шапки сессии переопределяют connections.get('claude') —
+            // модель/effort из шапки сессии переопределяют connections.get(provider.id) —
             // sendToClaude берёт их оттуда, так что следующее сообщение в этой же
             // сессии (тот же sessionId) продолжится уже с новыми параметрами.
-            // выбор провайдера пока информационный: реально сессия ведётся через
-            // Claude CLI, остальные провайдеры лишь показывают свои модели/effort
+            // выбор провайдера в шапке теперь настоящий: sendToClaude/stopClaude
+            // реально бьют в /api/<provider>/ask и /api/<provider>/stop по нему
             function renderSessionModelEffort(provider, state) {
                 chatSessionModelSelect.innerHTML = '';
                 for (const model of provider.models) {
                     const option = document.createElement('option');
                     option.value = model;
                     option.textContent = model;
-                    option.selected = model === (provider.id === 'claude' ? state.model : provider.defaultModel);
+                    option.selected = model === (state.model || provider.defaultModel);
                     chatSessionModelSelect.append(option);
                 }
 
@@ -115,96 +161,100 @@
                         const option = document.createElement('option');
                         option.value = effort;
                         option.textContent = effort;
-                        option.selected = effort === (provider.id === 'claude' ? (state.effort || provider.defaultEffort) : provider.defaultEffort);
+                        option.selected = effort === (state.effort || provider.defaultEffort);
                         chatSessionEffortSelect.append(option);
                     }
                 }
             }
 
+            // отдаёт провайдера, с которым сейчас реально ведётся диалог: то, что выбрано
+            // в строке шапки сессии, а до её появления — первый подключённый провайдер
+            function getActiveProviderId() {
+                if (!chatSessionBar.hidden && chatSessionProviderSelect.value) return chatSessionProviderSelect.value;
+                if (connections.has('claude')) return 'claude';
+                if (connections.has('opencode')) return 'opencode';
+                return 'claude';
+            }
+
             function renderSessionBarControls() {
-                const state = connections.get('claude');
-                // строка выбора провайдера/модели/effort видна, как только есть
-                // подключение к claude, и до создания самой сессии — так пользователь
+                // строка выбора провайдера/модели/effort видна, как только подключён
+                // хотя бы один провайдер, и до создания самой сессии — так пользователь
                 // настраивает параметры заранее; строка с id остаётся скрытой отдельно
-                chatSessionBar.hidden = !state || sessionList.hidden;
+                const connectedProviders = PROVIDERS.filter((p) => connections.has(p.id));
+                chatSessionBar.hidden = connectedProviders.length === 0 || sessionList.hidden;
                 chatSessionProviderSelect.innerHTML = '';
                 chatSessionModelSelect.innerHTML = '';
                 chatSessionEffortSelect.innerHTML = '';
-                if (!state) return;
+                if (connectedProviders.length === 0) return;
 
-                for (const provider of PROVIDERS) {
+                const defaultProviderId = connections.has('claude') ? 'claude' : connectedProviders[0].id;
+                for (const provider of connectedProviders) {
                     const option = document.createElement('option');
                     option.value = provider.id;
                     option.textContent = provider.name;
-                    option.selected = provider.id === 'claude';
+                    option.selected = provider.id === defaultProviderId;
                     chatSessionProviderSelect.append(option);
                 }
 
-                renderSessionModelEffort(claudeProvider, state);
+                const activeProvider = connectedProviders.find((p) => p.id === defaultProviderId);
+                renderSessionModelEffort(activeProvider, connections.get(defaultProviderId));
             }
 
             chatSessionProviderSelect.addEventListener('change', () => {
                 const provider = PROVIDERS.find((p) => p.id === chatSessionProviderSelect.value) || claudeProvider;
-                renderSessionModelEffort(provider, connections.get('claude') || {});
+                renderSessionModelEffort(provider, connections.get(provider.id) || {});
             });
 
             chatSessionModelSelect.addEventListener('change', () => {
-                const state = connections.get('claude');
+                const providerId = chatSessionProviderSelect.value || 'claude';
+                const state = connections.get(providerId);
                 if (!state) return;
                 state.model = chatSessionModelSelect.value;
-                saveClaudeState();
+                saveProviderState(providerId);
             });
 
             chatSessionEffortSelect.addEventListener('change', () => {
-                const state = connections.get('claude');
+                const providerId = chatSessionProviderSelect.value || 'claude';
+                const state = connections.get(providerId);
                 if (!state) return;
                 state.effort = chatSessionEffortSelect.value;
-                saveClaudeState();
+                saveProviderState(providerId);
             });
-
-            // отображаем не сам id, а название сессии (то же, что в левой панели) —
-            // копируется при этом настоящий id, chatSessionId, а не то, что показано в спане.
-            // для совсем новой сессии название ещё не известно клиенту (sessionTitles
-            // наполняется из /api/sessions) — до этого момента показываем детерминированную
-            // от id маску вида "Session <слово>-<слово>", updateSessionBarTitle подменит её,
-            // как только loadSessions() подтянет настоящее название
-            const SESSION_NAME_WORDS = ['amber', 'birch', 'cedar', 'coral', 'delta', 'ember', 'flint', 'grove', 'haven', 'indigo', 'jasper', 'karst', 'lumen', 'maple', 'nectar', 'onyx', 'pearl', 'quartz', 'raven', 'sable', 'terra', 'umber', 'violet', 'willow'];
-
-            function maskSessionId(id) {
-                let hash = 0;
-                for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-                const a = SESSION_NAME_WORDS[hash % SESSION_NAME_WORDS.length];
-                const b = SESSION_NAME_WORDS[(hash >>> 8) % SESSION_NAME_WORDS.length];
-                return `Session ${a}-${b}`;
-            }
-
-            function updateSessionBarTitle() {
-                if (!chatSessionId) return;
-                const title = sessionTitles.get(chatSessionId);
-                if (title) chatSessionIdText.textContent = title;
-            }
 
             function setChatSessionId(id) {
                 chatSessionId = id;
-                chatSessionIdText.textContent = id ? (sessionTitles.get(id) || maskSessionId(id)) : '—';
-                chatSessionIdText.title = id || '';
-                chatSessionIdRow.hidden = !id;
                 renderSessionBarControls();
                 syncComposerBusy();
+                syncSessionSelection(); // список сессий рисует сервер, aria-current — единственное, что знает только браузер
+                loadChatDraft(id);
+                chatInput.focus();
             }
 
-            chatSessionCopyBtn.addEventListener('click', () => {
-                if (!chatSessionId) return;
-                navigator.clipboard.writeText(chatSessionId);
-                chatSessionCopyBtn.classList.remove('chat__session-copy--copied');
-                void chatSessionCopyBtn.offsetWidth; // рестарт анимации при повторном клике подряд
-                chatSessionCopyBtn.classList.add('chat__session-copy--copied');
-                chatSessionCopyBtn.textContent = 'Copied!';
-                setTimeout(() => {
-                    chatSessionCopyBtn.classList.remove('chat__session-copy--copied');
-                    chatSessionCopyBtn.textContent = 'Copy';
-                }, 1000);
-            });
+            // недописанный текст в композере переживает обновление страницы — свой черновик
+            // на каждую сессию (id === null — общий слот для «сессия не выбрана»/«новая сессия»)
+            const CHAT_DRAFT_PREFIX = 'chatDraft:';
+
+            function chatDraftKey(id) {
+                return CHAT_DRAFT_PREFIX + (id || '__none__');
+            }
+
+            function saveChatDraft() {
+                const key = chatDraftKey(chatSessionId);
+                const text = chatInput.value;
+                if (text) localStorage.setItem(key, text);
+                else localStorage.removeItem(key);
+            }
+
+            function loadChatDraft(id) {
+                chatInput.value = localStorage.getItem(chatDraftKey(id)) || '';
+                chatInput.style.height = 'auto';
+                chatInput.style.height = chatInput.scrollHeight + 'px';
+                chatInput.style.overflowY = chatInput.scrollHeight > 160 ? 'auto' : 'hidden';
+            }
+
+            function clearChatDraft(id) {
+                localStorage.removeItem(chatDraftKey(id));
+            }
 
             // оба окна физически создаёт PROJECTS/Settings/settings.js (грузится раньше
             // app.js, см. порядок <script> в index.html) — здесь только общая логика
@@ -475,6 +525,8 @@
                 graph: document.getElementById('graphView'),
                 flow: document.getElementById('flowView'),
                 kanban: document.getElementById('kanbanView'),
+                book: document.getElementById('bookView'),
+                hermes: document.getElementById('hermesView'),
                 chat: document.getElementById('chatView'),
             };
 
@@ -491,8 +543,25 @@
             // панель датчиков над композером — сейчас только контекст, место под будущие.
             // видна всегда: до первого ответа показывает «Контекст: —»
             const chatGaugeContext = document.getElementById('chatGaugeContext');
-            function updateContextGauge(percent) {
-                chatGaugeContext.textContent = percent == null ? 'Контекст: —' : `Контекст: ${percent}%`;
+            // окно показываем в человекочитаемом виде (1M / 200K), а не сырым числом токенов
+            function formatContextWindow(window) {
+                if (!window) return null;
+                if (window % 1000000 === 0) return `${window / 1000000}M`;
+                if (window % 1000 === 0) return `${window / 1000}K`;
+                return String(window);
+            }
+            function updateContextGauge(percent, window) {
+                if (percent == null) { chatGaugeContext.textContent = 'Контекст: —'; return; }
+                const windowLabel = formatContextWindow(window);
+                chatGaugeContext.textContent = windowLabel
+                    ? `Контекст: ${percent}% из ${windowLabel}`
+                    : `Контекст: ${percent}%`;
+            }
+            // окно контекста зависит только от модели и известно ещё до первого ответа
+            // (см. contextWindowFor в server.js) — используем это, чтобы датчик показывал
+            // реальное значение сразу при создании сессии, а не «—» весь первый ход
+            function contextWindowForModel(model) {
+                return typeof model === 'string' && /haiku/i.test(model) ? 200000 : 1000000;
             }
 
             // поле ввода растёт под текст, Enter отправляет, Shift+Enter переносит строку
@@ -502,6 +571,7 @@
                 chatInput.style.height = 'auto';
                 chatInput.style.height = chatInput.scrollHeight + 'px';
                 chatInput.style.overflowY = chatInput.scrollHeight > 160 ? 'auto' : 'hidden';
+                saveChatDraft();
             });
 
             // Enter переносит строку, отправляет Ctrl+Enter (на Mac — Cmd+Enter)
@@ -548,154 +618,102 @@
             setMode('Action');
 
             // ---------- панель Sessions на странице Chat ----------
-            // сама кнопка-переключатель — в sessions-toggle.js
+            // разметку списка строит сервер (SYSTEM/templates/chat-sessions.eta,
+            // роут /api/fragment/chat-sessions), htmx подменяет #sessionList целиком
+            // по hx-swap-oob — значит сам узел периодически заменяется новым, и
+            // держать на него константную ссылку нельзя: обработчик htmx:oobAfterSwap
+            // ниже переподхватывает актуальный узел сразу после подмены
 
-            // id -> title, наполняется в renderSessions(); по нему бейдж в шапке чата
-            // показывает настоящее название сессии, а не сам id
-            const sessionTitles = new Map();
-
-            const sessionList = document.getElementById('sessionList');
+            let sessionList = document.getElementById('sessionList');
+            const sessionsPanel = document.getElementById('sessionsPanel');
             const runningCountEl = document.getElementById('runningCount');
 
             // ---------- панель наблюдения на вкладке Home ----------
 
-            const totalCountEl = document.getElementById('totalCount');
-            const queuedCountEl = document.getElementById('queuedCount');
-            const obsMessagesEl = document.getElementById('obsMessages');
-            const obsTodayEl = document.getElementById('obsToday');
-            const obsLastActiveEl = document.getElementById('obsLastActive');
-            const obsRunningList = document.getElementById('obsRunningList');
-            const obsRecentList = document.getElementById('obsRecentList');
+            // счётчики и списки панели рисует сервер (шаблон
+            // SYSTEM/templates/home-observation.eta, роут /api/fragment/home-observation),
+            // htmx подменяет их по hx-swap-oob. Здесь остаётся только строка
+            // провайдера — она известна одному браузеру
             const obsConnectionText = document.getElementById('obsConnectionText');
+            const observationEl = document.querySelector('.observation');
 
-            function formatWhen(iso) {
-                const date = new Date(iso);
-                if (Number.isNaN(date.getTime())) return '';
-
-                const minutes = Math.round((Date.now() - date) / 60000);
-                if (minutes < 1) return 'только что';
-                if (minutes < 60) return `${minutes} мин назад`;
-                if (minutes < 24 * 60) return `${Math.round(minutes / 60)} ч назад`;
-                return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+            // aria-current — единственное в списке сессий, что знает только браузер
+            // (сервер рендерит разметку без понятия о том, какая сессия сейчас открыта)
+            function syncSessionSelection() {
+                for (const btn of sessionList.querySelectorAll('.session-item')) {
+                    btn.setAttribute('aria-current', String(btn.dataset.sessionId === chatSessionId));
+                }
             }
 
-            // кнопка удаления поверх строки: вложить её в .session-item нельзя,
-            // кнопка внутри кнопки — невалидная разметка, поэтому она соседний элемент
-            function deleteButton(session) {
-                const del = document.createElement('button');
-                del.type = 'button';
-                del.className = 'session-delete';
-                del.dataset.deleteId = session.id;
-                del.title = 'Удалить сессию';
-                del.setAttribute('aria-label', `Удалить сессию: ${session.title}`);
-                del.innerHTML = `
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="3 6 5 6 21 6"></polyline>
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                    </svg>
-                `;
-                return del;
-            }
+            // htmx подменяет #sessionList целиком (hx-swap-oob) — старый узел живой
+            // ссылке, которую держат остальные функции файла, больше не принадлежит,
+            // поэтому переподхватываем актуальный и досчитываем то, что знает только браузер.
+            // Новый узел всегда приходит со scrollTop = 0, поэтому при активных
+            // сессиях (они обновляются чаще, см. hx-trigger) список каждую подмену
+            // дёргало наверх прямо во время прокрутки. htmx убирает старый узел из DOM
+            // ДО события oobAfterSwap, а scrollTop у отсоединённого узла уже читается
+            // как 0 — поэтому позицию нужно снять раньше, на oobBeforeSwap, пока узел
+            // ещё живой, и применить её позже, когда придёт новый
+            // пока палец/курсор жмёт на строку (мусорка, копирование id), подмену
+            // нужно отложить: htmx создаёт НОВЫЕ узлы кнопок, а клик засчитывается
+            // браузером только если mousedown и mouseup случились на одном и том же
+            // узле — если подмена попадёт между ними, клик молча пропадёт, а кнопка
+            // (видимая только через :hover/opacity) как будто "закроется" сама
+            let sessionsPointerDown = false;
+            sessionsPanel.addEventListener('pointerdown', () => { sessionsPointerDown = true; });
+            window.addEventListener('pointerup', () => { sessionsPointerDown = false; });
+            window.addEventListener('pointercancel', () => { sessionsPointerDown = false; });
 
-            function renderSessions(sessions) {
-                sessionList.innerHTML = '';
-                for (const session of sessions) sessionTitles.set(session.id, session.title);
-
-                if (sessions.length === 0) {
-                    const empty = document.createElement('li');
-                    empty.className = 'session-empty';
-                    empty.textContent = 'Сессий пока нет';
-                    sessionList.append(empty);
-                    return;
-                }
-
-                for (const session of sessions) {
-                    const item = document.createElement('li');
-                    item.className = 'session-row';
-                    const btn = document.createElement('button');
-                    btn.type = 'button';
-                    btn.className = 'session-item';
-                    btn.dataset.sessionId = session.id;
-                    if (session.running) btn.dataset.running = '1'; // сервер ещё ведёт эту работу
-                    btn.setAttribute('aria-current', String(session.id === chatSessionId));
-                    btn.innerHTML = `
-                        <span class="session-item__thumb" aria-hidden="true"></span>
-                        <span class="session-item__body">
-                            <span class="session-item__title"></span>
-                            <span class="session-item__meta">${formatWhen(session.updatedAt)} · ${session.messageCount} сообщ.</span>
-                        </span>
-                    `;
-                    btn.querySelector('.session-item__title').textContent = session.title;
-                    // src, а не background-image: браузер разбирает его как URL, а не как CSS,
-                    // так что содержимое data-URL не может вырваться из синтаксиса стиля
-                    if (session.thumb) {
-                        const img = document.createElement('img');
-                        img.className = 'session-item__thumb-img';
-                        img.alt = '';
-                        img.src = session.thumb;
-                        btn.querySelector('.session-item__thumb').append(img);
-                    }
-                    item.append(btn, deleteButton(session));
-                    sessionList.append(item);
-                }
-
+            let sessionListScrollBeforeSwap = 0;
+            document.body.addEventListener('htmx:oobBeforeSwap', (e) => {
+                if (e.target.id !== 'sessionList') return;
+                if (sessionsPointerDown) { e.detail.shouldSwap = false; return; }
+                sessionListScrollBeforeSwap = e.target.scrollTop;
+            });
+            document.body.addEventListener('htmx:oobAfterSwap', (e) => {
+                if (e.target.id !== 'sessionList') return;
+                sessionList = e.target;
+                sessionList.scrollTop = sessionListScrollBeforeSwap;
+                syncSessionSelection();
                 applyRunningIndicator();
-                renderObservation(sessions);
-                updateSessionBarTitle(); // название текущей сессии могло только что стать известным
-            }
+            });
 
-            // одна строка списка «Активные» / «Последние сессии» на Home
-            function obsListItem(session) {
-                const li = document.createElement('li');
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'obs-list__item';
-                btn.dataset.sessionId = session.id;
-                if (session.running) btn.dataset.running = '1';
-
-                const dot = document.createElement('span');
-                dot.className = 'obs-list__dot' + (session.running ? ' obs-list__dot--running' : '');
-
-                const title = document.createElement('span');
-                title.className = 'obs-list__title';
-                title.textContent = session.title;
-
-                const meta = document.createElement('span');
-                meta.className = 'obs-list__meta';
-                meta.textContent = session.running
-                    ? 'выполняется…'
-                    : `${formatWhen(session.updatedAt)} · ${session.messageCount} сообщ.`;
-
-                btn.append(dot, title, meta);
-                li.append(btn);
-                return li;
-            }
-
-            function renderObsList(el, sessions, emptyText) {
-                el.innerHTML = '';
-                if (sessions.length === 0) {
-                    const li = document.createElement('li');
-                    li.className = 'obs-list__empty';
-                    li.textContent = emptyText;
-                    el.append(li);
+            // клики по строкам сессии вешаем на неизменяемую панель, а не на сам
+            // #sessionList — тот периодически подменяется htmx целиком, и слушатель
+            // на нём пережил бы только первую отрисовку
+            sessionsPanel.addEventListener('click', (e) => {
+                // клик по превью открывает его на весь экран, повторный клик закрывает — превью не должно выбирать сессию
+                const thumb = e.target.closest('.session-item__thumb-img');
+                if (thumb) {
+                    openShotLightbox(thumb.src);
                     return;
                 }
-                for (const session of sessions) el.append(obsListItem(session));
-            }
 
-            // сводка процессов проекта на Home: считается из того же списка сессий,
-            // что уже приходит с /api/sessions — отдельный запрос не нужен
-            function renderObservation(sessions) {
-                totalCountEl.textContent = sessions.length;
-                obsMessagesEl.textContent = sessions.reduce((sum, s) => sum + s.messageCount, 0);
+                const copy = e.target.closest('.session-copy');
+                if (copy) {
+                    navigator.clipboard.writeText(copy.dataset.copyId);
+                    copy.classList.remove('session-copy--copied');
+                    void copy.offsetWidth; // рестарт анимации при повторном клике подряд
+                    copy.classList.add('session-copy--copied');
+                    setTimeout(() => copy.classList.remove('session-copy--copied'), 1000);
+                    return; // клик по копированию не должен открывать сессию
+                }
 
-                const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
-                obsTodayEl.textContent = sessions.filter((s) => new Date(s.updatedAt).getTime() >= dayAgo).length;
-                obsLastActiveEl.textContent = sessions[0] ? formatWhen(sessions[0].updatedAt) : '—';
+                const del = e.target.closest('.session-delete');
+                if (del) {
+                    removeSession(del.dataset.deleteId);
+                    return; // клик по мусорке не должен открывать сессию
+                }
 
-                renderObsList(obsRunningList, sessions.filter((s) => s.running), 'Сейчас ничего не выполняется');
-                renderObsList(obsRecentList, sessions.slice(0, 6), 'Сессий пока нет');
-            }
+                const btn = e.target.closest('.session-item');
+                if (btn && btn.dataset.sessionId) {
+                    if (btn.getAttribute('aria-current') === 'true') {
+                        deselectSession();
+                    } else {
+                        openSession(btn.dataset.sessionId, btn.classList.contains('session-item--running'));
+                    }
+                }
+            });
 
             function renderObsConnection() {
                 const state = connections.get('claude');
@@ -708,23 +726,24 @@
                 }
             }
 
-            for (const list of [obsRunningList, obsRecentList]) {
-                list.addEventListener('click', (e) => {
-                    const btn = e.target.closest('.obs-list__item');
-                    if (!btn) return;
-                    MissionTabs.show('chat');
-                    openSession(btn.dataset.sessionId, btn.dataset.running === '1');
-                });
-            }
+            // слушаем контейнер, а не сами списки: htmx подменяет <ul> целиком,
+            // и обработчик, повешенный на них, пережил бы только первое обновление
+            observationEl?.addEventListener('click', (e) => {
+                const btn = e.target.closest('.obs-list__item');
+                if (!btn) return;
+                MissionTabs.show('chat');
+                openSession(btn.dataset.sessionId, btn.dataset.running === '1');
+            });
 
             async function loadSessions() {
                 try {
-                    const { sessions = [], queued = 0 } = await api('/api/sessions');
-                    renderSessions(sessions);
-                    queuedCountEl.textContent = queued;
+                    const { sessions = [] } = await api('/api/sessions');
+                    // сам список рисует сервер: этот же 'sessions-changed' слушают и
+                    // home-observation, и chat-sessions — оба фрагмента подтянутся сразу,
+                    // не дожидаясь очередного опроса по таймеру
+                    document.body.dispatchEvent(new CustomEvent('sessions-changed'));
                     return sessions;
                 } catch {
-                    renderSessions([]);
                     return [];
                 }
             }
@@ -761,24 +780,20 @@
                 MissionGraph?.closeFilePanel(); // могла быть открыта панель редактирования файла
                 sessionList.querySelector('.session-item--placeholder')?.closest('li').remove();
                 setChatSessionId(id);
-                saveClaudeState();
+                saveAllProviderStates();
 
                 chatRun += 1;
                 chatList.innerHTML = '';
                 chatEmpty.hidden = true;
 
-                const { messages = [], contextPercent = null } = await api('/api/sessions/messages', { id });
+                const { messages = [], contextPercent = null, contextWindow = null } = await api('/api/sessions/messages', { id });
                 for (const message of messages) {
                     if (message.role === 'tool') addStep(message.text);
                     else addMessage(message.text, message.role === 'user' ? 'user' : 'assistant');
                 }
 
                 if (messages.length === 0) chatEmpty.hidden = false;
-                updateContextGauge(contextPercent);
-
-                for (const btn of sessionList.querySelectorAll('.session-item')) {
-                    btn.setAttribute('aria-current', String(btn.dataset.sessionId === id));
-                }
+                updateContextGauge(contextPercent, contextWindow);
 
                 // работа ещё идёт (страницу перезагрузили посреди неё) — досматриваем вживую
                 if (running) {
@@ -787,42 +802,15 @@
                 }
             }
 
-            sessionList.addEventListener('click', (e) => {
-                // клик по превью открывает его на весь экран, повторный клик закрывает — превью не должно выбирать сессию
-                const thumb = e.target.closest('.session-item__thumb-img');
-                if (thumb) {
-                    openShotLightbox(thumb.src);
-                    return;
-                }
-
-                const del = e.target.closest('.session-delete');
-                if (del) {
-                    removeSession(del.dataset.deleteId);
-                    return; // клик по мусорке не должен открывать сессию
-                }
-
-                const btn = e.target.closest('.session-item');
-                if (btn && btn.dataset.sessionId) {
-                    if (btn.getAttribute('aria-current') === 'true') {
-                        deselectSession();
-                    } else {
-                        openSession(btn.dataset.sessionId, btn.classList.contains('session-item--running'));
-                    }
-                }
-            });
-
             // повторный клик по выбранной (синей) сессии снимает выбор — назад к чату default
             function deselectSession() {
                 MissionGraph?.closeFilePanel(); // могла быть открыта панель редактирования файла
                 setChatSessionId(null);
-                saveClaudeState();
+                saveAllProviderStates();
                 chatRun += 1;
                 chatList.innerHTML = chatDefaultHtml;
                 chatEmpty.hidden = false;
                 updateContextGauge(null);
-                for (const btn of sessionList.querySelectorAll('.session-item')) {
-                    btn.setAttribute('aria-current', 'false');
-                }
             }
 
             // удаление сессии из базы. если удалили открытую — лента чистится,
@@ -838,9 +826,11 @@
                     return;
                 }
 
+                clearChatDraft(id);
+
                 if (id === chatSessionId) {
                     setChatSessionId(null);
-                    saveClaudeState();
+                    saveAllProviderStates();
                     chatRun += 1;
                     chatList.innerHTML = '';
                     chatEmpty.hidden = false;
@@ -853,7 +843,7 @@
             // а в списке сразу появляется черновик — реальная сессия придёт с сервера позже
             document.getElementById('sessionNew').addEventListener('click', () => {
                 setChatSessionId(null);
-                saveClaudeState();
+                saveAllProviderStates();
                 chatRun += 1;
                 chatList.innerHTML = '';
                 chatEmpty.hidden = false;
@@ -866,8 +856,11 @@
                 if (!(await confirmModal('Удалить все сессии из базы? Действие необратимо.', { title: 'Удалить все сессии' }))) return;
 
                 await api('/api/sessions/reset');
+                for (const key of Object.keys(localStorage)) {
+                    if (key.startsWith(CHAT_DRAFT_PREFIX)) localStorage.removeItem(key);
+                }
                 setChatSessionId(null);
-                saveClaudeState();
+                saveAllProviderStates();
                 chatRun += 1;
                 chatList.innerHTML = '';
                 chatEmpty.hidden = false;
@@ -881,6 +874,20 @@
             const chatEmpty = document.getElementById('chatEmpty');
             const chatMessages = document.getElementById('chatMessages');
             const chatSend = document.querySelector('.chat__send');
+
+            // прокручиваем вниз только если пользователь и так был у низа ленты —
+            // иначе новые блоки во время стрима сбрасывали его к последнему сообщению.
+            // Проверять «у низа ли пользователь» нужно ДО того, как в ленту добавится
+            // новый блок — иначе scrollHeight уже вырастет на высоту этого блока,
+            // и даже если пользователь стоял у самого низа, дистанция окажется большой.
+            const CHAT_SCROLL_NEAR_BOTTOM_PX = 80;
+            function isChatNearBottom() {
+                const distanceFromBottom = chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight;
+                return distanceFromBottom <= CHAT_SCROLL_NEAR_BOTTOM_PX;
+            }
+            function scrollChatToBottom() {
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
 
             let chatSessionId = null; // CLI продолжает диалог по нему
             let chatRun = 0; // номер текущего запроса: старый перестаёт писать в ленту
@@ -916,42 +923,52 @@
             }
 
             // сервер держит выбранное окружение в памяти и теряет его при перезапуске,
-            // поэтому страница умеет восстановить подключение по сохранённому id
-            let reconnecting = null;
+            // поэтому страница умеет восстановить подключение по сохранённому id —
+            // общая функция на оба провайдера, только с разным API-префиксом
+            const reconnecting = {};
 
-            function restoreServerConnection() {
-                const state = connections.get('claude');
+            function restoreServerConnection(providerId = 'claude') {
+                const state = connections.get(providerId);
                 if (!state) return Promise.resolve(false);
-                if (!reconnecting) {
-                    reconnecting = api('/api/claude/connect', { id: state.installId })
+                if (!reconnecting[providerId]) {
+                    reconnecting[providerId] = api('/api/agent/connect', { agent: providerId, id: state.installId })
                         .then((r) => r.ok)
                         .catch(() => false)
-                        .finally(() => { reconnecting = null; });
+                        .finally(() => { reconnecting[providerId] = null; });
                 }
-                return reconnecting;
+                return reconnecting[providerId];
             }
 
             (async function restoreOnLoad() {
-                const saved = loadClaudeState();
-                if (saved?.installId) {
-                    connections.set('claude', saved);
-                    restoreServerConnection(); // сервер мог быть перезапущен — вернём ему окружение
+                const savedClaude = loadClaudeState();
+                if (savedClaude?.installId) {
+                    connections.set('claude', savedClaude);
+                    restoreServerConnection('claude'); // сервер мог быть перезапущен — вернём ему окружение
                 }
+
+                const savedOpenCode = loadOpenCodeState();
+                if (savedOpenCode?.installId) {
+                    connections.set('opencode', savedOpenCode);
+                    restoreServerConnection('opencode');
+                }
+
                 renderObsConnection();
 
                 // список сессий готов сразу при загрузке страницы
                 const sessions = await loadSessions();
 
-                // страницу перезагрузили (например, dev-автообновление) посреди работы той же
-                // сессии, что была открыта — досматриваем её поток вживую, а не теряем индикатор.
-                // в остальных случаях переписку показываем только по явному выбору в левом меню
-                const resumed = saved?.sessionId && sessions.find((s) => s.id === saved.sessionId && s.running);
-                if (resumed) {
-                    MissionTabs.show('chat');
-                    await openSession(resumed.id, true);
+                // последнюю открытую сессию подгружаем всегда, чтобы переход на вкладку Chat
+                // (кнопка chatButton) сразу показывал её, а не пустой экран. Если страницу
+                // перезагрузили посреди работы той же сессии (например, dev-автообновление) —
+                // ещё и переключаемся на вкладку сами, чтобы не терять индикатор в процессе
+                const saved = savedClaude?.sessionId ? savedClaude : savedOpenCode;
+                const found = saved?.sessionId && sessions.find((s) => s.id === saved.sessionId);
+                if (found) {
+                    await openSession(found.id, found.running);
+                    if (found.running) MissionTabs.show('chat');
                 } else {
                     setChatSessionId(null);
-                    saveClaudeState();
+                    saveAllProviderStates();
                 }
             })();
 
@@ -1032,16 +1049,33 @@
 
             // строка шага: что Claude сделал (Read index.html, Bash npm test)
             function addStep(text, before) {
+                const stick = isChatNearBottom();
                 const step = document.createElement('div');
                 step.className = 'chat__message chat__message--tool';
                 step.textContent = text;
                 if (before && before.parentNode === chatList) chatList.insertBefore(step, before);
                 else chatList.append(step);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
+                if (stick) scrollChatToBottom();
+                return step;
+            }
+
+            // строка рассуждения (event.type === 'thinking', см. server.js emit):
+            // раньше текст в неё вообще не попадал — событие тихо отбрасывалось
+            // в makeRenderer, а в ленте не оставалось никакого следа рассуждения
+            function addThinkingStep(text, before) {
+                const stick = isChatNearBottom();
+                const step = document.createElement('div');
+                step.className = 'chat__message chat__message--thinking';
+                step.textContent = text;
+                step.title = text;
+                if (before && before.parentNode === chatList) chatList.insertBefore(step, before);
+                else chatList.append(step);
+                if (stick) scrollChatToBottom();
                 return step;
             }
 
             function addMessage(text, kind) {
+                const stick = isChatNearBottom();
                 chatEmpty.hidden = true;
 
                 const message = document.createElement('div');
@@ -1049,7 +1083,7 @@
                 if (kind === 'assistant' && text) message.innerHTML = renderMarkdown(text);
                 else message.textContent = text;
                 chatList.append(message);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
+                if (stick) scrollChatToBottom();
                 return message;
             }
 
@@ -1058,9 +1092,11 @@
                 chatSend.textContent = busy ? 'Stop' : 'Send';
             }
 
-            // останавливает CLI-процесс на сервере; поток сам закроется событием error/done
+            // останавливает CLI-процесс на сервере; поток сам закроется событием error/done.
+            // очередь и запущенные процессы общие на все CLI, поэтому маршрут один
+            // и провайдера указывать не нужно
             function stopClaude() {
-                api('/api/claude/stop', { sessionId: chatSessionId });
+                api('/api/agent/stop', { sessionId: chatSessionId });
             }
 
             document.getElementById('chatComposer').addEventListener('submit', (e) => {
@@ -1076,27 +1112,25 @@
 
                 const mode = chatMode.dataset.active;
 
+                clearChatDraft(chatSessionId);
                 chatInput.value = '';
                 chatInput.style.height = 'auto';
                 chatInput.style.overflowY = 'hidden';
                 sendToClaude(text, mode);
             });
 
-            // миниатюра элемента из режима Edit: сессии ещё нет, id придёт только
+            // миниатюра элемента из режима Karandash: сессии ещё нет, id придёт только
             // с первым событием потока — до тех пор снимок ждёт здесь
             let pendingThumb = null;
 
-            // комментарий из режима Edit начинает отдельную сессию с этим вопросом.
+            // комментарий из режима Karandash начинает отдельную сессию с этим вопросом.
             // вкладку на Chat не переключаем — пользователь сам перейдёт туда, если захочет
             function startCommentSession(prompt, thumb) {
                 pendingThumb = thumb || null;
                 setChatSessionId(null);
-                saveClaudeState();
+                saveAllProviderStates();
                 chatRun += 1;
                 chatList.innerHTML = '';
-                for (const btn of sessionList.querySelectorAll('.session-item')) {
-                    btn.setAttribute('aria-current', 'false');
-                }
                 setMode('Action');
                 sendToClaude(prompt, 'Action');
             }
@@ -1121,8 +1155,11 @@
                 }
             }
 
+            // маршрут один на всех: какой CLI звать, сервер берёт из поля agent
+            // в теле. Формат событий тоже общий (session|tool|text|context|error|done),
+            // поэтому readNdjson/makeRenderer ниже не различают провайдеров
             async function streamAsk(body, onEvent) {
-                const res = await fetch('/api/claude/ask', {
+                const res = await fetch('/api/agent/ask', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
@@ -1147,11 +1184,15 @@
                     if (event.type === 'tool') {
                         // каждое действие остаётся своей строкой в ленте, а не заменяет предыдущую
                         addStep(`${event.name} ${event.detail}`.trim(), status);
+                    } else if (event.type === 'thinking') {
+                        // текст рассуждения, а не просто отметка, что оно было
+                        addThinkingStep(event.text, status);
                     } else if (event.type === 'text') {
                         answered = true;
+                        const stick = isChatNearBottom();
                         addMessage(event.text, 'assistant');
                         chatList.append(status); // строка ожидания остаётся последней
-                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                        if (stick) scrollChatToBottom();
                     } else if (event.type === 'error') {
                         addMessage(event.error, 'error');
                     } else if (event.type === 'done') {
@@ -1189,7 +1230,7 @@
                 try {
                     await readNdjson(res, (event) => {
                         if (event.type === 'rate_limit') { updateClaudeUsage(event.info); return; }
-                        if (event.type === 'context') { updateContextGauge(event.percent); return; }
+                        if (event.type === 'context') { updateContextGauge(event.percent, event.window); return; }
                         if (run === chatRun) render(event);
                     });
                 } finally {
@@ -1202,9 +1243,12 @@
 
             async function sendToClaude(text, mode = 'Action') {
                 const run = ++chatRun;
-                const claude = connections.get('claude');
+                // провайдер берём из строки шапки сессии — туда же уходит запрос
+                const providerId = getActiveProviderId();
+                const provider = PROVIDERS.find((p) => p.id === providerId);
+                const claude = connections.get(providerId);
                 if (!claude) {
-                    addMessage('Claude не подключён. Откройте Settings и нажмите «Подключить».', 'error');
+                    addMessage(`${provider ? provider.name : 'Провайдер'} не подключён. Откройте Settings и нажмите «Подключить».`, 'error');
                     return;
                 }
 
@@ -1226,21 +1270,17 @@
                     // на сервере, но в чат больше не пишет
                     if (run !== chatRun) return;
 
-                    if (event.type === 'queued') {
-                        // впереди работает другая сессия — ждём своей очереди
-                        status.textContent = `В очереди: впереди ${event.ahead}`;
-                        return;
-                    }
-
                     if (event.type === 'session') {
-                        // очередь дошла до нас — возвращаем индикатор ожидания
                         status.innerHTML = '<span class="chat__typing"><span></span><span></span><span></span></span>';
 
                         // id известен сразу — сессия появляется в списке до ответа
                         if (event.id !== chatSessionId) {
                             setChatSessionId(event.id);
-                            saveClaudeState();
+                            saveProviderState(providerId);
                             setRunningSessionId(event.id);
+                            // окно модели известно сразу — не ждём первого 'context' от CLI,
+                            // чтобы датчик не висел на «—» весь первый ход новой сессии
+                            updateContextGauge(0, contextWindowForModel(claude.model));
                             if (pendingThumb) {
                                 const thumb = pendingThumb;
                                 pendingThumb = null;
@@ -1252,7 +1292,10 @@
                         return;
                     }
 
-                    if (event.type === 'error' && event.error === 'Claude не подключён') {
+                    // формулировка ошибки идёт от сервера ("Claude не подключён" /
+                    // "OpenCode не подключён" и т.п.) — ловим по общему признаку,
+                    // а не по конкретному имени провайдера
+                    if (event.type === 'error' && typeof event.error === 'string' && event.error.includes('не подключён')) {
                         notConnected = true; // повторим после восстановления окружения
                         return;
                     }
@@ -1263,7 +1306,7 @@
                     }
 
                     if (event.type === 'context') {
-                        updateContextGauge(event.percent);
+                        updateContextGauge(event.percent, event.window);
                         return;
                     }
 
@@ -1271,6 +1314,7 @@
                 };
 
                 const ask = () => streamAsk({
+                    agent: providerId,
                     prompt: text,
                     model: claude.model,
                     effort: claude.effort,
@@ -1284,10 +1328,10 @@
                     // сервер перезапустился и забыл окружение — восстановим и повторим
                     if (notConnected) {
                         notConnected = false;
-                        const restored = await restoreServerConnection();
+                        const restored = await restoreServerConnection(providerId);
                         if (restored) await ask();
                         if (!restored || notConnected) {
-                            addMessage('Claude не подключён. Откройте Settings и подключите заново.', 'error');
+                            addMessage(`${provider ? provider.name : 'Провайдер'} не подключён. Откройте Settings и подключите заново.`, 'error');
                         }
                     }
                 } catch (err) {
@@ -1305,7 +1349,7 @@
 
 
 
-            // что берут вынесенные файлы: вкладки (tabs.js), Flow, Kanban, Edit, Settings
+            // что берут вынесенные файлы: вкладки (tabs.js), Flow, Kanban, Karandash, Settings
             window.App = {
                 BOARD_COLUMNS,
                 VIEWS,
@@ -1313,6 +1357,7 @@
                 api,
                 connections,
                 saveClaudeState,
+                saveProviderState,
                 setChatSessionId,
                 renderSessionBarControls,
                 renderObsConnection,
@@ -1323,6 +1368,7 @@
                 closeModal,
                 deselectSession,
                 startCommentSession,
+                openSession,
                 getChatSessionId: () => chatSessionId,
             };
         })();

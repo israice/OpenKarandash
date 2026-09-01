@@ -1,0 +1,268 @@
+/* Основа страницы: сброс, тема, виды, плитки Home, панель наблюдения,
+   вкладка Hermes, кнопка версии.
+
+   Вынесено из <style> в SYSTEM/index.html: у стилей компонента одно место
+   жительства, и правка .css подменяется точечно, без перезагрузки страницы. */
+
+* { box-sizing: border-box; }
+
+/* высота верхней панели (.topbar, views.css) — общая переменная, чтобы отступ
+   под панель у всех видов страницы совпадал с её реальной высотой */
+:root {
+    --topbar-height: 64px;
+}
+
+body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #131417;
+    color: #e9e9ec;
+}
+
+/* оба вида страницы занимают весь экран, показывается всегда один */
+.view {
+    min-height: 100vh;
+}
+
+.view--home {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    overflow-y: auto;
+    padding: calc(var(--topbar-height) + 24px) 24px 24px;
+    gap: 16px;
+}
+
+/* панель статистики — обычный блок в потоке, скроллится вместе со страницей */
+.dashboard {
+    display: flex;
+    gap: 12px;
+}
+
+.stat-tile {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 18px;
+    border: 1px solid #2e3138;
+    border-radius: 10px;
+    background: #16181c;
+}
+
+/* заглушка под будущие блоки статистики */
+.stat-tile--placeholder {
+    min-width: 120px;
+    border-style: dashed;
+}
+
+.stat-tile__value {
+    font-size: 1.4rem;
+    font-weight: 600;
+}
+
+.stat-tile__label {
+    color: #9a9ea6;
+}
+
+/* панель наблюдения под плитками: всё умещается на экране без прокрутки,
+   списки внутри карточек скроллятся сами, если сессий много */
+/* вкладка Hermes: только панель установки, своего css у неё больше нет */
+.view--hermes {
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: calc(var(--topbar-height) + 24px) 24px 24px;
+    overflow-y: auto;
+}
+
+.hermes {
+    width: 100%;
+    max-width: 1080px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.observation {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(280px, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    width: 100%;
+    max-width: 1080px;
+    flex: 1;
+    min-height: 0;
+}
+
+.obs-card {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 16px 18px;
+    border: 1px solid #2e3138;
+    border-radius: 10px;
+    background: #16181c;
+}
+
+.obs-card__title {
+    margin: 0 0 12px;
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+.obs-card__stats {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.obs-card__stats li {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    color: #9a9ea6;
+}
+
+.obs-card__stats strong {
+    color: #e9e9ec;
+    font-size: 1.05rem;
+    font-weight: 600;
+}
+
+.obs-connection {
+    display: flex;
+    align-items: center;
+}
+
+.obs-connection__text {
+    margin: 0;
+    color: #e9e9ec;
+    font-size: 0.95rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.obs-connection__text--off {
+    color: #9a9ea6;
+    font-weight: 400;
+}
+
+.obs-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.obs-list__item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    gap: 8px;
+    padding: 6px 4px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.obs-list__item:hover {
+    background: #22252b;
+}
+
+.obs-list__dot {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #3a3e46;
+}
+
+.obs-list__dot--running {
+    background: #f5a623;
+    animation: session-item-pulse 1.2s ease-in-out infinite;
+}
+
+.obs-list__title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.obs-list__meta {
+    flex: none;
+    color: #9a9ea6;
+    font-size: 0.82rem;
+}
+
+.obs-list__empty {
+    padding: 4px;
+    color: #9a9ea6;
+}
+
+/* версия из VERSION.md, подставляется сервером — видна на всех видах страницы */
+.app-version {
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    padding: 3px 8px;
+    border: 1px solid #2e3138;
+    border-radius: 6px;
+    background: #16181c;
+    color: #4caf50;
+    text-shadow: 0 0 3px rgba(76, 175, 80, 0.5);
+    font-size: 0.75rem;
+    font-family: inherit;
+    cursor: pointer;
+    z-index: 1400;
+}
+
+.app-version:hover { background: #1e2127; color: #5fd964; text-shadow: 0 0 4px rgba(95, 217, 100, 0.6); }
+
+/* кнопка сохранения редактора файлов — тот же ряд, что и кнопка версий, слева от неё */
+#chatFileEditorSave {
+    position: fixed;
+    right: 80px;
+    bottom: 12px;
+    z-index: 1400;
+}
+
+.version-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 16px 0 0;
+    padding: 0;
+    list-style: none;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.version-list__item {
+    padding: 8px 10px;
+    border: 1px solid #2e3138;
+    border-radius: 8px;
+    background: #16181c;
+    color: #cfd2d8;
+    font-size: 0.85rem;
+}
+
+.version-list__item:first-child {
+    border-color: #3d5a99;
+    color: #f2f2f4;
+}

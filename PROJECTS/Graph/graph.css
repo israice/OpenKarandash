@@ -5,14 +5,14 @@
 .view--graph {
     display: block;
     /* отступ под фиксированную .topbar, иначе она перекрывает граф */
-    padding-top: 64px;
+    padding-top: var(--topbar-height);
     background: #131417;
 }
 
 .graph-canvas {
     display: block;
     width: 100%;
-    height: calc(100vh - 64px);
+    height: calc(100vh - var(--topbar-height));
     background: #131417;
     cursor: grab;
     touch-action: none;
@@ -230,15 +230,21 @@
 
 .chat__file-editor-header {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     justify-content: space-between;
-    gap: 10px;
+    gap: 12px;
 }
 
 .chat__file-editor-title {
     margin: 0;
     font-size: 1rem;
     word-break: break-all;
+}
+
+.chat__file-editor-header .file-modal__meta {
+    margin: 0 0 6px;
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 /* окно с содержимым узла: просмотр и правка файла */
@@ -360,6 +366,17 @@
     color: #d8dce4;
 }
 
+.chat__file-editor .EasyMDEContainer .editor-preview pre,
+.chat__file-editor .EasyMDEContainer .editor-preview-side pre {
+    background: #1c1e23;
+}
+
+.chat__file-editor .EasyMDEContainer .editor-preview code,
+.chat__file-editor .EasyMDEContainer .editor-preview-side code {
+    background: #1c1e23;
+    color: #d8dce4;
+}
+
 .file-modal__footer {
     display: flex;
     align-items: center;
@@ -465,7 +482,7 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    height: calc(100vh - 64px);
+    height: calc(100vh - var(--topbar-height));
     padding: 0 24px;
     text-align: center;
     color: #9aa0aa;

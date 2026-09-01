@@ -1,14 +1,19 @@
-// Ручка на правой грани панели Sessions: зажать и тянуть, чтобы менять её ширину.
+// Ручка на правой грани боковой панели (Sessions, Book, ...): зажать и
+// тянуть, чтобы менять её ширину. Список панелей — в PANELS ниже.
 (function () {
     const MIN_WIDTH = 210;
-    const STORAGE_KEY = 'sessionsPanelWidth';
 
-    function init() {
-        const panel = document.getElementById('sessionsPanel');
-        const handle = document.getElementById('sessionResize');
+    const PANELS = [
+        { panelId: 'sessionsPanel', handleId: 'sessionResize', storageKey: 'sessionsPanelWidth' },
+        { panelId: 'bookNav', handleId: 'bookResize', storageKey: 'bookPanelWidth' },
+    ];
+
+    function initPanel({ panelId, handleId, storageKey }) {
+        const panel = document.getElementById(panelId);
+        const handle = document.getElementById(handleId);
         if (!panel || !handle) return;
 
-        const saved = Number(localStorage.getItem(STORAGE_KEY));
+        const saved = Number(localStorage.getItem(storageKey));
         if (saved) panel.style.width = Math.min(window.innerWidth / 2, Math.max(MIN_WIDTH, saved)) + 'px';
 
         let startX = 0;
@@ -25,7 +30,7 @@
             document.body.style.cursor = '';
             window.removeEventListener('pointermove', onMove);
             window.removeEventListener('pointerup', onUp);
-            localStorage.setItem(STORAGE_KEY, Math.round(panel.getBoundingClientRect().width));
+            localStorage.setItem(storageKey, Math.round(panel.getBoundingClientRect().width));
         }
 
         handle.addEventListener('pointerdown', (e) => {
@@ -39,5 +44,7 @@
         });
     }
 
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', () => {
+        for (const config of PANELS) initPanel(config);
+    });
 })();

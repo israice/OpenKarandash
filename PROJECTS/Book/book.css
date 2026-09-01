@@ -1,0 +1,28 @@
+/* Вкладка Book верхнего тулбара: слева список карточек всех разделов
+   интерфейса (как раньше во вкладке Projects панели Sessions), справа —
+   README выбранной карточки. Разметка — `.view--side` (тот же приём, что у
+   Flow): фикс-панель слева, содержимое во всю оставшуюся ширину справа.
+
+   Вынесено из <style> в SYSTEM/index.html: у стилей компонента одно место
+   жительства, и правка .css подменяется точечно, без перезагрузки страницы. */
+
+.view--book .view__content {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding: var(--topbar-height) 0 0;
+    min-width: 0;
+}
+
+.book-empty {
+    margin: auto;
+    color: #7c818b;
+}
+
+.view--book .chat__file-editor-header {
+    padding: 12px 24px 0;
+}
+
+.view--book .file-modal__links {
+    padding: 0 24px;
+}

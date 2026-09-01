@@ -1,16 +1,16 @@
-# Graph Report - noname  (2026-08-30)
+# Graph Report - OpenKarandash  (2026-09-02)
 
 ## Corpus Check
-- 48 files · ~60,253 words
+- 89 files · ~90,917 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 216 nodes · 411 edges · 15 communities (14 shown, 1 thin omitted)
-- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 7 edges (avg confidence: 0.5)
+- 350 nodes · 620 edges · 20 communities (17 shown, 3 thin omitted)
+- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 15 edges (avg confidence: 0.5)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `01228533`
+- Built from commit: `8858e110`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -18,53 +18,60 @@
 - app.js
 - init
 - graph.js
-- layoutAllNodes
+- server.js
 - smoke.js
 - search.js
 - toolbar-reorder.js
-- 💬 PROJECTS
+- askClaude
 - init
-- confirmModal
-- VERSION.md
+- handleApi
+- runOpenCode
+- runTurn
+- 💬 PROJECTS
+- ✏️ Karandash — интерфейс, который правит сам себя
+- server
+- flow-session-sync.js
+- Chat/VERSION.md
+- Karandash/VERSION.md
 
 ## God Nodes (most connected - your core abstractions)
 1. `init()` - 67 edges
-2. `sendToClaude()` - 15 edges
-3. `layoutAllNodes()` - 13 edges
-4. `insertNodeOnEdge()` - 12 edges
-5. `flowSet()` - 11 edges
-6. `restoreGraph()` - 11 edges
-7. `flowGet()` - 10 edges
-8. `attachSession()` - 10 edges
-9. `addChildNode()` - 9 edges
-10. `addChildNodeRight()` - 9 edges
+2. `askClaude()` - 19 edges
+3. `sendToClaude()` - 15 edges
+4. `layoutAllNodes()` - 13 edges
+5. `insertNodeOnEdge()` - 12 edges
+6. `handleApi()` - 12 edges
+7. `flowSet()` - 11 edges
+8. `restoreGraph()` - 11 edges
+9. `clip()` - 11 edges
+10. `flowGet()` - 10 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `loadPositions()` --calls--> `flowGet()`  [EXTRACTED]
-  PROJECTS/Flow/flow.js → PROJECTS/Flow/flow.js  _Bridges community 1 → community 3_
-- `removeSession()` --calls--> `confirmModal()`  [EXTRACTED]
-  SYSTEM/app.js → SYSTEM/app.js  _Bridges community 10 → community 0_
+- `handleApi()` --calls--> `listScreens()`  [EXTRACTED]
+  server.js → PROJECTS/Karandash/screenshot.js
+- `handleApi()` --calls--> `captureScreenshot()`  [EXTRACTED]
+  server.js → PROJECTS/Karandash/screenshot.js
 
 ## Import Cycles
 - None detected.
 
-## Communities (15 total, 1 thin omitted)
+## Communities (20 total, 3 thin omitted)
 
 ### Community 0 - "app.js"
-Cohesion: 0.10
-Nodes (42): addMessage(), addPendingStatus(), addStep(), api(), applyRunningIndicator(), attachSession(), deleteButton(), deselectSession() (+34 more)
+Cohesion: 0.09
+Nodes (45): addMessage(), addPendingStatus(), addStep(), api(), applyRunningIndicator(), attachSession(), confirmModal(), cleanup() (+37 more)
 
 ### Community 1 - "init"
-Cohesion: 0.08
-Nodes (31): init(), addAgentItem(), addFlowItem(), addQuestionField(), addTempItem(), apply(), applyQuestions(), applyTexts() (+23 more)
+Cohesion: 0.06
+Nodes (56): init(), addAgentItem(), addChildNode(), addChildNodeRight(), addFlowItem(), addQuestionField(), addTempItem(), apply() (+48 more)
 
 ### Community 2 - "graph.js"
 Cohesion: 0.11
 Nodes (26): applyGraphBox(), buildLayout(), edgePath(), endDrag(), fitGraph(), focusNode(), highlightNeighbours(), makeFileEditor() (+18 more)
 
-### Community 3 - "layoutAllNodes"
-Cohesion: 0.20
-Nodes (25): addChildNode(), addChildNodeRight(), attachAddBottom(), attachAddRight(), createEdge(), deleteNode(), drawEdge(), edgeGeometry() (+17 more)
+### Community 3 - "server.js"
+Cohesion: 0.03
+Nodes (59): activeRuns, AGENTS, { captureScreenshot, listScreens }, CHAT_DENIED_TOOLS, CLAUDE_MODELS, clients, countMessages, { DatabaseSync } (+51 more)
 
 ### Community 4 - "smoke.js"
 Cohesion: 0.14
@@ -78,37 +85,57 @@ Nodes (9): args, { DatabaseSync }, db, fs, INDEX_FILE, match, path, query (+1 mo
 Cohesion: 0.27
 Nodes (4): exitReorderMode(), groupKey(), loadOrder(), saveOrder()
 
-### Community 7 - "💬 PROJECTS"
-Cohesion: 0.25
-Nodes (7): 💬 PROJECTS, ✨ Возможности, 🚀 Как пользоваться, 🔧 Как это устроено, ⚠️ Прежде чем начать, 📁 Файлы, 🧭 Что это
+### Community 7 - "askClaude"
+Cohesion: 0.17
+Nodes (20): askClaude(), askHermes(), askOpenCode(), askPlannedByClaude(), camelKey(), clip(), contextWindowFor(), handoffPreamble() (+12 more)
 
 ### Community 8 - "init"
 Cohesion: 0.67
 Nodes (3): init(), onMove(), onUp()
 
-### Community 10 - "confirmModal"
-Cohesion: 1.00
-Nodes (3): confirmModal(), cleanup(), onKey()
+### Community 9 - "handleApi"
+Cohesion: 0.17
+Nodes (12): captureScreenshot(), fs, listScreens(), os, path, { spawn }, agentByName(), deleteSession() (+4 more)
+
+### Community 10 - "runOpenCode"
+Cohesion: 0.24
+Nodes (11): detectInstalls(), detectOpenCodeInstalls(), fetchOpenCodeModels(), killProcessTree(), parseVersion(), runClaude(), runOpenCode(), shellLaunch() (+3 more)
+
+### Community 11 - "runTurn"
+Cohesion: 0.18
+Nodes (11): extractTitle(), finishExchange(), notifyClients(), {
+    prepareVault, buildVaultGraph, searchProject, readProjectFile, writeProjectFile, projectFiles, MAX_EDIT_BYTES,
+}, runTurn(), scheduleMapUpdate(), sessionTitle(), setBusy() (+3 more)
+
+### Community 14 - "💬 PROJECTS"
+Cohesion: 0.25
+Nodes (7): 💬 PROJECTS, ✨ Возможности, 🚀 Как пользоваться, 🔧 Как это устроено, ⚠️ Прежде чем начать, 📁 Файлы, 🧭 Что это
+
+### Community 15 - "✏️ Karandash — интерфейс, который правит сам себя"
+Cohesion: 0.29
+Nodes (6): ✏️ Karandash — интерфейс, который правит сам себя, ⚡ Возможности, 🚀 Как пользоваться, 🔧 Как это устроено, 📁 Файлы, 🎯 Что это
+
+### Community 16 - "server"
+Cohesion: 0.50
+Nodes (4): currentVersion(), isLocalRequest(), server, versionHistory()
 
 ## Knowledge Gaps
-- **24 isolated node(s):** `fs`, `path`, `{ DatabaseSync }`, `INDEX_FILE`, `args` (+19 more)
+- **93 isolated node(s):** `🧭 Что это`, `✨ Возможности`, `🚀 Как пользоваться`, `⚠️ Прежде чем начать`, `🔧 Как это устроено` (+88 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **1 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **3 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `init()` connect `init` to `flow.js`, `layoutAllNodes`?**
-  _High betweenness centrality (0.102) - this node is a cross-community bridge._
-- **Why does `layoutAllNodes()` connect `layoutAllNodes` to `init`?**
-  _High betweenness centrality (0.015) - this node is a cross-community bridge._
-- **Why does `confirmModal()` connect `confirmModal` to `app.js`?**
-  _High betweenness centrality (0.004) - this node is a cross-community bridge._
-- **What connects `fs`, `path`, `{ DatabaseSync }` to the rest of the system?**
-  _24 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `🧭 Что это`, `✨ Возможности`, `🚀 Как пользоваться` to the rest of the system?**
+  _93 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `app.js` be split into smaller, more focused modules?**
-  _Cohesion score 0.10119047619047619 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.09351432880844646 - nodes in this community are weakly interconnected._
 - **Should `init` be split into smaller, more focused modules?**
-  _Cohesion score 0.07678075855689177 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.0627027027027027 - nodes in this community are weakly interconnected._
 - **Should `graph.js` be split into smaller, more focused modules?**
   _Cohesion score 0.10873440285204991 - nodes in this community are weakly interconnected._
+- **Should `server.js` be split into smaller, more focused modules?**
+  _Cohesion score 0.03125 - nodes in this community are weakly interconnected._
+- **Should `smoke.js` be split into smaller, more focused modules?**
+  _Cohesion score 0.14166666666666666 - nodes in this community are weakly interconnected._

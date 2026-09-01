@@ -5,7 +5,7 @@
 .view--board {
     display: block;
     height: 100vh;
-    padding: 68px 16px 16px;
+    padding: calc(var(--topbar-height) + 4px) 16px 16px;
     overflow-x: auto;
     overflow-y: hidden;
 }

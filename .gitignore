@@ -1,3 +1,6 @@
 .env
 .playwright-mcp
 /DATA/
+SYSTEM/Hermes/agent/
+SYSTEM/Hermes/runtime/
+/node_modules/

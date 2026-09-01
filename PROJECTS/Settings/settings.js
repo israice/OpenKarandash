@@ -1,6 +1,6 @@
 // Settings: полностью самодостаточный файл. Создаёт свою разметку (кнопку-шестерёнку
 // с выпадающим меню в шапке, окно настроек и окно выбора окружения Claude CLI) и ведёт
-// всю логику провайдеров: подключение, выбор модели/effort, экран для скриншотов Edit,
+// всю логику провайдеров: подключение, выбор модели/effort, экран для скриншотов Karandash,
 // вкладку по умолчанию. Общее состояние (PROVIDERS, connections, сохранение в
 // localStorage, шапка активной сессии) остаётся в app.js — оно нужно ленте чата
 // напрямую, а этот файл лишь читает и меняет его через window.App.
@@ -80,33 +80,73 @@
                 <button type="button" class="modal__close" data-close-modal aria-label="Close">&times;</button>
             </div>
             <p class="modal__hint">Connect an AI provider to pick a default model.</p>
+            <div class="provider" id="defaultProviderRow">
+                <div class="provider__model">
+                    <span class="provider__model-label">Провайдер:</span>
+                    <select class="provider__select provider__select--source" id="defaultProviderSelect" aria-label="Провайдер"></select>
+                    <span class="provider__model-label">Модель:</span>
+                    <select class="provider__select" id="defaultProviderModelSelect" aria-label="Модель по умолчанию"></select>
+                </div>
+            </div>
             <ul class="provider-list" id="providerList"></ul>
             <div class="provider screenshot-screen" id="screenshotScreenRow" hidden>
-                <span class="provider__model-label">Screen for Edit screenshots:</span>
+                <span class="provider__model-label">Screen for Karandash screenshots:</span>
                 <select class="provider__select" id="screenshotScreenSelect" aria-label="Screen for screenshots"></select>
                 <img class="screenshot-screen__preview" id="screenshotScreenPreview" alt="Selected screen preview" hidden style="cursor: zoom-in">
             </div>
-            <div class="provider">
-                <span class="provider__model-label">Default tab:</span>
-                <select class="provider__select" id="defaultViewSelect" aria-label="Default tab">
-                    <option value="graph">🕸️ Graph</option>
-                    <option value="flow">🌊 Flow</option>
-                    <option value="kanban">🗂️ Kanban</option>
-                    <option value="chat">💬 PROJECTS</option>
-                    <option value="home">🏠 Home</option>
-                </select>
-            </div>
+            <!-- пока Hermes ставится, здесь виден ход установки; когда готов — строка о готовности -->
+            <div id="hermesSetup"
+                 hx-get="/api/fragment/hermes-setup"
+                 hx-trigger="load, every 3s"
+                 hx-swap="innerHTML"></div>
+
+            <!-- выбор провайдера Hermes целиком рисует сервер: список провайдеров,
+                 текущий выбор и подсказка про ключ живут там, а не в двух местах -->
+            <div id="hermesProviderPanel"
+                 hx-get="/api/fragment/hermes-provider"
+                 hx-trigger="load, hermes-provider-changed from:body"
+                 hx-swap="innerHTML"></div>
         </div>
     `;
     document.body.append(settingsModal);
+    // htmx сам обходит только то, что было в документе при загрузке; это окно
+    // собрано из строки уже после, поэтому его атрибуты надо показать явно
+    window.htmx?.process(settingsModal);
+
+    // кнопку «Установить» рисует серверный фрагмент, поэтому слушаем его контейнер,
+    // а не саму кнопку, которую htmx подменяет
+    settingsModal.addEventListener('click', (e) => {
+        if (!e.target.closest('#hermesSetupStart')) return;
+        api('/api/hermes/setup/start', {});
+    });
+
+    // сохранение провайдера: панель внутри — серверный фрагмент, поэтому слушаем
+    // окно целиком, а не кнопку, которую htmx подменяет
+    settingsModal.addEventListener('click', async (e) => {
+        if (!e.target.closest('#hermesProviderSave')) return;
+        const note = settingsModal.querySelector('#hermesProviderNote');
+        const result = await api('/api/hermes/provider/set', {
+            provider: settingsModal.querySelector('#hermesProviderSelect').value,
+            model: settingsModal.querySelector('#hermesModelInput').value.trim() || null,
+            apiKey: settingsModal.querySelector('#hermesKeyInput').value.trim() || null,
+            // подзадачи уходят подагентам на этой модели; провайдер для них —
+            // OpenRouter, там и живут бесплатные варианты
+            workerModel: settingsModal.querySelector('#hermesWorkerInput')?.value.trim() || null,
+            workerProvider: 'openrouter',
+        });
+        if (note) note.textContent = result.ok ? 'Сохранено.' : result.error;
+        document.body.dispatchEvent(new CustomEvent('hermes-provider-changed'));
+    });
 
     const providerList = settingsModal.querySelector('#providerList');
+    const defaultProviderSelect = settingsModal.querySelector('#defaultProviderSelect');
+    const defaultProviderModelSelect = settingsModal.querySelector('#defaultProviderModelSelect');
     const pickerList = pickerModal.querySelector('#pickerList');
     const pickerHint = pickerModal.querySelector('#pickerHint');
+    const pickerTitle = pickerModal.querySelector('#pickerTitle');
     const screenshotScreenRow = settingsModal.querySelector('#screenshotScreenRow');
     const screenshotScreenSelect = settingsModal.querySelector('#screenshotScreenSelect');
     const screenshotScreenPreview = settingsModal.querySelector('#screenshotScreenPreview');
-    const defaultViewSelect = settingsModal.querySelector('#defaultViewSelect');
 
     async function api(path, body) {
         const res = await fetch(path, {
@@ -151,110 +191,165 @@
         else console.log('Выбрано:', label);
     });
 
+    // ---------- витрина провайдер+модель, не зависит от подключения ----------
+
+    // ponytail: показывает, какие провайдеры и модели вообще есть в системе — само
+    // переключение никуда не бьёт, до появления мультипровайдерного роутинга.
+    // Живёт вне #providerList и не завязана на connections, поэтому видна всегда,
+    // а не только после подключения Claude
+    function renderDefaultProviderModels() {
+        defaultProviderModelSelect.innerHTML = '';
+        const provider = App.PROVIDERS.find((p) => p.id === defaultProviderSelect.value);
+        if (!provider) return;
+        for (const model of provider.models) {
+            const option = document.createElement('option');
+            option.value = model;
+            option.textContent = model === provider.defaultModel ? `${model} (default)` : model;
+            option.selected = model === provider.defaultModel;
+            defaultProviderModelSelect.append(option);
+        }
+    }
+
+    function renderDefaultProviderRow() {
+        const current = defaultProviderSelect.value;
+        defaultProviderSelect.innerHTML = '';
+        for (const provider of App.PROVIDERS) {
+            const option = document.createElement('option');
+            option.value = provider.id;
+            option.textContent = provider.name;
+            option.selected = provider.id === (current || 'claude');
+            defaultProviderSelect.append(option);
+        }
+        renderDefaultProviderModels();
+    }
+
+    defaultProviderSelect.addEventListener('change', renderDefaultProviderModels);
+
     // ---------- список провайдеров ----------
 
     function renderProviders() {
         providerList.innerHTML = '';
+        // строку «Модель: + effort» Claude показываем последней в списке, чтобы
+        // она стояла прямо над Screen for Karandash screenshots, а не терялась
+        // среди карточек остальных провайдеров
+        let claudeModelItem = null;
 
-        for (const provider of App.PROVIDERS) {
-            const state = App.connections.get(provider.id);
+        // делим провайдеров на платные и бесплатные (флаг App.PROVIDERS[].paid),
+        // внутри каждой секции порядок остаётся как в исходном массиве
+        const paidProviders = App.PROVIDERS.filter((p) => p.paid);
+        const freeProviders = App.PROVIDERS.filter((p) => !p.paid);
 
-            const item = document.createElement('li');
-            item.className = 'provider';
+        for (const [title, providers] of [['Платные', paidProviders], ['Бесплатные', freeProviders]]) {
+            if (!providers.length) continue;
 
-            const row = document.createElement('div');
-            row.className = 'provider__row';
-            row.innerHTML = `
-                <div>
-                    <div class="provider__name">${provider.name}</div>
-                    <div class="provider__note">${provider.note}</div>
-                </div>
-                <div class="provider__actions">
-                    ${state ? `<span class="provider__status">${state.note || 'Подключено'}</span>` : ''}
-                    <button type="button"
-                            class="provider__button ${state ? '' : 'provider__button--connect'}"
-                            data-provider="${provider.id}">
-                        ${state ? 'Отключить' : 'Подключить'}
-                    </button>
-                </div>
-            `;
-            item.append(row);
+            const heading = document.createElement('li');
+            heading.className = 'provider-list__heading';
+            heading.textContent = title;
+            providerList.append(heading);
 
-            // выбор модели показываем только у подключённого провайдера
-            if (state) {
-                if (provider.id === 'claude') {
-                    const usageRow = document.createElement('div');
-                    usageRow.className = 'provider__usage';
-                    usageRow.innerHTML = App.renderUsageInline(state.usage);
-                    item.append(usageRow);
-                }
+            for (const provider of providers) {
+                const state = App.connections.get(provider.id);
 
-                const modelRow = document.createElement('div');
-                modelRow.className = 'provider__model';
+                const item = document.createElement('li');
+                item.className = 'provider';
 
-                // ponytail: список провайдеров пока витринный, переключение не подключено — до появления мультипровайдерного роутинга
-                const sourceSelect = document.createElement('select');
-                sourceSelect.className = 'provider__select provider__select--source';
-                sourceSelect.setAttribute('aria-label', 'Провайдер');
-                for (const p of App.PROVIDERS) {
-                    const option = document.createElement('option');
-                    option.value = p.id;
-                    option.textContent = p.name;
-                    option.selected = p.id === provider.id;
-                    sourceSelect.append(option);
-                }
-                modelRow.append(sourceSelect);
+                const row = document.createElement('div');
+                row.className = 'provider__row';
+                row.innerHTML = `
+                    <div>
+                        <div class="provider__name">${provider.name}</div>
+                        <div class="provider__note">${provider.note}</div>
+                    </div>
+                    <div class="provider__actions">
+                        ${state ? `<span class="provider__status">${state.note || 'Подключено'}</span>` : ''}
+                        <button type="button"
+                                class="provider__button ${state ? '' : 'provider__button--connect'}"
+                                data-provider="${provider.id}">
+                            ${state ? 'Отключить' : 'Подключить'}
+                        </button>
+                    </div>
+                `;
+                item.append(row);
 
-                const label = document.createElement('span');
-                label.className = 'provider__model-label';
-                label.textContent = 'Модель:';
-
-                const select = document.createElement('select');
-                select.className = 'provider__select';
-                select.dataset.providerSelect = provider.id;
-                select.setAttribute('aria-label', `Модель для ${provider.name}`);
-
-                for (const model of provider.models) {
-                    const option = document.createElement('option');
-                    option.value = model;
-                    option.textContent = model === provider.defaultModel
-                        ? `${model} (default)`
-                        : model;
-                    option.selected = model === state.model;
-                    select.append(option);
-                }
-
-                modelRow.append(label, select);
-
-                // effort пока умеет только Claude CLI (--effort)
-                if (provider.efforts) {
-                    const effortSelect = document.createElement('select');
-                    effortSelect.className = 'provider__select provider__select--effort';
-                    effortSelect.dataset.providerEffortSelect = provider.id;
-                    effortSelect.setAttribute('aria-label', `Effort для ${provider.name}`);
-
-                    for (const effort of provider.efforts) {
-                        const option = document.createElement('option');
-                        option.value = effort;
-                        option.textContent = effort === provider.defaultEffort
-                            ? `${effort} (default)`
-                            : effort;
-                        option.selected = effort === (state.effort || provider.defaultEffort);
-                        effortSelect.append(option);
+                // выбор модели показываем только у подключённого провайдера
+                if (state) {
+                    if (provider.id === 'claude') {
+                        const usageRow = document.createElement('div');
+                        usageRow.className = 'provider__usage';
+                        usageRow.innerHTML = App.renderUsageInline(state.usage);
+                        item.append(usageRow);
                     }
 
-                    modelRow.append(effortSelect);
+                    // у Hermes и у связки списка моделей нет: Hermes выбирает модель
+                    // сам по своему конфигу. Пустой выпадающий список выглядел бы
+                    // поломкой, поэтому строку с моделью им просто не рисуем
+                    if (!provider.models.length) {
+                        providerList.append(item);
+                        continue;
+                    }
+
+                    const modelRow = document.createElement('div');
+                    modelRow.className = 'provider__model';
+
+                    const label = document.createElement('span');
+                    label.className = 'provider__model-label';
+                    label.textContent = 'Модель:';
+
+                    const select = document.createElement('select');
+                    select.className = 'provider__select';
+                    select.dataset.providerSelect = provider.id;
+                    select.setAttribute('aria-label', `Модель для ${provider.name}`);
+
+                    for (const model of provider.models) {
+                        const option = document.createElement('option');
+                        option.value = model;
+                        option.textContent = model === provider.defaultModel
+                            ? `${model} (default)`
+                            : model;
+                        option.selected = model === state.model;
+                        select.append(option);
+                    }
+
+                    modelRow.append(label, select);
+
+                    // effort пока умеет только Claude CLI (--effort)
+                    if (provider.efforts) {
+                        const effortSelect = document.createElement('select');
+                        effortSelect.className = 'provider__select provider__select--effort';
+                        effortSelect.dataset.providerEffortSelect = provider.id;
+                        effortSelect.setAttribute('aria-label', `Effort для ${provider.name}`);
+
+                        for (const effort of provider.efforts) {
+                            const option = document.createElement('option');
+                            option.value = effort;
+                            option.textContent = effort === provider.defaultEffort
+                                ? `${effort} (default)`
+                                : effort;
+                            option.selected = effort === (state.effort || provider.defaultEffort);
+                            effortSelect.append(option);
+                        }
+
+                        modelRow.append(effortSelect);
+                    }
+
+                    const modelItem = document.createElement('li');
+                    modelItem.className = 'provider';
+                    modelItem.append(modelRow);
+
+                    if (provider.id === 'claude') {
+                        providerList.append(item);
+                        claudeModelItem = modelItem;
+                    } else {
+                        providerList.append(item, modelItem);
+                    }
+                    continue;
                 }
 
-                const modelItem = document.createElement('li');
-                modelItem.className = 'provider';
-                modelItem.append(modelRow);
-                providerList.append(item, modelItem);
-                continue;
+                providerList.append(item);
             }
-
-            providerList.append(item);
         }
+
+        if (claudeModelItem) providerList.append(claudeModelItem);
 
         App.renderObsConnection();
     }
@@ -269,7 +364,7 @@
     }
 
     async function connectClaude(install) {
-        const result = await api('/api/claude/connect', { id: install.id });
+        const result = await api('/api/agent/connect', { agent: 'claude', id: install.id });
         if (!result.ok) {
             showProviderError('claude', result.error);
             return;
@@ -289,8 +384,56 @@
         renderProviders();
     }
 
-    // окно выбора открывается, только когда найдено больше одного окружения
-    function pickInstall(installs) {
+    // Hermes сам решает, какой моделью работать (Settings → провайдер Hermes),
+    // поэтому здесь запоминается только выбранная система запуска
+    async function connectHermes(install) {
+        const result = await api('/api/agent/connect', { agent: 'hermes', id: install.id });
+        if (!result.ok) {
+            showProviderError('hermes', result.error);
+            return;
+        }
+
+        App.connections.set('hermes', {
+            installId: result.id,
+            label: result.label,
+            version: result.version,
+            model: null,
+            note: `${result.label} · Hermes`,
+        });
+        App.saveProviderState('hermes');
+        App.renderSessionBarControls();
+        renderProviders();
+    }
+
+    // у OpenCode список моделей заранее не известен (нет хардкода) — сервер
+    // реально спрашивает `opencode models` при подключении и отдаёт список ответом
+    async function connectOpenCode(install) {
+        const result = await api('/api/agent/connect', { agent: 'opencode', id: install.id });
+        if (!result.ok) {
+            showProviderError('opencode', result.error);
+            return;
+        }
+
+        const provider = App.PROVIDERS.find((p) => p.id === 'opencode');
+        provider.models = result.models || [];
+        provider.defaultModel = provider.models[0];
+
+        App.connections.set('opencode', {
+            installId: result.id,
+            label: result.label,
+            version: result.version,
+            model: App.connections.get('opencode')?.model || provider.defaultModel,
+            note: `${result.label} · CLI ${result.version}`,
+        });
+        App.saveProviderState('opencode');
+        App.renderSessionBarControls();
+        renderProviders();
+    }
+
+    // окно выбора открывается, только когда найдено больше одного окружения;
+    // providerLabel уходит и в заголовок, и в подсказку — общий вид для Claude и OpenCode
+    function pickInstall(installs, onPick, providerLabel = 'CLI') {
+        pickerTitle.textContent = `Where should ${providerLabel} run?`;
         pickerHint.textContent = 'CLI found in multiple environments — choose which one to use.';
         pickerList.innerHTML = '';
 
@@ -302,7 +445,7 @@
             btn.innerHTML = `<span>${install.label}</span><span class="picker__version">CLI ${install.version}</span>`;
             btn.addEventListener('click', () => {
                 App.closeModal(pickerModal);
-                connectClaude(install);
+                onPick(install);
             });
             item.append(btn);
             pickerList.append(item);
@@ -311,8 +454,9 @@
         App.openModal(pickerModal);
     }
 
-    function showNotFound() {
-        pickerHint.textContent = 'Claude CLI not found in Windows or WSL. Install it or set the path via the CLAUDE_BIN environment variable when starting the server.';
+    function showNotFound(providerLabel = 'Claude CLI') {
+        pickerTitle.textContent = `Where should ${providerLabel} run?`;
+        pickerHint.textContent = `${providerLabel} not found in Windows or WSL. Install it or set the path via the corresponding environment variable when starting the server.`;
         pickerList.innerHTML = '';
         App.openModal(pickerModal);
     }
@@ -328,8 +472,59 @@
             if (id === 'claude') {
                 App.setChatSessionId(null);
                 App.saveClaudeState();
+            } else if (id === 'opencode' || id === 'hermes' || id === 'hermes-plan') {
+                App.setChatSessionId(null);
+                App.saveProviderState(id);
             }
             renderProviders();
+            return;
+        }
+
+        // связка «Claude → Hermes» — не отдельный CLI: она работает ровно тогда,
+        // когда подключены оба, поэтому подключать здесь нечего
+        if (id === 'hermes-plan') {
+            const ready = App.connections.has('claude') && App.connections.has('hermes');
+            if (!ready) {
+                showProviderError(id, 'Нужны оба: подключите Claude и Hermes');
+                return;
+            }
+            App.connections.set('hermes-plan', {
+                installId: 'pair',
+                label: 'Claude → Hermes',
+                version: 'связка',
+                model: null,
+                note: 'Claude планирует · Hermes выполняет',
+            });
+            App.saveProviderState('hermes-plan');
+            App.renderSessionBarControls();
+            renderProviders();
+            return;
+        }
+
+        // Hermes ставится вместе с проектом, поэтому искать его негде: подключение —
+        // это выбор системы (Windows или WSL), в которой его запускать
+        if (id === 'hermes') {
+            btn.disabled = true;
+            btn.textContent = 'Ищу Hermes...';
+
+            let installs = [];
+            try {
+                ({ installs = [] } = await api('/api/agent/detect', { agent: 'hermes' }));
+            } catch (err) {
+                renderProviders();
+                showProviderError(id, `Сервер недоступен: ${err.message}`);
+                return;
+            }
+
+            renderProviders();
+
+            if (installs.length === 0) {
+                showProviderError(id, 'Hermes ещё не установлен — ход установки виден в Settings');
+            } else if (installs.length === 1) {
+                connectHermes(installs[0]);
+            } else {
+                pickInstall(installs, connectHermes, 'Hermes');
+            }
             return;
         }
 
@@ -340,7 +535,7 @@
 
             let installs = [];
             try {
-                ({ installs = [] } = await api('/api/claude/detect'));
+                ({ installs = [] } = await api('/api/agent/detect', { agent: 'claude' }));
             } catch (err) {
                 renderProviders();
                 showProviderError(id, `Сервер недоступен: ${err.message}`);
@@ -349,9 +544,32 @@
 
             renderProviders();
 
-            if (installs.length === 0) showNotFound();
+            if (installs.length === 0) showNotFound('Claude CLI');
             else if (installs.length === 1) connectClaude(installs[0]);
-            else pickInstall(installs);
+            else pickInstall(installs, connectClaude, 'Claude CLI');
+            return;
+        }
+
+        // у OpenCode подключение тоже настоящее: тот же поток detect → connect,
+        // список моделей приходит из ответа connect (`opencode models`)
+        if (id === 'opencode') {
+            btn.disabled = true;
+            btn.textContent = 'Ищу OpenCode...';
+
+            let installs = [];
+            try {
+                ({ installs = [] } = await api('/api/agent/detect', { agent: 'opencode' }));
+            } catch (err) {
+                renderProviders();
+                showProviderError(id, `Сервер недоступен: ${err.message}`);
+                return;
+            }
+
+            renderProviders();
+
+            if (installs.length === 0) showNotFound('OpenCode CLI');
+            else if (installs.length === 1) connectOpenCode(installs[0]);
+            else pickInstall(installs, connectOpenCode, 'OpenCode CLI');
             return;
         }
 
@@ -368,6 +586,9 @@
             if (select.dataset.providerSelect === 'claude') {
                 App.saveClaudeState();
                 App.renderSessionBarControls();
+            } else if (select.dataset.providerSelect === 'opencode') {
+                App.saveProviderState('opencode');
+                App.renderSessionBarControls();
             }
             return;
         }
@@ -381,9 +602,9 @@
         }
     });
 
-    // ---------- экран для скриншотов Edit ----------
+    // ---------- экран для скриншотов Karandash ----------
 
-    // наглядное превью того, что реально снимет кнопка Edit с выбранного
+    // наглядное превью того, что реально снимет кнопка Karandash с выбранного
     // монитора — тот же снимок, что уходит в миниатюру сессии.
     // Кэшируем по индексу экрана: повторный выбор уже показанного экрана
     // не гоняет PowerShell заново, а сразу показывает то, что уже есть
@@ -444,18 +665,11 @@
         renderScreenshotPreview(index);
     });
 
-    // ---------- вкладка по умолчанию ----------
-
-    defaultViewSelect.value = document.body.dataset.defaultView || 'home';
-    defaultViewSelect.addEventListener('change', async () => {
-        await api('/api/default-view', { view: defaultViewSelect.value });
-        document.body.dataset.defaultView = defaultViewSelect.value;
-    });
-
     // ---------- открытие окна настроек ----------
 
     function openSettings() {
         closeMenu();
+        renderDefaultProviderRow();
         renderProviders();
         renderScreenshotScreen();
         App.openModal(settingsModal);

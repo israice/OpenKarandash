@@ -25,3 +25,4 @@ v0.0.4 - typescript-lsp off for the project
 v0.0.5 - smoke.js + PLAN.md
 v0.0.6 - 7 проектов начтых 
 v0.0.7 - добавлены сессии в flows и подготовка переходу на react
+v0.0.8 - small fixings

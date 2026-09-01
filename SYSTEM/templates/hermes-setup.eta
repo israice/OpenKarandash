@@ -1,0 +1,31 @@
+<% /* Установка Hermes: показывается, пока он не готов. Панель сама себя
+      опрашивает, поэтому шаги видно по ходу, а не одним «подождите». */ %>
+<% if (it.ready) { %>
+    <p class="hermes-setup__ok">Hermes готов (<%= it.platform %>). Выберите провайдера в настройках.</p>
+<% } else { %>
+    <div class="hermes-setup">
+        <p class="hermes-setup__title">
+            <% if (it.installing) { %>Ставлю Hermes — это разовая операция, несколько минут…
+            <% } else if (it.error) { %>Установка прервалась
+            <% } else { %>Hermes ещё не установлен<% } %>
+        </p>
+
+        <% if (it.error) { %>
+            <p class="hermes-setup__error"><%= it.error %></p>
+        <% } %>
+
+        <% if (it.log.length) { %>
+            <ol class="hermes-setup__log">
+                <% it.log.forEach((line) => { %>
+                    <li><%= line %></li>
+                <% }) %>
+            </ol>
+        <% } %>
+
+        <% if (!it.installing) { %>
+            <button type="button" class="hermes__button" id="hermesSetupStart">
+                <%= it.error ? 'Повторить' : 'Установить' %>
+            </button>
+        <% } %>
+    </div>
+<% } %>

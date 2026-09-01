@@ -20,18 +20,24 @@
                 if (name === 'chat') App.chatMessages.scrollTop = App.chatMessages.scrollHeight;
                 if (name === 'graph') MissionGraph.show();
                 if (name === 'flow') MissionFlow.center();
+                if (name === 'book') MissionBookTab.show();
             }
+
+            // запоминаем последнюю открытую вкладку, чтобы при следующем заходе
+            // открывалась она же, а не всегда Home
+            const LAST_VIEW_KEY = 'lastView';
 
             for (const btn of viewButtons) {
                 btn.addEventListener('click', () => {
                     showView(btn.dataset.view);
-                    if (btn.id === 'chatButton') MissionSessionsTabs.setActive('tasks');
+                    localStorage.setItem(LAST_VIEW_KEY, btn.dataset.view);
                 });
             }
 
-            // вкладка по умолчанию настраивается в Settings, home зашит в разметку заранее
-            const defaultView = document.body.dataset.defaultView;
-            if (defaultView && defaultView !== 'home') showView(defaultView);
+            // при самом первом заходе сохранённой вкладки ещё нет — открываем Projects,
+            // а не Home, зашитый в разметке по умолчанию
+            const lastView = localStorage.getItem(LAST_VIEW_KEY) || 'chat';
+            if (lastView !== 'home' && App.VIEWS[lastView]) showView(lastView);
 
             // пункты боковых меню пока только сообщают о нажатии
             for (const nav of document.querySelectorAll('.side-nav')) {

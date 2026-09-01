@@ -1,0 +1,282 @@
+/* Виды с боковым меню, верхняя панель и тулбар кнопок.
+
+   Вынесено из <style> в SYSTEM/index.html: у стилей компонента одно место
+   жительства, и правка .css подменяется точечно, без перезагрузки страницы. */
+
+/* ---------- виды с боковым меню: меню слева, заглушка по центру ---------- */
+
+.view--side {
+    display: flex;
+    height: 100vh;
+}
+
+.side-nav {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 210px;
+    flex-shrink: 0;
+    padding: calc(var(--topbar-height) + 4px) 12px 16px;
+    border-right: 1px solid #2e3138;
+    background: #16181c;
+    overflow-y: auto;
+    scrollbar-width: none;
+}
+
+.side-nav::-webkit-scrollbar {
+    display: none;
+}
+
+.chat__sessions {
+    overflow: hidden;
+}
+
+.side-nav__title {
+    margin: 0 0 8px;
+    padding: 0 12px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-align: center;
+    color: #7c818b;
+}
+
+.side-nav__title--collapsible {
+    cursor: pointer;
+}
+
+.side-nav__title--nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+#bookNav .side-nav__title {
+    margin-top: 8px;
+}
+
+.side-nav__arrow {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid #2e3138;
+    border-radius: 6px;
+    background: #1c1f26;
+    color: #7c818b;
+    cursor: pointer;
+    font-size: 0.7rem;
+    line-height: 1;
+    transition: background 0.15s, color 0.15s;
+}
+
+.side-nav__arrow:hover {
+    background: #2e3138;
+    color: #e6e8eb;
+}
+
+.side-nav__arrow--active {
+    color: #fff;
+}
+
+.side-nav__arrow:disabled {
+    opacity: 0.4;
+    cursor: default;
+    pointer-events: none;
+}
+
+.side-nav__item {
+    width: 100%;
+    padding: 10px 30px 10px 12px;
+    border: 0;
+    border-radius: 7px;
+    background: none;
+    font: inherit;
+    font-size: 0.88rem;
+    color: #c3c7ce;
+    text-align: left;
+    cursor: pointer;
+}
+
+/* мусорка в правом краю строки: видна при наведении и с клавиатуры,
+   как в списке сессий (.session-row/.session-delete) */
+.side-nav__row { position: relative; }
+
+.side-nav__delete {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    display: flex;
+    padding: 3px;
+    border: 0;
+    border-radius: 5px;
+    background: none;
+    color: #8b9099;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+}
+
+.side-nav__row:hover .side-nav__delete,
+.side-nav__delete:focus-visible { opacity: 1; }
+
+.side-nav__delete:hover { background: #4a2c2c; color: #f2b8b8; }
+
+.side-nav__delete:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: 1px;
+}
+
+.side-nav__item:hover {
+    background: #22252b;
+    color: #f2f2f4;
+}
+
+.side-nav__item:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: 2px;
+}
+
+.side-nav__item--active {
+    background: #2a3b56;
+    color: #eaf1ff;
+}
+
+.side-nav__item--active:hover {
+    background: #2a3b56;
+}
+
+.side-nav__item--agent {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.side-nav__item--agent[hidden] {
+    display: none;
+}
+
+.side-nav__item-icon {
+    flex: none;
+}
+
+.view__content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* отступ под фиксированную .topbar — иначе канвас Flow/Book начинается
+       под ней и верхняя часть остаётся недоступной для кликов */
+    padding-top: var(--topbar-height);
+    box-sizing: border-box;
+}
+
+/* !important — иначе инлайн-стиль сгенерированной страницы (new-button.js) перебивает скрытие */
+.view[hidden] {
+    display: none !important;
+}
+
+.view--generated {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+h1 {
+    font-size: 3rem;
+    font-weight: 600;
+}
+
+/* верхняя панель: контейнер на всю ширину страницы, кнопки прижаты вправо внутри него.
+   Занимает реальную высоту (--topbar-height) — тело каждого вида отступает от неё
+   через padding-top/height: calc(100vh - var(--topbar-height)), а не подложено под неё. */
+.topbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--topbar-height);
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 0 16px;
+    background: #16181c;
+    border-bottom: 1px solid #2e3138;
+    /* fixed-контейнер создаёт свой контекст наложения — поднимаем его целиком
+       выше любого тела страницы: .modal / .modal--top и .shot-lightbox (тоже 1300),
+       иначе karandashButton перекрывается лайтбоксом скриншотов */
+    z-index: 9000;
+}
+
+/* горизонтальная панель слева от кнопки настроек */
+.toolbar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid #2e3138;
+    border-radius: 10px;
+    background: #1a1c21;
+}
+
+.icon-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    background: none;
+    color: #a9adb6;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.icon-button:hover,
+.icon-button[aria-expanded="true"] {
+    background: #262930;
+    color: #f2f2f4;
+}
+
+.icon-button[aria-pressed="true"] {
+    background: #2b4d78;
+    color: #f2f2f4;
+}
+
+.icon-button:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: 2px;
+}
+
+.icon-button[hidden] {
+    display: none;
+}
+
+/* режим перетаскивания кнопок тулбара: долгое нажатие включает "тряску" */
+@keyframes toolbar-shake {
+    0%, 100% { transform: rotate(-5deg); }
+    50% { transform: rotate(5deg); }
+}
+
+.btn-group--reorder .btn-group__btn {
+    animation: toolbar-shake 0.16s ease-in-out infinite;
+}
+
+.btn-group--reorder .btn-group__btn--dragging {
+    animation: none;
+    cursor: grabbing;
+    opacity: 0.85;
+    position: relative;
+    z-index: 5;
+}

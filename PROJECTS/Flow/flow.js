@@ -20,8 +20,8 @@
                     }
                 },
                 // вызывается из PROJECTS/Flow/flow-session-sync.js по кнопке в тулбаре
-                buildFromSession(flow, messages, usage, extra) {
-                    if (buildSessionFlow) buildSessionFlow(flow, messages, usage, extra);
+                buildFromSession(flow, messages) {
+                    if (buildSessionFlow) buildSessionFlow(flow, messages);
                 },
             };
 
@@ -273,12 +273,6 @@
                 initialActiveItem.classList.add('side-nav__item--active');
                 const initialSessionSelect = document.getElementById('flowSessionSelect');
                 if (initialSessionSelect) initialSessionSelect.hidden = initialActiveItem.dataset.flow !== '321';
-                const initialSessionUsage = document.getElementById('flowSessionUsage');
-                if (initialSessionUsage) initialSessionUsage.hidden = true;
-                const initialSessionInfo = document.getElementById('flowSessionInfo');
-                if (initialSessionInfo) initialSessionInfo.hidden = true;
-                const initialSessionCopyId = document.getElementById('flowSessionCopyId');
-                if (initialSessionCopyId) initialSessionCopyId.hidden = true;
             }
 
             // заголовки групп сворачиваются кликом, как гормошка;
@@ -316,15 +310,6 @@
                 // разделам (включая другие черновики Temp) сессия чата не нужна
                 const sessionSelect = document.getElementById('flowSessionSelect');
                 if (sessionSelect) sessionSelect.hidden = btn.dataset.flow !== '321';
-                // расход показываем только пока реально смотрим на ту сессию, из
-                // которой его посчитали — при уходе с «321» просто прячем, а не
-                // обнуляем текст: вернувшись на «321», buildFromSession перепишет его заново
-                const sessionUsage = document.getElementById('flowSessionUsage');
-                if (sessionUsage && btn.dataset.flow !== '321') sessionUsage.hidden = true;
-                const sessionInfo = document.getElementById('flowSessionInfo');
-                if (sessionInfo && btn.dataset.flow !== '321') sessionInfo.hidden = true;
-                const sessionCopyId = document.getElementById('flowSessionCopyId');
-                if (sessionCopyId && btn.dataset.flow !== '321') sessionCopyId.hidden = true;
                 if (setActiveFlow) setActiveFlow(btn.dataset.flow);
             });
             let setActiveFlow = null;
@@ -1566,18 +1551,6 @@
                     flowSet(TEXT_KEY, all);
                 }
 
-                // строка под заголовком — модель/effort и (только у ответа) расход
-                // токенов/денег/времени этого хода; та же строка, что пользователь
-                // может отредактировать руками, поэтому пишем через TEXT_KEY
-                function setNodeSubtitle(n, text) {
-                    const subtitleEl = n.querySelector('.flow-node__subtitle');
-                    if (!subtitleEl) return;
-                    subtitleEl.textContent = text;
-                    const all = loadTexts();
-                    all[`${n.id}:subtitle`] = text;
-                    flowSet(TEXT_KEY, all);
-                }
-
                 // ставит ноде пометку из меню «кто видит узел» (.flow-node__scope) —
                 // теми же текстом/title, что и клик по пункту меню вручную
                 function setNodeScope(n, scope) {
@@ -1599,101 +1572,11 @@
                     if (questions) questions.hidden = type !== 'question';
                 }
 
-                // 1000 -> «1k»: расход показываем компактно, точные цифры — в подсказке
-                function formatTokens(n) {
-                    if (!n) return '0';
-                    return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n);
-                }
-                function formatCost(usd) {
-                    if (!usd) return null;
-                    return '$' + usd.toFixed(usd < 0.01 ? 4 : 3);
-                }
-                function formatDuration(ms) {
-                    if (!ms) return null;
-                    return ms >= 1000 ? (ms / 1000).toFixed(1) + 'с' : ms + 'мс';
-                }
-                function totalTokensOf(m) {
-                    return (m.inputTokens || 0) + (m.outputTokens || 0) + (m.cacheReadTokens || 0) + (m.cacheCreationTokens || 0);
-                }
-
-                // значок по имени инструмента — чтобы цепочку шагов можно было
-                // читать по силуэту, не вчитываясь в каждый заголовок
-                const TOOL_ICONS = {
-                    Bash: '💻', Read: '📖', Write: '📝', Edit: '✏️', NotebookEdit: '📓',
-                    Grep: '🔍', Glob: '🗂️', WebFetch: '🌐', WebSearch: '🔎',
-                    Task: '🤖', TodoWrite: '✅',
-                };
-
-                // вход инструмента — JSON целиком (см. tool_input на сервере), но на
-                // ноде нужна не сырая структура, а то же самое, что человек прочитал
-                // бы в терминале: команда, путь к файлу, паттерн — без обрезки в 120
-                // символов, как было в toolLabel() для строки статуса чата
-                function toolInputSummary(toolName, toolInputJson) {
-                    if (!toolInputJson) return null;
-                    let input;
-                    try { input = JSON.parse(toolInputJson); } catch { return toolInputJson; }
-                    if (toolName === 'Task') {
-                        return [input.subagent_type, input.description].filter(Boolean).join(': ') || JSON.stringify(input);
-                    }
-                    if (typeof input.command === 'string') return input.command;
-                    if (typeof input.file_path === 'string') {
-                        const bits = [input.file_path];
-                        if (input.offset) bits.push(`со строки ${input.offset}`);
-                        if (input.limit) bits.push(`${input.limit} строк`);
-                        return bits.join(' · ');
-                    }
-                    if (typeof input.pattern === 'string') {
-                        return [input.pattern, input.path && `в ${input.path}`, input.glob].filter(Boolean).join(' · ');
-                    }
-                    if (typeof input.url === 'string') return input.url;
-                    if (typeof input.query === 'string') return input.query;
-                    if (typeof input.prompt === 'string') return input.prompt;
-                    return JSON.stringify(input);
-                }
-
-                // результат вызова — потенциально длинный (до 4000 символов, см. clip
-                // на сервере), поэтому не запихиваем его в body всегда открытым: строка-
-                // переключатель прямо на ноде, полный текст разворачивается по клику
-                // тут же, а не в hover-подсказке, которую легко не заметить
-                function setToolResultView(n, resultText, isError) {
-                    n.querySelector('.flow-node__tool-result')?.remove();
-                    if (!resultText) return;
-                    const wrap = document.createElement('div');
-                    wrap.className = 'flow-node__tool-result' + (isError ? ' flow-node__tool-result--error' : '');
-                    const toggle = document.createElement('button');
-                    toggle.type = 'button';
-                    toggle.className = 'flow-node__tool-result-toggle';
-                    const label = isError ? '⚠ Результат (ошибка)' : 'Результат';
-                    toggle.textContent = `${label} ▾`;
-                    const pre = document.createElement('div');
-                    pre.className = 'flow-node__tool-result-text';
-                    pre.textContent = resultText;
-                    pre.hidden = true;
-                    toggle.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        pre.hidden = !pre.hidden;
-                        toggle.textContent = `${label} ${pre.hidden ? '▾' : '▴'}`;
-                    });
-                    wrap.append(toggle, pre);
-                    n.append(wrap);
-                }
-
                 // строит граф канваса `flow` из сообщений сессии: белый текст (роли
-                // user/assistant) идёт цепочкой вправо, серый текст (роли tool/thinking —
-                // шаги и рассуждения между вопросом и ответом) — вертикальной цепочкой
-                // под ним, потому что белый текст — причина, по которой они появились.
-                // usage — сводка по всей сессии (см. /api/sessions/messages), показываем
-                // её рядом с выбором сессии, а не на отдельной ноде
-                // подпись стоп-причины хода — только для значений, о которых стоит
-                // предупредить (обрыв по лимиту токенов, отказ модели и т.п.); обычное
-                // завершение (end_turn/tool_use) ничем не примечательно и не показывается
-                const STOP_REASON_LABELS = {
-                    max_tokens: '⚠ Обрыв по лимиту токенов',
-                    refusal: '⚠ Отказ модели',
-                    pause_turn: '⏸ Приостановлено',
-                };
-
-                buildSessionFlow = (flow, messages, usage, extra = {}) => {
+                // user/assistant) идёт цепочкой вправо, серый текст (роль tool, шаги
+                // между вопросом и ответом) — вертикальной цепочкой под ним, потому что
+                // белый текст — причина, по которой эти шаги вообще появились
+                buildSessionFlow = (flow, messages) => {
                     setActiveFlow(flow);
                     for (const n of [...nodeFlow.keys()]) {
                         if (nodeFlow.get(n) === flow) deleteNode(n);
@@ -1701,137 +1584,24 @@
 
                     let lastWhite = null;
                     let lastGray = null;
-                    // шаги субагента (Task) CLI шлёт в тот же стрим, помечая их
-                    // parentToolUseId — id того самого вызова Task. toolUseIdToNode
-                    // связывает id вызова с уже отрисованной нодой (в т.ч. вложенной
-                    // на любую глубину), subChainTail — последний узел вложенной цепочки
-                    // под каждым родителем, чтобы шаги субагента росли вниз друг под
-                    // другом, а не все разом цеплялись к одной ноде Task
-                    const toolUseIdToNode = new Map();
-                    const subChainTail = new Map();
                     for (const m of messages) {
-                        if (m.role === 'tool' || m.role === 'thinking') {
-                            const nested = m.parentToolUseId && toolUseIdToNode.has(m.parentToolUseId);
-                            const from = nested
-                                ? (subChainTail.get(m.parentToolUseId) || toolUseIdToNode.get(m.parentToolUseId))
-                                : (lastGray || lastWhite);
+                        if (m.role === 'tool') {
+                            const from = lastGray || lastWhite;
                             if (!from) continue;
-                            const gray = addChildNode(from);
-                            if (nested) subChainTail.set(m.parentToolUseId, gray);
-                            else lastGray = gray;
-                            if (m.toolUseId) toolUseIdToNode.set(m.toolUseId, gray);
-                            setNodeScope(gray, 'system');
-                            setNodeType(gray, 'system');
-                            // вложенный шаг субагента визуально отличается от шагов
-                            // верхнего уровня — стрелка перед заголовком и своя рамка
-                            gray.classList.toggle('flow-node--sidechain', nested);
-                            if (m.role === 'thinking') {
-                                // рассуждения — заголовок описывает тип содержимого (как
-                                // «Вопрос»/«Ответ» у белых нод), тело — текст целиком без
-                                // обрезки (сервер уже ужал его при записи до разумных 4000)
-                                setNodeTexts(gray, nested ? '↳ Мысли' : 'Мысли', m.text);
-                                setNodeSubtitle(gray, '');
-                                const avatar = gray.querySelector('.flow-node__avatar');
-                                if (avatar) avatar.textContent = '🧠';
-                            } else {
-                                // заголовок — реальное имя инструмента («Bash», «Read», …),
-                                // а не общее слово «Шаг»; тело — настоящая команда/путь/паттерн
-                                // из tool_input целиком, а не обрезанная до 120 символов строка
-                                // статуса чата. У старых сессий (записаны до этой доработки)
-                                // tool_name/tool_input могло не быть — тогда откатываемся
-                                // на то, что есть: имя инструмента из начала text
-                                const title = m.toolName || m.text.split(' ')[0] || 'Инструмент';
-                                const body = toolInputSummary(m.toolName, m.toolInput) || m.text;
-                                setNodeTexts(gray, nested ? `↳ ${title}` : title, body);
-                                setNodeSubtitle(gray, m.toolError ? '⚠ Ошибка' : '');
-                                const avatar = gray.querySelector('.flow-node__avatar');
-                                if (avatar) avatar.textContent = m.toolError ? '⚠️' : (TOOL_ICONS[m.toolName] || '🧩');
-                                setToolResultView(gray, m.toolResult, !!m.toolError);
-                            }
+                            lastGray = addChildNode(from);
+                            setNodeTexts(lastGray, 'Шаг', m.text);
+                            setNodeScope(lastGray, 'system');
+                            setNodeType(lastGray, 'system');
                         } else {
                             lastWhite = lastWhite ? addChildNodeRight(lastWhite) : ensureRootNode(flow);
                             setNodeTexts(lastWhite, m.role === 'user' ? 'Вопрос' : 'Ответ', m.text);
                             setNodeScope(lastWhite, 'system');
                             setNodeType(lastWhite, 'system');
-                            // родительские ноды цепочки (вопрос/ответ) отличаются от шагов
-                            // под ними не только позицией (вправо, а не вниз), но и своей
-                            // иконкой — по роли, а не по инструменту, как у серых узлов
-                            const whiteAvatar = lastWhite.querySelector('.flow-node__avatar');
-                            if (whiteAvatar) whiteAvatar.textContent = m.role === 'user' ? '👤' : '🤖';
-                            // модель/effort хода и — только там, где CLI их реально прислал
-                            // (строка ответа, см. finishExchange на сервере) — расход этого хода
-                            const bits = [];
-                            if (m.model) bits.push(m.effort ? `${m.model} · ${m.effort}` : m.model);
-                            const tokens = totalTokensOf(m);
-                            if (tokens) bits.push(`🪙 ${formatTokens(tokens)}`);
-                            const cost = formatCost(m.costUsd);
-                            if (cost) bits.push(`💵 ${cost}`);
-                            const duration = formatDuration(m.durationMs);
-                            if (duration) bits.push(`⏱ ${duration}`);
-                            const stopLabel = STOP_REASON_LABELS[m.stopReason];
-                            if (stopLabel) bits.push(stopLabel);
-                            setNodeSubtitle(lastWhite, bits.join(' · '));
-                            // разбивка по кэшу — в подсказке над телом токенов: сумма уже
-                            // показана компактно, но входные/выходные/кэш-чтение/кэш-запись
-                            // раньше нигде не были видны по отдельности
-                            const cacheBits = [];
-                            if (m.inputTokens) cacheBits.push(`вход ${formatTokens(m.inputTokens)}`);
-                            if (m.outputTokens) cacheBits.push(`выход ${formatTokens(m.outputTokens)}`);
-                            if (m.cacheReadTokens) cacheBits.push(`кэш-чтение ${formatTokens(m.cacheReadTokens)}`);
-                            if (m.cacheCreationTokens) cacheBits.push(`кэш-запись ${formatTokens(m.cacheCreationTokens)}`);
-                            const subtitleEl = lastWhite.querySelector('.flow-node__subtitle');
-                            if (subtitleEl) subtitleEl.title = cacheBits.join(' · ');
                             lastGray = null;
                         }
                     }
                     if (!lastWhite) ensureRootNode(flow);
                     autoLayoutAndFit();
-
-                    // сводка по сессии целиком — в тулбаре рядом с выбором сессии
-                    const usageEl = document.getElementById('flowSessionUsage');
-                    if (usageEl) {
-                        const total = usage ? totalTokensOf({ inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cacheReadTokens: usage.cacheReadTokens, cacheCreationTokens: usage.cacheCreationTokens }) : 0;
-                        if (usage && total) {
-                            const bits = [`🪙 ${formatTokens(total)}`];
-                            const cost = formatCost(usage.costUsd);
-                            if (cost) bits.push(`💵 ${cost}`);
-                            if (extra.contextPercent != null) bits.push(`📊 ${extra.contextPercent}% контекста`);
-                            usageEl.textContent = bits.join(' · ');
-                            usageEl.hidden = false;
-                            const cacheBits = [];
-                            if (usage.cacheReadTokens) cacheBits.push(`кэш-чтение ${formatTokens(usage.cacheReadTokens)}`);
-                            if (usage.cacheCreationTokens) cacheBits.push(`кэш-запись ${formatTokens(usage.cacheCreationTokens)}`);
-                            usageEl.title = cacheBits.length
-                                ? `Расход выбранной сессии: токены и стоимость (${cacheBits.join(' · ')})`
-                                : 'Расход выбранной сессии: токены и стоимость';
-                        } else {
-                            usageEl.hidden = true;
-                        }
-                    }
-
-                    // сведения о сессии (system/init) и лимиты подписки — кнопкой (i)
-                    // рядом: раньше эти данные вообще нигде не сохранялись и не
-                    // показывались, теперь видны в подсказке по клику/наведению
-                    const infoEl = document.getElementById('flowSessionInfo');
-                    if (infoEl) {
-                        const info = extra.sessionInfo;
-                        const rl = extra.rateLimit;
-                        const lines = [];
-                        if (info?.cwd) lines.push(`Папка: ${info.cwd}`);
-                        if (info?.permissionMode) lines.push(`Режим разрешений: ${info.permissionMode}`);
-                        if (info?.tools?.length) lines.push(`Инструменты: ${info.tools.join(', ')}`);
-                        if (info?.mcpServers?.length) lines.push(`MCP: ${info.mcpServers.join(', ')}`);
-                        if (info?.slashCommands?.length) lines.push(`Слэш-команды: ${info.slashCommands.join(', ')}`);
-                        if (rl) lines.push(`Лимиты подписки: ${JSON.stringify(rl)}`);
-                        infoEl.title = lines.join('\n');
-                        infoEl.hidden = lines.length === 0;
-                    }
-
-                    // кнопка копирования ID выбранной сессии — видна, только пока
-                    // сессия реально выбрана (как и сведения о сессии выше)
-                    const copyIdEl = document.getElementById('flowSessionCopyId');
-                    const sessionSelectEl = document.getElementById('flowSessionSelect');
-                    if (copyIdEl) copyIdEl.hidden = !sessionSelectEl?.value;
                 };
             })();
 

@@ -1,0 +1,14 @@
+{
+  "name": "openkarandash",
+  "private": true,
+  "version": "0.0.7",
+  "description": "Локальный оркестратор агентных CLI: сервер на Node + веб-интерфейс",
+  "type": "commonjs",
+  "scripts": {
+    "smoke": "node SYSTEM/smoke.js"
+  },
+  "dependencies": {
+    "eta": "3.5.0",
+    "htmx.org": "2.0.4"
+  }
+}

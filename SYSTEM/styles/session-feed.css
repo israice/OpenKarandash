@@ -1,0 +1,184 @@
+/* Страница кнопки «+» (SYSTEM/session-feed-page.js): лента выбранной сессии
+   карточками-аккордеонами. Панель выбора сессии живёт в топбаре и одолжила
+   вид у панели зума Flow (.flow-canvas__zoom), поэтому своих правил не имеет.
+
+   Цвета и радиусы — те же, что у чата (SYSTEM/styles/messages.css): страница
+   показывает те же сообщения, только целиком, со всеми полями. */
+
+/* .view--generated центрирует «Hello World» по обеим осям — ленте нужна колонка
+   во всю высоту, поэтому правила перебиваются на самой странице */
+.generated-page--sessions {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    height: 100vh;
+    padding: 72px 16px 16px;
+}
+
+.session-feed__cards {
+    gap: 6px;
+}
+
+.session-feed__card {
+    border: 1px solid #2e3138;
+    border-radius: 10px;
+    background: #16181c;
+    overflow: hidden;
+}
+
+.session-feed__card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 12px;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.session-feed__card-header:hover {
+    background: #1c1f25;
+}
+
+/* чип с иконкой роли: цвет задаётся модификатором на карточке (ниже) */
+.session-feed__card-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    background: #23262d;
+    color: #9a9ea6;
+}
+
+.session-feed__card-titlewrap {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+
+.session-feed__card-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.session-feed__card-sub {
+    overflow: hidden;
+    color: #6a6f78;
+    font-size: 0.75rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.session-feed__card-chevron {
+    flex: none;
+    color: #6a6f78;
+    transition: transform 0.15s ease;
+}
+
+.session-feed__card-header[aria-expanded="true"] .session-feed__card-chevron {
+    transform: rotate(180deg);
+}
+
+/* тело карточки: закрытое — нулевой высоты, открытое — по содержимому */
+.session-feed__card-wrap {
+    display: none;
+    border-top: 1px solid #2e3138;
+}
+
+.session-feed__card-wrap--open {
+    display: block;
+}
+
+.session-feed__card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+}
+
+/* шаги и служебные события идут сплошным потоком — им нужен более тихий вид,
+   чем репликам человека и ассистента */
+.session-feed__card--dense .session-feed__card-header {
+    padding: 5px 12px;
+}
+
+.session-feed__card--dense .session-feed__card-icon {
+    width: 22px;
+    height: 22px;
+}
+
+.session-feed__card--user .session-feed__card-icon { color: #7aa2f7; }
+.session-feed__card--tool .session-feed__card-icon { color: #9ece6a; }
+.session-feed__card--hook .session-feed__card-icon { color: #e0af68; }
+.session-feed__card--thinking .session-feed__card-icon { color: #bb9af7; }
+.session-feed__card--meta .session-feed__card-icon { color: #7dcfff; }
+.session-feed__card--error .session-feed__card-icon { color: #f7768e; }
+
+.session-feed__card--error {
+    border-color: #4a2b32;
+}
+
+/* ---------- содержимое карточки ---------- */
+
+.session-feed__block-label {
+    margin-bottom: 4px;
+    color: #6a6f78;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.session-feed__block-body {
+    max-height: 320px;
+    margin: 0;
+    padding: 8px 10px;
+    overflow: auto;
+    border-radius: 8px;
+    background: #101216;
+    color: #c8ccd4;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.76rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.session-feed__block--error .session-feed__block-body {
+    color: #f7768e;
+}
+
+/* «поле: значение» в две колонки — подписи узкие, значения тянутся */
+.session-feed__kv {
+    display: grid;
+    grid-template-columns: minmax(120px, max-content) 1fr;
+    gap: 4px 12px;
+    margin: 0;
+    font-size: 0.78rem;
+}
+
+.session-feed__kv dt {
+    color: #6a6f78;
+}
+
+.session-feed__kv dd {
+    margin: 0;
+    color: #c8ccd4;
+    word-break: break-word;
+}
+
+.session-feed__thumb {
+    max-width: 100%;
+    margin-top: 6px;
+    border: 1px solid #2e3138;
+    border-radius: 8px;
+}

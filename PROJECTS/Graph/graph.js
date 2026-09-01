@@ -505,9 +505,10 @@
     // { titleEl, metaEl, linksEl, textEl, statusEl, saveEl } — элементы окна или панели.
     // onOpen вызывается перед загрузкой файла — там показывают окно/панель.
     // onLinkClick(path) решает, чем открыть связанный узел — тем же способом
-    function makeFileEditor({ titleEl, metaEl, linksEl, textEl, statusEl, saveEl, onOpen, onLinkClick }) {
+    function makeFileEditor({ titleEl, metaEl, linksEl, textEl, statusEl, saveEl, onOpen, onLinkClick, autosave }) {
         let path = null;   // что правим на диске
         let saved = '';    // текст на момент открытия — по нему видно, есть ли правки
+        let autosaveTimer = null;
 
         function renderLinks(node) {
             linksEl.textContent = '';
@@ -529,8 +530,9 @@
             metaEl.textContent = 'Загружаю…';
             textEl.value = '';
             textEl.readOnly = true;
-            saveEl.disabled = true;
+            if (saveEl) saveEl.disabled = true;
             statusEl.textContent = '';
+            clearTimeout(autosaveTimer);
             renderLinks(node);
             onOpen();
 
@@ -559,7 +561,7 @@
             saved = data.text;
             textEl.value = data.text;
             textEl.readOnly = !data.editable;
-            saveEl.disabled = true;
+            if (saveEl) saveEl.disabled = true;
             metaEl.textContent = [
                 `${data.text.split('\n').length} строк`,
                 `${Math.round(data.size / 1024)} КБ`,
@@ -572,7 +574,8 @@
 
         async function save() {
             if (!path) return;
-            saveEl.disabled = true;
+            clearTimeout(autosaveTimer);
+            if (saveEl) saveEl.disabled = true;
             statusEl.textContent = 'Сохраняю…';
             const text = textEl.value;
 
@@ -590,7 +593,7 @@
 
             if (!data.ok) {
                 statusEl.textContent = data.error;
-                saveEl.disabled = false;
+                if (saveEl) saveEl.disabled = false;
                 return;
             }
             saved = text;
@@ -598,17 +601,27 @@
         }
 
         textEl.addEventListener('input', () => {
-            saveEl.disabled = textEl.readOnly || textEl.value === saved;
-            statusEl.textContent = saveEl.disabled ? '' : 'есть несохранённые правки';
+            const dirty = !textEl.readOnly && textEl.value !== saved;
+            if (autosave) {
+                // сохраняем без кнопки — но не на каждое нажатие, а после паузы в наборе
+                clearTimeout(autosaveTimer);
+                if (dirty) {
+                    statusEl.textContent = 'есть несохранённые правки';
+                    autosaveTimer = setTimeout(save, 800);
+                }
+                return;
+            }
+            saveEl.disabled = !dirty;
+            statusEl.textContent = dirty ? 'есть несохранённые правки' : '';
         });
 
-        saveEl.addEventListener('click', save);
+        if (saveEl) saveEl.addEventListener('click', save);
 
         // Ctrl+S привычнее кнопки, когда правишь код
         textEl.addEventListener('keydown', (event) => {
             if ((event.ctrlKey || event.metaKey) && event.key === 's') {
                 event.preventDefault();
-                if (!saveEl.disabled) save();
+                if (autosave || !saveEl.disabled) save();
             }
         });
 
@@ -663,6 +676,33 @@
         chatMessages.hidden = false;
         chatComposer.hidden = false;
         document.querySelector('.project-card--selected')?.classList.remove('project-card--selected');
+    }
+
+    // панель справа во вкладке Book: тот же приём, что и в чате — карточка раздела
+    // слева заменяет содержимое панели справа, а не открывает окно посередине
+    const bookFileEditor = document.getElementById('bookFileEditor');
+    const bookEmpty = document.getElementById('bookEmpty');
+    const bookFilePanelEditor = makeFileEditor({
+        titleEl: document.getElementById('bookFileEditorTitle'),
+        metaEl: document.getElementById('bookFileEditorMeta'),
+        linksEl: document.getElementById('bookFileEditorLinks'),
+        textEl: document.getElementById('bookFileEditorText'),
+        statusEl: document.getElementById('bookFileEditorStatus'),
+        autosave: true,
+        onOpen: () => {
+            bookEmpty.hidden = true;
+            bookFileEditor.hidden = false;
+        },
+        onLinkClick: (item) => {
+            const target = nodeByPath(item);
+            if (target) bookFilePanelEditor.open(target);
+        },
+    });
+
+    function closeBookPanel() {
+        bookFileEditor.hidden = true;
+        bookEmpty.hidden = false;
+        document.querySelector('#bookList .project-card--selected')?.classList.remove('project-card--selected');
     }
 
     // ---------- поиск ----------
@@ -815,5 +855,8 @@
         // открыть панель редактирования произвольного файла по пути, в обход узла графа
         openFile(path) { chatFilePanelEditor.open({ file: path, kind: 'file', label: path }); },
         closeFilePanel,
+        // то же самое, но в панели справа во вкладке Book
+        openBook(path) { bookFilePanelEditor.open({ file: path, kind: 'file', label: path }); },
+        closeBookPanel,
     };
 })();

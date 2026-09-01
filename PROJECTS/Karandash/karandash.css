@@ -1,33 +1,33 @@
-/* Кнопка Edit: стили режима комментариев. Лежат рядом с button-edit.js —
-   вся кнопка Edit собрана в одной папке. Подключается <link> из index.html. */
+/* Кнопка Karandash: стили режима комментариев. Лежат рядом с karandash.js —
+   вся кнопка Karandash собрана в одной папке. Подключается <link> из index.html. */
 
 /* ---------- режим комментариев ---------- */
 
-body.edit-mode,
-body.edit-mode * {
+body.karandash-mode,
+body.karandash-mode * {
     cursor: crosshair;
 }
 
 /* внутри окна комментария курсор обычный: там уже не выбирают элемент */
-body.edit-mode .comment-popover,
-body.edit-mode .comment-popover * {
+body.karandash-mode .comment-popover,
+body.karandash-mode .comment-popover * {
     cursor: default;
 }
 
-body.edit-mode .comment-popover__field {
+body.karandash-mode .comment-popover__field {
     cursor: text;
 }
 
-body.edit-mode .comment-popover__button {
+body.karandash-mode .comment-popover__button {
     cursor: pointer;
 }
 
 /* рамка рисуется отдельным слоем, чтобы не менять стили самой страницы */
 .hover-frame {
     position: fixed;
-    /* выше .topbar и .app-version (макс. z-index на странице — 1500),
+    /* выше .topbar и .app-version (макс. z-index на странице — 9000),
        иначе рамка прячется под ними при наведении на их элементы */
-    z-index: 1510;
+    z-index: 9010;
     border: 2px solid #e5484d;
     border-radius: 3px;
     background: rgba(229, 72, 77, 0.08);
@@ -45,7 +45,7 @@ body.edit-mode .comment-popover__button {
 
 .comment-popover {
     position: fixed;
-    z-index: 1520;
+    z-index: 9020;
     width: 280px;
     padding: 12px;
     border: 1px solid #2e3138;

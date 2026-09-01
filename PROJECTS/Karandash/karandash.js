@@ -1,4 +1,4 @@
-// Кнопка Edit: полностью самодостаточный файл. Создаёт свою разметку (кнопку в
+// Кнопка Karandash: полностью самодостаточный файл. Создаёт свою разметку (кнопку в
 // тулбаре, рамку наведения и попап комментария) и реализует режим комментариев
 // к элементам интерфейса. Наведение рисует рамку, колесо поднимает выбор к
 // родителю, клик открывает поле — комментарий уходит отдельной сессией.
@@ -8,9 +8,9 @@
     const toolbar = document.createElement('div');
     toolbar.className = 'toolbar';
     toolbar.setAttribute('role', 'toolbar');
-    toolbar.setAttribute('aria-label', 'Edit');
+    toolbar.setAttribute('aria-label', 'Karandash');
     toolbar.innerHTML = `
-        <button type="button" class="icon-button" id="editModeButton" aria-pressed="false" aria-label="Edit" title="Edit">
+        <button type="button" class="icon-button" id="karandashButton" aria-pressed="false" aria-label="Karandash" title="Karandash">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M12 20h9"></path>
                 <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
@@ -43,7 +43,7 @@
     `;
     document.body.appendChild(popover);
 
-    const editModeButton = toolbar.querySelector('#editModeButton');
+    const karandashButton = toolbar.querySelector('#karandashButton');
     const popoverTarget = popover.querySelector('#commentTarget');
     const field = popover.querySelector('#commentField');
     const commentCancel = popover.querySelector('#commentCancel');
@@ -59,15 +59,89 @@
     const POPOVER_GAP = 10;
     const VIEWPORT_EDGE_MARGIN = 8;
 
-    let editMode = false;
+    let karandashMode = false;
     let picked = null;
+
+    // человекочитаемое имя раздела — id корневого .view переводим в название,
+    // под которым пользователь знает вкладку в тулбаре приложения
+    const VIEW_NAMES = {
+        defaultView: 'Home',
+        graphView: 'Graph',
+        flowView: 'Flow',
+        kanbanView: 'Kanban',
+        hermesView: 'Hermes',
+        chatView: 'Projects',
+    };
+
+    // ориентиры на пути к элементу — тулбары, боковые панели, модалки:
+    // по ним понятно, в каком блоке интерфейса элемент физически находится
+    const LANDMARKS = [
+        { selector: '[role="dialog"], .modal, .comment-popover', kind: 'модальное окно' },
+        { selector: '[role="toolbar"], .toolbar', kind: 'тулбар' },
+        { selector: '[role="tablist"]', kind: 'список вкладок' },
+        { selector: 'nav, .side-nav, aside', kind: 'боковая панель' },
+        { selector: 'header', kind: 'шапка' },
+        { selector: 'footer', kind: 'подвал' },
+    ];
+
+    function landmarkKind(el) {
+        const found = LANDMARKS.find((l) => el.matches(l.selector));
+        return found ? found.kind : null;
+    }
+
+    // название ориентира берём из его же aria-label/title, а если их нет —
+    // из ближайшего заголовка внутри (панели настроек и модалки обычно так подписаны)
+    function landmarkLabel(el) {
+        const aria = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+        if (aria) return aria;
+        const heading = el.querySelector(':scope > h1, :scope > h2, :scope > h3, :scope > [class$="__title"]');
+        const text = heading && heading.textContent.trim();
+        return text || null;
+    }
+
+    function findLandmarks(el) {
+        const landmarks = [];
+        let cur = el.parentElement;
+        while (cur && cur !== document.body && landmarks.length < 2) {
+            const kind = landmarkKind(cur);
+            if (kind) {
+                const label = landmarkLabel(cur);
+                landmarks.push(label ? `${kind} «${label}»` : kind);
+            }
+            cur = cur.parentElement;
+        }
+        return landmarks;
+    }
+
+    function viewName(el) {
+        const view = el.closest('.view');
+        return view ? (VIEW_NAMES[view.id] || view.id) : null;
+    }
+
+    // подпись элемента для человека: то, как его видит пользователь, а не только селектор
+    function humanLabel(el) {
+        for (const attr of ['aria-label', 'title', 'placeholder', 'alt', 'name']) {
+            const v = el.getAttribute && el.getAttribute(attr);
+            if (v && v.trim()) return v.trim();
+        }
+        return null;
+    }
 
     function describe(el) {
         const id = el.id ? '#' + el.id : '';
         const cls = typeof el.className === 'string' && el.className
             ? '.' + el.className.trim().split(/\s+/).join('.')
             : '';
-        return el.tagName.toLowerCase() + id + cls;
+        const selector = el.tagName.toLowerCase() + id + cls;
+
+        const label = humanLabel(el);
+        const where = [viewName(el), ...findLandmarks(el)].filter(Boolean).join(' → ');
+
+        const parts = [];
+        if (label) parts.push(`«${label}»`);
+        parts.push(selector);
+        if (where) parts.push(`— раздел ${where}`);
+        return parts.join(' ');
     }
 
     // клик по иконке попадает в <path> внутри <svg> — поднимаемся до кнопки,
@@ -145,22 +219,22 @@
         frame.hidden = true;
     }
 
-    function syncEditItem() {
-        editModeButton.setAttribute('aria-pressed', String(editMode));
+    function syncKarandashItem() {
+        karandashButton.setAttribute('aria-pressed', String(karandashMode));
     }
 
-    function enterEditMode() {
-        editMode = true;
-        document.body.classList.add('edit-mode');
-        syncEditItem();
+    function enterKarandash() {
+        karandashMode = true;
+        document.body.classList.add('karandash-mode');
+        syncKarandashItem();
         if (rafId === null) track();
     }
 
-    function exitEditMode() {
-        editMode = false;
-        document.body.classList.remove('edit-mode');
+    function exitKarandash() {
+        karandashMode = false;
+        document.body.classList.remove('karandash-mode');
         closePopover();
-        syncEditItem();
+        syncKarandashItem();
         if (rafId !== null) {
             cancelAnimationFrame(rafId);
             rafId = null;
@@ -184,7 +258,7 @@
 
     function track() {
         rafId = requestAnimationFrame(track);
-        if (!editMode) return;
+        if (!karandashMode) return;
 
         if (picked) {
             drawFrame(picked);
@@ -212,9 +286,9 @@
     }
 
     // колесо вверх — к родителю, вниз — обратно к элементу под курсором;
-    // прокрутка страницы в режиме Edit при этом не нужна
+    // прокрутка страницы в режиме Karandash при этом не нужна
     document.addEventListener('wheel', (e) => {
-        if (!editMode || picked) return;
+        if (!karandashMode || picked) return;
         e.preventDefault();
         hoverDepth = Math.max(0, hoverDepth + (e.deltaY < 0 ? 1 : -1));
     }, { capture: true, passive: false });
@@ -223,7 +297,7 @@
     let clickSeen = false;
     document.addEventListener('click', (e) => {
         clickSeen = true;
-        if (!editMode) return;
+        if (!karandashMode) return;
         // проверяем именно цель клика: по кнопкам окна комментария
         // режим не должен срабатывать, иначе они перестают нажиматься
         if (!isTargetable(resolve(e.target))) return;
@@ -238,7 +312,7 @@
     // поэтому такой элемент нельзя было выбрать наведением на его скролл —
     // ловим это через pointerup и достраиваем выбор, если click не пришёл следом
     document.addEventListener('pointerup', (e) => {
-        if (!editMode || e.button !== 0) return;
+        if (!karandashMode || e.button !== 0) return;
         if (!isTargetable(resolve(e.target))) return;
         const el = hovered || resolve(e.target);
         e.preventDefault();
@@ -252,8 +326,8 @@
     // Esc выключает режим и закрывает открытое окно комментария;
     // меню закрывает обработчик выше, поэтому одного нажатия хватает на всё
     document.addEventListener('keydown', (e) => {
-        if (e.key !== 'Escape' || !editMode) return;
-        exitEditMode();
+        if (e.key !== 'Escape' || !karandashMode) return;
+        exitKarandash();
     });
 
     // в поле комментария те же правила: Enter — новая строка, Ctrl+Enter — отправка
@@ -264,7 +338,7 @@
         }
     });
 
-    commentCancel.addEventListener('click', exitEditMode);
+    commentCancel.addEventListener('click', exitKarandash);
 
     // снимок для миниатюры сессии — настоящий скриншот экрана. Canvas на фронтенде
     // видит только содержимое вкладки, а не экран целиком, поэтому снимает сервер
@@ -306,13 +380,13 @@
         const thumb = await captureThumb();
         commentSave.disabled = false;
 
-        exitEditMode(); // снимает рамку и выходит из режима Edit
+        exitKarandash(); // снимает рамку и выходит из режима Karandash
         App.startCommentSession(prompt, thumb);
     });
 
     // ---------- кнопка ----------
 
-    editModeButton.addEventListener('click', () => {
-        editMode ? exitEditMode() : enterEditMode();
+    karandashButton.addEventListener('click', () => {
+        karandashMode ? exitKarandash() : enterKarandash();
     });
 })();

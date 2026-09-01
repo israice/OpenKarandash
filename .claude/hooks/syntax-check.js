@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-// NotebookEdit сюда не добавлен (в отличие от file-lock.js): он пишет только .ipynb,
+// NotebookEdit сюда не добавлен: он пишет только .ipynb,
 // а фильтр по расширению ниже такие файлы всё равно отсеет.
 const WRITE_TOOLS = new Set(['Edit', 'Write']);
 

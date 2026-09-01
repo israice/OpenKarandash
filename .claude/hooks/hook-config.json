@@ -1,16 +1,5 @@
 {
     "hooks": {
-        "PreToolUse": [
-            {
-                "matcher": "Edit|Write|NotebookEdit",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node .claude/hooks/file-lock.js",
-                        "timeout": 100
-                    }
-                ]
-            }
-        ]
+        "PreToolUse": []
     }
 }

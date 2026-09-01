@@ -4,11 +4,21 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
-// серверная половина кнопки Edit — вся кнопка живёт в PROJECTS/Edit
-const { captureScreenshot, listScreens } = require('./PROJECTS/Edit/screenshot.js');
+// серверная половина кнопки Karandash — вся кнопка живёт в PROJECTS/Karandash
+const { captureScreenshot, listScreens } = require('./PROJECTS/Karandash/screenshot.js');
 const graph = require('./PROJECTS/Graph/graph-server.js');
+// шаблоны серверных фрагментов для htmx: экранирование по умолчанию, поэтому
+// данные сессий попадают в разметку без ручного escapeHtml
+const { Eta } = require('eta');
+const { readJson, escapeHtml, sendJson, sendHtml } = require('./SYSTEM/core/http.js');
+const scan = require('./SYSTEM/core/scan.js');
+const { reloadEvents } = require('./SYSTEM/core/reload.js');
+const hermesSetup = require('./SYSTEM/Hermes/hermes-setup.js');
 
 const ROOT = __dirname;
+
+// cache:false — правка .eta подхватывается без перезапуска, как и остальные файлы
+const eta = new Eta({ views: path.join(__dirname, 'SYSTEM/templates'), cache: false });
 
 // ---------- .env: единственное место для порта и секретов ----------
 // файла нет — создаём его с портом 3001 и на нём же поднимаемся. значения из .env
@@ -18,7 +28,7 @@ const ENV_FILE = path.join(ROOT, '.env');
 
 const ENV_TEMPLATE = `# Настройки и секреты проекта. В git не попадает — правьте прямо здесь.
 PORT=3001
-# Экран, с которого кнопка Edit снимает скриншот (индекс в списке мониторов,
+# Экран, с которого кнопка Karandash снимает скриншот (индекс в списке мониторов,
 # считая с нуля) — меняется также из Settings в интерфейсе
 SCREENSHOT_SCREEN=0
 
@@ -56,10 +66,24 @@ function setEnvValue(key, value) {
     fs.writeFileSync(ENV_FILE, lines.join('\n'), 'utf8');
 }
 
-const DEFAULT_VIEW_OPTIONS = ['graph', 'flow', 'kanban', 'chat', 'home']; // ключи App.VIEWS, доступные для вкладки по умолчанию
+
+// под чем реально запущен процесс — Windows-CLI или WSL: process.platform внутри
+// WSL тоже 'linux', поэтому WSL отличаем по WSL_DISTRO_NAME / метке в /proc/version
+function detectRuntimePlatform() {
+    if (process.platform !== 'linux') return 'Windows';
+    if (process.env.WSL_DISTRO_NAME) return `WSL (${process.env.WSL_DISTRO_NAME})`;
+    try {
+        if (/microsoft/i.test(fs.readFileSync('/proc/version', 'utf8'))) return 'WSL';
+    } catch { /* не Linux/WSL — обычный контейнер, например */ }
+    return 'Linux';
+}
 
 const PORT = Number(process.env.PORT) || 3001;
 const LIVE_RELOAD = process.env.NO_RELOAD !== '1';
+// ход диалога может уйти в долгую агентную работу (субагенты, Task-цепочки) —
+// час по умолчанию вместо прежних жёстких 10 минут; останов всё ещё доступен
+// вручную через /api/claude/stop, поэтому большой таймаут тут не риск зависания
+const CLAUDE_ASK_TIMEOUT_MS = Number(process.env.CLAUDE_ASK_TIMEOUT_MS) || 3_600_000;
 const POLL_MS = 400; // как часто сверяем время изменения файлов
 const EXIT_PORT_BUSY = 3; // код выхода дочернего процесса, по которому сторож уходит следом
 
@@ -73,11 +97,11 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
     let waiting = false;       // файл изменился, но перезапуск отложен до конца запроса
 
     // server.js подключает через require и серверные модули вне себя самого
-    // (например PROJECTS/Edit/screenshot.js) — их правки тоже должны рестартовать
+    // (например PROJECTS/Karandash/screenshot.js) — их правки тоже должны рестартовать
     // сервер, иначе Node продолжает работать со старой версией из памяти
     const WATCHED_FILES = [
         __filename,
-        path.join(ROOT, 'PROJECTS/Edit/screenshot.js'),
+        path.join(ROOT, 'PROJECTS/Karandash/screenshot.js'),
         path.join(ROOT, 'PROJECTS/Graph/graph-server.js'),
     ];
 
@@ -181,10 +205,6 @@ function currentVersion() {
 
 // строки VERSION.md попадают прямо в HTML, а в сообщениях коммитов встречается
 // разметка (например «inline <script>») — без экранирования она рвёт страницу
-function escapeHtml(text) {
-    return text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]);
-}
-
 // список версий для модального окна: новые сверху
 function versionHistory() {
     try {
@@ -229,13 +249,43 @@ const RELOAD_SNIPPET = `
         else location.reload();
     }
 
+    // правка .eta трогает ровно один фрагмент — просим htmx перезапросить только его,
+    // сохранив состояние остальной страницы. Контейнер ищем по его же hx-get: другого
+    // источника этой разметки нет. Не нашли — правка не должна пропасть незамеченной
+    function swapFragment(name) {
+        const nodes = document.querySelectorAll('[hx-get="/api/fragment/' + name + '"]');
+        if (!nodes.length || !window.htmx) { reload(); return; }
+        nodes.forEach((node) => window.htmx.ajax('GET', '/api/fragment/' + name, {
+            source: node,
+            target: node,
+            swap: node.getAttribute('hx-swap') || 'none',
+        }));
+    }
+
+    // css правится чаще всего и перезагрузки не требует вовсе: меняем href у <link>,
+    // страница со всем её состоянием остаётся на месте
+    function swapStyles(file) {
+        let found = false;
+        document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
+            if ((link.getAttribute('href') || '').split('?')[0] !== file) return;
+            found = true;
+            link.setAttribute('href', file + '?v=' + Date.now());
+        });
+        if (!found) reload();
+    }
+
     function connect() {
         source = new EventSource('/__reload');
-        // карта пересобирается позже самой правки, поэтому у неё своё событие:
-        // страницу перезагружать незачем, достаточно перерисовать граф
         source.onmessage = (event) => {
-            if (event.data === 'map') window.__onMapUpdate && window.__onMapUpdate();
-            else reload();
+            const data = event.data;
+            // карта пересобирается позже самой правки, поэтому у неё своё событие:
+            // страницу перезагружать незачем, достаточно перерисовать граф
+            if (data === 'map') { window.__onMapUpdate && window.__onMapUpdate(); return; }
+            // точечные события: обновляем один фрагмент или одну таблицу стилей.
+            // hold здесь не смотрим — в отличие от перезагрузки, поток ответа они не рвут
+            if (data.startsWith('fragment:')) { swapFragment(data.slice(9)); return; }
+            if (data.startsWith('css:')) { swapStyles(data.slice(4)); return; }
+            reload();
         };
         // связь восстановилась после перезапуска сервера — берём свежую страницу
         source.onopen = () => { if (lost) reload(); };
@@ -253,6 +303,7 @@ function notifyClients(event = 'reload') {
     for (const res of clients) res.write(`data: ${event}\n\n`);
 }
 
+
 // fs.watch не даёт событий на некоторых ФС (диски Windows в WSL, сетевые шары),
 // поэтому следим за временем изменения файлов опросом — работает везде
 const { DATA_DIR } = graph; // 'DATA': папку заводит модуль графа при загрузке
@@ -261,13 +312,31 @@ const { DATA_DIR } = graph; // 'DATA': папку заводит модуль г
 const SKIP = new Set(['node_modules', '.git', DATA_DIR]);
 
 function snapshot(dir, acc = new Map()) {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    let entries;
+    try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+        return acc; // папку не прочитать — не повод ронять сервер, просто не следим за ней
+    }
+
+    for (const entry of entries) {
         if (entry.name.startsWith('.') || SKIP.has(entry.name)) continue;
 
         const full = path.join(dir, entry.name);
         if (full === __filename) continue; // за server.js следит надзорный процесс
-        if (entry.isDirectory()) snapshot(full, acc);
-        else acc.set(full, fs.statSync(full).mtimeMs);
+        // установка Hermes сюда не входит: там чужой код и symlink'и WSL-окружения,
+        // которые с Windows не читаются (EACCES) — см. SYSTEM/core/scan.js
+        if (scan.isSkipped(ROOT, full, entry.name)) continue;
+
+        if (entry.isDirectory()) {
+            snapshot(full, acc);
+            continue;
+        }
+        // один нечитаемый файл не должен прекращать обход остальных: битая ссылка,
+        // файл занят другим процессом, права — всё это норма посреди рабочей папки
+        try {
+            acc.set(full, fs.statSync(full).mtimeMs);
+        } catch { /* пропускаем — за ним просто не следим */ }
     }
     return acc;
 }
@@ -300,16 +369,19 @@ function watchFiles() {
             return; // файл исчез посреди обхода — проверим на следующем круге
         }
 
-        let changed = current.size !== previous.size;
-        if (!changed) {
-            for (const [file, mtime] of current) {
-                if (previous.get(file) !== mtime) { changed = true; break; }
-            }
+        // собираем не флаг, а список правок: по нему решается, хватит ли точечного
+        // события. Удаление файла в список не попадает — его видно только по размеру
+        const changed = [];
+        for (const [file, mtime] of current) {
+            if (previous.get(file) !== mtime) changed.push(file);
         }
+        const removed = current.size !== previous.size && changed.length === 0;
 
         previous = current;
-        if (changed) {
-            if (clients.size > 0) notifyClients();
+        if (changed.length || removed) {
+            if (clients.size > 0) {
+                for (const event of reloadEvents(ROOT, removed ? null : changed)) notifyClients(event);
+            }
             scheduleMapUpdate();
             return;
         }
@@ -357,12 +429,47 @@ const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 let activeTarget = null;
 
+// Кнопка Stop гасила только тот процесс, который мы породили сами, и этого мало
+// в двух случаях: на Windows потомки убитого процесса сигнала не получают и живут
+// дальше, а при viaShell мы вообще породили wsl.exe — сам CLI работает внутри
+// виртуалки и потомком wsl.exe в понимании Windows не является. Поэтому запуск
+// в шелле первым делом сообщает свой PID внутри WSL, и гасим мы всё дерево.
+const REMOTE_PID_MARK = '__karandash_pid__';
+
+// `exec` обязателен: без него claude станет потомком bash и $$ укажет не на него
+function shellLaunch(command) {
+    return `echo ${REMOTE_PID_MARK}$$ >&2; exec ${command}`;
+}
+
+// строка с PID идёт в stderr — в текст ошибки её пускать нельзя, поэтому
+// вырезаем сразу и запоминаем на процессе-обёртке
+function takeRemotePid(child, text) {
+    const match = text.match(new RegExp(`${REMOTE_PID_MARK}(\\d+)\\s*`));
+    if (!match) return text;
+    child.__remotePid = match[1];
+    return text.replace(match[0], '');
+}
+
+function killProcessTree(child, target) {
+    if (target?.viaShell && child.__remotePid) {
+        // у виртуалки свой PID-namespace: номер знает только она сама
+        spawn(target.cmd, [...target.args, `kill -TERM ${child.__remotePid} 2>/dev/null`], { windowsHide: true })
+            .on('error', () => {}); // wsl.exe мог исчезнуть вместе с виртуалкой — гасить уже нечего
+    }
+    if (process.platform === 'win32' && child.pid) {
+        // /T — вместе с потомками, /F — принудительно: сигналов на Windows нет
+        spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
+            .on('error', () => {}); // процесс мог завершиться сам, пока мы собирались
+    }
+    child.kill();
+}
+
 // промпт всегда идёт через stdin: так он не попадает в командную строку
 // и не требует экранирования, даже когда команда собирается для `bash -lc`
 function runClaude(target, cliArgs, { input = '', timeoutMs, onLine, onSpawn } = {}) {
     return new Promise((resolve, reject) => {
         const args = target.viaShell
-            ? [...target.args, ['claude', ...cliArgs].join(' ')]
+            ? [...target.args, shellLaunch(['claude', ...cliArgs].join(' '))]
             : [...target.args, ...cliArgs];
 
         const child = spawn(target.cmd, args, { windowsHide: true });
@@ -374,7 +481,7 @@ function runClaude(target, cliArgs, { input = '', timeoutMs, onLine, onSpawn } =
 
         const timer = setTimeout(() => {
             finished = true;
-            child.kill();
+            killProcessTree(child, target);
             reject(new Error(`Превышено время ожидания (${Math.round(timeoutMs / 1000)} с)`));
         }, timeoutMs);
 
@@ -403,7 +510,7 @@ function runClaude(target, cliArgs, { input = '', timeoutMs, onLine, onSpawn } =
                 if (line.trim()) onLine(line);
             }
         });
-        child.stderr.on('data', (chunk) => { stderr += chunk; });
+        child.stderr.on('data', (chunk) => { stderr += takeRemotePid(child, String(chunk)); });
 
         child.on('close', (code) => {
             if (code === 0) done(null, stdout);
@@ -443,94 +550,16 @@ function toolLabel(part) {
     return { type: 'tool', name: part.name, detail: String(detail).slice(0, 120) };
 }
 
-// эти инструменты реально правят файлы (см. CHAT_DENIED_TOOLS) — только по ним
-// имеет смысл ловить конфликты; Bash тоже может писать в файлы, но команду не разобрать
-const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit']);
-
 // ход работы уходит на страницу по мере поступления: id сессии, вызовы
 // инструментов и текст ответа. send() пишет по событию в поток ответа
 let running = 0;
 
-// сессии выполняются параллельно, но не по одним и тем же файлам: у каждого
-// активного запуска есть набор файлов (угаданный по тексту промпта и уточнённый
-// по факту Edit/Write) — новый запуск ждёт, только если пересекается с активным
-const activeRuns = new Map(); // runId -> { sessionId, files: Set<string>, child, done }
+// сессии работают параллельно: новый ход стартует сразу, не дожидаясь уже идущих,
+// и файлы под ним не блокируются. Одновременная правка одного файла двумя агентами
+// остаётся на внешнем хуке (.claude/hooks/file-lock.js -> /api/agent/lock-check),
+// сервер сам ходы друг от друга не удерживает
+const activeRuns = new Map(); // runId -> { sessionId, child, done, target }
 let nextRunId = 1;
-let waitingCount = 0; // сколько запросов сейчас реально ждут освобождения файла
-
-// имена файлов проекта, упомянутые в тексте промпта — грубая, но дешёвая эвристика:
-// точно узнать, какие файлы затронет Claude, можно только по факту (см. WRITE_TOOLS ниже)
-function candidateFiles(prompt) {
-    const lower = prompt.toLowerCase();
-    const found = new Set();
-    for (const file of snapshot(ROOT).keys()) {
-        const base = path.basename(file).toLowerCase();
-        if (base.length > 3 && lower.includes(base)) found.add(file);
-    }
-    return found;
-}
-
-function conflictingRuns(files, exclude) {
-    return [...activeRuns.values()].filter((run) => run !== exclude && [...run.files].some((f) => files.has(f)));
-}
-
-// ждём, только если реально пересекаемся файлами с уже активным запуском —
-// иначе стартуем сразу, параллельно с остальными сессиями
-async function waitForFileTurn(files, send) {
-    let blockers = conflictingRuns(files);
-    if (blockers.length === 0) return;
-
-    waitingCount += 1;
-    try {
-        while (blockers.length > 0) {
-            send({ type: 'queued', ahead: blockers.length });
-            await Promise.race(blockers.map((r) => r.done));
-            blockers = conflictingRuns(files);
-        }
-    } finally {
-        waitingCount -= 1;
-    }
-}
-
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// эвристика по промпту — только первая линия обороны. Точную проверку делает
-// PreToolUse-хук (.claude/hooks/file-lock.js): он спрашивает сюда прямо перед
-// вызовом Edit/Write/NotebookEdit, и мы либо пускаем, либо ждём освобождения файла
-const LOCK_CHECK_TIMEOUT_MS = 85_000; // короче таймаута хука (100с в settings.json) — успеваем ответить
-
-async function checkFileLock(file, sessionId) {
-    const resolved = path.resolve(file);
-    const all = [...activeRuns.values()];
-    // sessionId известен хуку с самого начала (в отличие от нашего run.sessionId,
-    // который заполняется только после первой строки стрима) — но пока запрос
-    // самый первый, стрим мог не успеть догнать: тогда берём самый свежий безымянный,
-    // как и в stopActiveRun
-    const caller = (sessionId && all.find((r) => r.sessionId === sessionId))
-        || all.filter((r) => !r.sessionId).pop()
-        || null;
-
-    // не наш запуск (интерактивная сессия в терминале, другой инструмент) — очередь
-    // панели Sessions его не касается: ждать 85 секунд и получить отказ он не должен
-    if (!caller) return { ok: true };
-
-    const files = new Set([resolved]);
-    const deadline = Date.now() + LOCK_CHECK_TIMEOUT_MS;
-    for (;;) {
-        const blockers = conflictingRuns(files, caller);
-        if (blockers.length === 0) break;
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) {
-            return { ok: false, reason: `${path.basename(resolved)} сейчас редактирует другая сессия` };
-        }
-        await Promise.race([...blockers.map((r) => r.done), sleep(remaining)]);
-    }
-
-    if (caller) caller.files.add(resolved); // теперь это факт, а не догадка
-    return { ok: true };
-}
 
 // sessionId известен не всегда (CLI ещё не прислал id для только что стартовавшего
 // запуска) — тогда останавливаем самый свежий безымянный: неоднозначность возможна,
@@ -542,7 +571,9 @@ function stopActiveRun(sessionId) {
         : candidates.filter((r) => !r.sessionId).pop();
     if (!target || !target.child) return false;
     target.child.__stoppedByUser = true;
-    target.child.kill();
+    // не target.child.kill(): при запуске через wsl.exe убитой окажется одна обёртка,
+    // а сам CLI внутри виртуалки продолжит работать — из-за этого Stop и «не работал»
+    killProcessTree(target.child, target.target);
     return true;
 }
 
@@ -564,6 +595,124 @@ function setBusy(delta) {
     if (process.send) process.send({ busy: running > 0 });
 }
 
+// ---------- общая обвязка хода: одна на все CLI ----------
+//
+// Коннекторы отличаются ровно двумя вещами: как запустить свой процесс и как
+// разобрать его вывод. Всё остальное у хода общее — очередь по одному ходу за раз,
+// счётчик занятости (откладывает перезапуск сервера), поток событий
+// живым слушателям, запись хода в базу и уборка в finally. Эта общая часть
+// живёт здесь, а различия коннектор передаёт функцией drive(ctx).
+//
+// ctx, который получает drive():
+//   begin(cliSessionId)  — открыть ход в базе (startExchange) и объявить сессию
+//                          наружу; повторные вызовы игнорируются
+//   emit(event)          — событие и отправителю, и подключённым к сессии
+//   session              — наш id сессии (null, пока не позвали begin)
+//   meta                 — turnMeta хода: usage/cost/stopReason/resultMeta
+//   run                  — запись в activeRuns: сюда драйвер кладёт child
+//   answer / fail(text)  — итоговый текст ответа и текст ошибки хода
+async function runTurn({ target, prompt, sessionId, model, effort, mode }, send, drive) {
+    const runId = nextRunId++;
+    const run = { sessionId: sessionId || null, child: null, done: null, target };
+    let resolveDone;
+    run.done = new Promise((resolve) => { resolveDone = resolve; });
+
+    // usage/cost/duration копим по ходу стрима и пишем разом в finishExchange:
+    // событие с итогами приходит раньше, чем процесс CLI завершится
+    const meta = {
+        model: model || null, effort: effort || null, mode: mode || null,
+        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+        costUsd: null, durationMs: null, stopReason: null,
+        thinkingTokensPeak: null, resultMeta: null, lastRequestTokens: null,
+    };
+
+    const ctx = {
+        run, target, meta,
+        session: null,
+        answer: '',
+        errorText: null,
+        // позиция последней записанной строки ответа: finishExchange дописывает
+        // метаданные хода на неё, а не вставляет ещё одну строку
+        assistantPosition: null,
+        emit(event) {
+            send(event);
+            if (ctx.session) broadcast(ctx.session, event);
+        },
+        fail(text) {
+            ctx.errorText = text;
+            ctx.emit({ type: 'error', error: text });
+        },
+        // позиция строки с вопросом человека — на неё драйвер дописывает то,
+        // что реально ушло модели (input_sent), если это не сам prompt
+        userPosition: null,
+        // cliSessionId — id, который выдал сам CLI. Наш id сессии от него не зависит
+        // (заведён в open() ещё до очереди), этот нужен только для «--resume» того же
+        // CLI и потому живёт отдельно, в session_cli
+        begin(cliSessionId) {
+            if (cliSessionId) setCliSession.run(ctx.session, target.id, cliSessionId);
+        },
+    };
+
+    // сессию заводим ДО очереди: пока ход ждёт своей очереди, он уже должен быть
+    // виден в списке как обычная активная сессия — иначе отправленный запрос
+    // выглядит потерянным, пока не закончит предыдущий (событие 'queued' клиент
+    // показывает статусом, но без id ему нечего выделять в списке)
+    ctx.session = sessionId || `${target.id}-${Date.now().toString(36)}`;
+    run.sessionId = ctx.session;
+    // владельца сессии не перебиваем: её мог завести другой CLI, и продолжать
+    // её должен уметь он же — target проставляется только при заведении строки
+    // (upsertSession: ON CONFLICT обновляет одну updated_at). Кто выполнил
+    // конкретный ход, видно в result_meta этого сообщения
+    ctx.userPosition = startExchange(ctx.session, prompt, target.id, meta.model, meta.effort);
+    setMessageMode.run(mode || null, ctx.session, ctx.userPosition);
+    runs.set(ctx.session, new Set());
+    ctx.emit({ type: 'session', id: ctx.session });
+
+    activeRuns.set(runId, run);
+    setBusy(1);
+
+    try {
+        await drive(ctx);
+        ctx.emit({ type: 'done', text: ctx.answer });
+    } catch (err) {
+        ctx.errorText = ctx.errorText || err.message;
+        ctx.emit({ type: 'error', error: err.message });
+    } finally {
+        // ход с ошибкой дописывается наравне с успешным: answer при ошибке пуст,
+        // поэтому условие смотрит и на errorText (см. DOCS/decisions/012)
+        if (ctx.session && (ctx.answer || ctx.errorText)) {
+            finishExchange(ctx.session, ctx.answer || ctx.errorText, {
+                ...meta,
+                assistantPosition: ctx.assistantPosition,
+                stopReason: meta.stopReason || (ctx.errorText ? 'error' : null),
+            });
+        }
+        // работа окончена — отпускаем подключившиеся страницы
+        if (ctx.session) {
+            for (const listener of runs.get(ctx.session) || []) listener.end();
+            runs.delete(ctx.session);
+        }
+        // занятость снимаем только после записи в базу, иначе отложенный
+        // перезапуск сервера может оборвать нас между ответом и записью
+        setBusy(-1);
+        activeRuns.delete(runId);
+        resolveDone();
+        // переписка живёт в .sessions.db, а этот файл слежение намеренно не видит:
+        // без явного вызова память о только что прошедшей сессии не попала бы
+        // ни в vault, ни в поиск до следующей правки любого файла
+        scheduleMapUpdate();
+    }
+}
+
+// продолжать сессию можно только тем id, который выдал этот же CLI: история
+// запусков у каждого своя (~/.claude/projects/<путь>), и путь к проекту у Windows
+// и WSL разный. Своей записи нет — CLI начнёт свою сессию, а контекст получит
+// пересказом последних ходов (handoffPreamble)
+function resumeAndHandoff(sessionId, targetId) {
+    const resumeId = sessionId ? getCliSession.get(sessionId, targetId)?.id : null;
+    return { resumeId, handoff: sessionId && !resumeId ? handoffPreamble(sessionId) : '' };
+}
+
 // Chat — обсуждение без последствий. запрета Edit/Write мало: в прошлый раз правка
 // прошла через PowerShell, а субагент мог бы обойти и это, поэтому глушим всё,
 // чем можно изменить файл или запустить команду. чтение (Read/Grep/Glob) остаётся
@@ -572,6 +721,54 @@ const CHAT_DENIED_TOOLS = [
     'Bash', 'PowerShell', 'BashOutput', 'KillShell',
     'Task', 'Agent', 'SlashCommand',
 ].join(',');
+
+// Сессии запускаются только с настройками самого проекта. Глобальный ~/.claude
+// (у Windows и WSL он свой) тянет за собой чужие плагины: замер на пустом «hi»
+// дал 129 инструментов, 76 субагентов, 310 скиллов и 4 MCP-сервера — ~34 000
+// токенов системного промпта до первого слова задания, и вдобавок хук-«ворота»
+// одного из плагинов отклонял первый Bash и первую правку каждого файла (27 из
+// 207 вызовов в истории сессий — чистые отказы с повторным вызовом следом).
+// С этими флагами остаётся 30 инструментов, 8 агентов, 18 скиллов, 0 MCP:
+// собственные хуки, скиллы и агенты проекта (.claude/) продолжают работать.
+// Подробности — DOCS/decisions/013.
+const LEAN_ARGS = ['--setting-sources', 'project,local', '--strict-mcp-config'];
+
+// system-подтипы, у которых есть своя явная обработка ниже (onLine) — любой
+// другой подтип ловит recordSystemEvent (см. DOCS/decisions/012)
+const HANDLED_SYSTEM_SUBTYPES = new Set(['init', 'hook_started', 'hook_response', 'thinking_tokens']);
+
+// snake_case из события CLI -> camelCase ключ в JSON, который мы кладём в базу
+const camelKey = (key) => key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+// поля system/init, которые уходят в session_info как есть (остальные — руками,
+// см. askClaude: их имена по этому правилу не выводятся)
+const INIT_FIELDS = [
+    'cwd', 'tools', 'slash_commands', 'terminal_slash_commands', 'model', 'claude_code_version',
+    'output_style', 'agents', 'skills', 'plugins', 'capabilities', 'fast_mode_state',
+    'fast_mode_disabled_reason', 'analytics_disabled', 'product_feedback_disabled',
+    'memory_paths', 'messaging_socket_path',
+];
+// поля события result сверх тех, что уже лежат в своих колонках turnMeta
+const RESULT_FIELDS = [
+    'duration_api_ms', 'num_turns', 'ttft_ms', 'ttft_stream_ms', 'time_to_request_ms',
+    'queued_turn_count', 'api_error_status', 'terminal_reason', 'permission_denials',
+    'subagent_stats', 'modelUsage',
+];
+// поля usage из того же события — кладём туда же, но под своими именами
+const RESULT_USAGE_FIELDS = {
+    outputTokensDetails: 'output_tokens_details', cacheCreationBreakdown: 'cache_creation',
+    serviceTier: 'service_tier', inferenceGeo: 'inference_geo', speed: 'speed',
+};
+
+// размер контекстного окна разный по моделям: у Sonnet/Opus/Fable — 1M, у Haiku — 200k
+function contextWindowFor(model) {
+    if (typeof model === 'string' && /haiku/i.test(model)) return 200000;
+    return 1000000;
+}
+
+// верхнеуровневые event.type, у которых есть своя явная обработка ниже — любой
+// другой (например, control_response/interrupt-хендшейк, который CLI заявляет
+// в system/init.capabilities) ловит recordTopLevelEvent (см. DOCS/decisions/012)
+const HANDLED_TOP_LEVEL_TYPES = new Set(['system', 'assistant', 'user', 'result', 'rate_limit_event']);
 
 // преамбула идёт вместе с промптом через stdin, а не флагом: аргументы для WSL
 // склеиваются в одну строку, и текст с пробелами там развалился бы
@@ -593,233 +790,592 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
         return send({ type: 'error', error: `Неизвестный уровень effort: ${effort}` });
     }
 
-    // история сессий у каждого CLI своя (~/.claude/projects/<путь проекта>), а путь
-    // к проекту у Windows и WSL разный (C:\... и /mnt/c/...) — «--resume» чужого id
-    // всё равно вернёт ошибку CLI, поэтому объясняем причину сразу
-    const owner = sessionId ? getSessionTarget.get(sessionId)?.target : null;
-    if (owner && owner !== target.id) {
-        const label = TARGETS.find((t) => t.id === owner)?.label || owner;
-        return send({ type: 'error', error: `Сессия начата через ${label} — продолжить её можно только тем же CLI` });
-    }
+    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id);
 
-    const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+    const args = ['-p', '--output-format', 'stream-json', '--verbose', ...LEAN_ARGS];
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
-    if (sessionId) args.push('--resume', sessionId);
+    if (resumeId) args.push('--resume', resumeId);
     // headless -p не может показать интерактивный запрос на разрешение, поэтому оба
     // режима идут без него: Chat — через plan (ничего не меняет и не запускает),
     // Action — через bypassPermissions (выполняет сразу)
     if (mode === 'Chat') {
         args.push('--permission-mode', 'plan');
         args.push('--disallowedTools', CHAT_DENIED_TOOLS);
-        args.push('--strict-mcp-config'); // MCP-инструменты тоже умеют писать — отключаем их целиком
     } else {
         args.push('--permission-mode', 'bypassPermissions');
     }
 
-    let startedSession = null;
-    let answer = '';
+    // в Chat модели уходит не сам prompt, а CHAT_PREAMBLE + prompt; handoff непуст
+    // только при переключении CLI (своей истории у этой цели нет)
+    const input = handoff + (mode === 'Chat' ? CHAT_PREAMBLE + prompt : prompt);
 
-    // событие видит и тот, кто прислал запрос, и тот, кто подключился к сессии
-    const emit = (event) => {
-        send(event);
-        if (startedSession) broadcast(startedSession, event);
-    };
+    return runTurn({ target, prompt, sessionId, model, effort, mode }, send, async (ctx) => {
+        // id сессии CLI приходит в каждом событии — связываем один раз
+        let cliSessionSeen = false;
+        // tool_use_id -> позиция строки шага: tool_result приходит отдельным
+        // событием 'user' уже после того, как шаг записан, и должен лечь в ту же строку
+        const toolPositions = new Map();
+        // hook_id -> позиция строки: hook_started создаёт строку, hook_response
+        // (тот же hook_id) дописывает в неё вывод — та же схема, что у toolPositions
+        const hookPositions = new Map();
 
-    // --resume: sessionId известен ещё до старта CLI и до появления в activeRuns
-    const runId = nextRunId++;
-    const run = { sessionId: sessionId || null, files: candidateFiles(prompt), child: null, done: null };
-    let resolveDone;
-    run.done = new Promise((resolve) => { resolveDone = resolve; });
-
-    // конфликтующие по файлам запуски уже идут — ждём именно их, а не общую очередь
-    await waitForFileTurn(run.files, send);
-    activeRuns.set(runId, run);
-    setBusy(1);
-
-    // tool_use_id -> позиция строки шага в messages: tool_result приходит отдельным
-    // событием 'user' уже после того, как шаг записан, и должен лечь в ту же строку
-    const toolPositions = new Map();
-    // usage/cost/duration копим тут по ходу стрима и пишем разом в finishExchange —
-    // событие result может прийти раньше, чем CLI вообще завершит процесс. usage
-    // суммируем по каждому событию assistant, а не берём один раз из result: за
-    // один ход модель может дёргать инструменты десятками раундов, и у каждого
-    // раунда — свой вызов модели с собственным usage; result несёт только
-    // состав контекста последнего из них (см. комментарий ниже), не сумму по ходу
-    const turnMeta = {
-        model: model || null, effort: effort || null,
-        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
-        costUsd: null, durationMs: null, stopReason: null,
-    };
-
-    const onLine = (line) => {
-        let event;
-        try {
-            event = JSON.parse(line);
-        } catch {
-            return; // не JSON — служебный вывод CLI
-        }
-
-        if (event.session_id && !startedSession) {
-            startedSession = event.session_id;
-            run.sessionId = startedSession;
-            startExchange(startedSession, prompt, target.id, turnMeta.model, turnMeta.effort);
-            runs.set(startedSession, new Set());
-            emit({ type: 'session', id: startedSession });
-        }
-
-        // модель CLI мог выбрать сам (флаг --model не передали) — берём из первого
-        // ответа, если раньше не знали её
-        if (!turnMeta.model && event.message?.model) turnMeta.model = event.message.model;
-
-        // событие system/init приходит один раз в самом начале стрима — рабочая
-        // папка, доступные инструменты, режим разрешений, MCP-серверы, слэш-команды.
-        // Раньше нигде не читалось; названия полей — как их шлёт --output-format
-        // stream-json (camelCase у permissionMode, snake_case у остальных)
-        if (event.type === 'system' && event.subtype === 'init' && startedSession) {
-            const info = {
-                cwd: event.cwd || null,
-                permissionMode: event.permissionMode || event.permission_mode || null,
-                tools: Array.isArray(event.tools) ? event.tools : null,
-                mcpServers: Array.isArray(event.mcp_servers)
-                    ? event.mcp_servers.map((s) => (typeof s === 'string' ? s : s?.name || null)).filter(Boolean)
-                    : null,
-                slashCommands: Array.isArray(event.slash_commands) ? event.slash_commands : null,
-            };
-            setSessionInfo.run(JSON.stringify(info), startedSession);
-        }
-
-        if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
-            // каждое событие assistant — отдельный вызов модели в рамках этого хода
-            // (агентный цикл: модель -> инструмент -> модель -> ...), суммируем все
-            const mu = event.message.usage;
-            if (mu) {
-                turnMeta.usage.inputTokens += mu.input_tokens || 0;
-                turnMeta.usage.outputTokens += mu.output_tokens || 0;
-                turnMeta.usage.cacheReadTokens += mu.cache_read_input_tokens || 0;
-                turnMeta.usage.cacheCreationTokens += mu.cache_creation_input_tokens || 0;
+        const onLine = (line) => {
+            let event;
+            try {
+                event = JSON.parse(line);
+            } catch {
+                return; // не JSON — служебный вывод CLI
             }
-            // берём последний непустой — на ход может прийтись несколько вызовов
-            // модели подряд, и только у последнего stop_reason содержателен
-            if (event.message.stop_reason) turnMeta.stopReason = event.message.stop_reason;
-            // вложенный шаг субагента (Task): CLI помечает его тем же id родительского
-            // tool_use, что запустил Task — при отсутствии поля это обычный шаг верхнего уровня
-            const parentToolUseId = event.parent_tool_use_id || event.message?.parent_tool_use_id || null;
-            for (const part of event.message.content) {
-                if (part.type === 'tool_use') {
-                    const step = toolLabel(part);
-                    if (startedSession) {
-                        const position = recordStep(startedSession, `${step.name} ${step.detail}`.trim(), part.name, part.input, part.id, parentToolUseId);
-                        toolPositions.set(part.id, position);
+
+            // id, который выдал CLI, нужен для его же «--resume» — привязываем к нашей
+            // сессии при первом событии, где он есть
+            if (event.session_id && !cliSessionSeen) {
+                cliSessionSeen = true;
+                ctx.begin(event.session_id);
+                // в базе оставляем след от добавок к промпту: модели ушёл не тот
+                // текст, что видно в чате
+                if (input !== prompt) setMessageInputSent.run(input, ctx.session, ctx.userPosition);
+            }
+
+            // самый внешний перехватчик: событие с верхнеуровневым type, для которого
+            // ниже нет ни одной ветки
+            if (ctx.session && !HANDLED_TOP_LEVEL_TYPES.has(event.type)) {
+                recordTopLevelEvent(ctx.session, event);
+            }
+
+            // модель CLI мог выбрать сам (флаг --model не передали) — берём из первого ответа
+            if (!ctx.meta.model && event.message?.model) ctx.meta.model = event.message.model;
+
+            // событие system/init приходит один раз в самом начале стрима и несёт
+            // около двух десятков полей — по колонкам их не раскладываем, кладём одним
+            // JSON в session_info (INIT_FIELDS выше; camelCase имена получаются из
+            // snake_case автоматически, руками — только те, что не выводятся правилом)
+            if (event.type === 'system' && event.subtype === 'init' && ctx.session) {
+                const info = {};
+                for (const key of INIT_FIELDS) info[camelKey(key)] = event[key] ?? null;
+                info.permissionMode = event.permissionMode || event.permission_mode || null;
+                info.apiKeySource = event.apiKeySource || null;
+                info.mcpServers = Array.isArray(event.mcp_servers)
+                    ? event.mcp_servers.map((server) => (typeof server === 'string' ? server : server?.name || null)).filter(Boolean)
+                    : null;
+                info.initUuid = event.uuid || null;
+                setSessionInfo.run(JSON.stringify(info), ctx.session);
+            }
+
+            // вывод хуков (PreToolUse/PostToolUse/SessionStart/…) тоже есть в стриме:
+            // hook_started создаёт строку роли 'hook', hook_response (тот же hook_id)
+            // дописывает в неё вывод — используем те же tool_name/tool_input/tool_result,
+            // что и у обычных шагов, лишних колонок под это не заводим
+            if (event.type === 'system' && event.subtype === 'hook_started' && ctx.session) {
+                const position = recordHookStart(ctx.session, event);
+                if (event.hook_id) hookPositions.set(event.hook_id, position);
+            }
+            if (event.type === 'system' && event.subtype === 'hook_response' && ctx.session) {
+                const position = event.hook_id ? hookPositions.get(event.hook_id) : undefined;
+                if (position !== undefined) recordHookResponse(ctx.session, position, event);
+            }
+
+            // текущая оценка токенов рассуждения — шлётся многократно за ход по мере
+            // стриминга, храним только пик (последнее/наибольшее значение)
+            if (event.type === 'system' && event.subtype === 'thinking_tokens') {
+                if (typeof event.estimated_tokens === 'number') ctx.meta.thinkingTokensPeak = event.estimated_tokens;
+            }
+
+            // любой другой system-подтип, который явно не разобран выше: например
+            // permission_denied — модель попыталась запрещённое действие
+            if (event.type === 'system' && !HANDLED_SYSTEM_SUBTYPES.has(event.subtype) && ctx.session) {
+                recordSystemEvent(ctx.session, event);
+            }
+
+            if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+                // каждое событие assistant — отдельный вызов модели в рамках этого хода
+                // (агентный цикл: модель -> инструмент -> модель -> ...), суммируем все
+                const mu = event.message.usage;
+                if (mu) {
+                    ctx.meta.usage.inputTokens += mu.input_tokens || 0;
+                    ctx.meta.usage.outputTokens += mu.output_tokens || 0;
+                    ctx.meta.usage.cacheReadTokens += mu.cache_read_input_tokens || 0;
+                    ctx.meta.usage.cacheCreationTokens += mu.cache_creation_input_tokens || 0;
+                    // а вот заполнение окна — величина не накопительная: сколько лежит
+                    // в контексте прямо сейчас, показывает последний вызов модели
+                    ctx.meta.lastRequestTokens =
+                        (mu.input_tokens || 0) + (mu.cache_read_input_tokens || 0) + (mu.cache_creation_input_tokens || 0);
+                }
+                // берём последний непустой — на ход может прийтись несколько вызовов
+                // модели подряд, и только у последнего stop_reason содержателен
+                if (event.message.stop_reason) ctx.meta.stopReason = event.message.stop_reason;
+                // вложенный шаг субагента (Task): CLI помечает его тем же id родительского
+                // tool_use, что запустил Task — без поля это обычный шаг верхнего уровня
+                const parentToolUseId = event.parent_tool_use_id || event.message?.parent_tool_use_id || null;
+                for (const part of event.message.content) {
+                    if (part.type === 'tool_use') {
+                        const step = toolLabel(part);
+                        if (ctx.session) {
+                            const position = recordStep(ctx.session, `${step.name} ${step.detail}`.trim(), part.name, part.input, part.id, parentToolUseId, part.caller);
+                            toolPositions.set(part.id, position);
+                        }
+                        ctx.emit(step);
                     }
-                    emit(step);
-                    // уточняем набор файлов по факту — эвристика по промпту могла его не назвать
-                    if (WRITE_TOOLS.has(part.name) && part.input?.file_path) {
-                        run.files.add(path.resolve(part.input.file_path));
+                    else if (part.type === 'text' && part.text.trim()) {
+                        ctx.answer = part.text;
+                        // каждый кусок — своя строка (как у tool/thinking), а не общая
+                        // answer на весь ход: за один ход модель может выдать текст
+                        // несколько раз подряд (реплика -> инструмент -> ещё текст -> ...),
+                        // и в чате каждый кусок — свой пузырь
+                        if (ctx.session) ctx.assistantPosition = recordAssistantText(ctx.session, part.text, ctx.meta.model, ctx.meta.effort, parentToolUseId);
+                        ctx.emit({ type: 'text', text: part.text });
+                    }
+                    else if (part.type === 'thinking') {
+                        // пустой thinking-кусок (например, чисто сигнатурный, без текста)
+                        // — молча пропускаем: это всё ещё известный тип части, не unknown
+                        // (раньше проверка text.trim() стояла в одном условии с type, и
+                        // пустой кусок проваливался в recordUnknownPart ниже, где текстом
+                        // писалось буквально "thinking" — само имя типа, а не рассуждение)
+                        if (part.thinking?.trim()) {
+                            if (ctx.session) recordThinking(ctx.session, part.thinking, part.signature);
+                            ctx.emit({ type: 'thinking', text: part.thinking });
+                        }
+                    }
+                    else if (part.type === 'redacted_thinking') {
+                        // API само решило скрыть рассуждение (data — непрозрачный
+                        // зашифрованный блок для контекста, а не текст)
+                        if (ctx.session) {
+                            recordThinking(ctx.session, '[рассуждение скрыто Anthropic API (redacted_thinking) — содержимого нет, только непрозрачный блок для контекста модели]');
+                        }
+                    }
+                    else {
+                        // любой другой тип части: WebSearch/WebFetch сюда не попадают
+                        // (идут обычным tool_use), но CLI может прислать и что-то ещё
+                        if (ctx.session) recordUnknownPart(ctx.session, part, parentToolUseId);
                     }
                 }
-                else if (part.type === 'text' && part.text.trim()) {
-                    answer = part.text;
-                    emit({ type: 'text', text: part.text });
+            }
+
+            // результат вызова инструмента приходит отдельным сообщением роли user —
+            // ложится в ту же строку, что и сам вызов
+            if (event.type === 'user' && Array.isArray(event.message?.content)) {
+                for (const part of event.message.content) {
+                    if (part.type !== 'tool_result') continue;
+                    const position = toolPositions.get(part.tool_use_id);
+                    if (position === undefined || !ctx.session) continue;
+                    setMessageToolResult.run(clip(toolResultText(part.content)), part.is_error ? 1 : 0, toolResultImages(part.content), ctx.session, position);
                 }
-                else if (part.type === 'thinking' && part.thinking?.trim()) {
-                    if (startedSession) recordThinking(startedSession, part.thinking);
-                    emit({ type: 'thinking', text: part.thinking });
+            }
+
+            if (event.type === 'result') {
+                if (event.is_error) ctx.fail(event.result || 'CLI вернул ошибку');
+                else ctx.answer = event.result || ctx.answer;
+
+                // usage.*_tokens в result — сумма по всем вызовам модели за ход, а не
+                // состав окна: в длинных сессиях она перевалила за 6 млн при окне в 1 млн,
+                // и заполнение показывалось как 100 % задолго до настоящего предела.
+                // Поэтому окно считаем по последнему вызову модели (lastRequestTokens),
+                // а сумму из result оставляем только как запасной вариант
+                const u = event.usage;
+                if (u) {
+                    const used = ctx.meta.lastRequestTokens
+                        ?? ((u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0));
+                    const window = contextWindowFor(ctx.meta.model);
+                    const percent = Math.min(100, Math.round(used / window * 100));
+                    if (ctx.session) setSessionContext.run(percent, window, ctx.session);
+                    ctx.emit({ type: 'context', percent, window, used });
+                }
+                if (typeof event.total_cost_usd === 'number') ctx.meta.costUsd = event.total_cost_usd;
+                if (typeof event.duration_ms === 'number') ctx.meta.durationMs = event.duration_ms;
+
+                // всё остальное, что несёт result сверх структурных полей выше — тайминги,
+                // отказы в разрешении, статистика субагентов, разбивка usage — одним JSON
+                ctx.meta.resultMeta = { thinkingTokensPeak: ctx.meta.thinkingTokensPeak };
+                for (const key of RESULT_FIELDS) ctx.meta.resultMeta[camelKey(key)] = event[key] ?? null;
+                for (const [name, key] of Object.entries(RESULT_USAGE_FIELDS)) ctx.meta.resultMeta[name] = u?.[key] ?? null;
+            }
+
+            // лимиты подписки (5 часов / 7 дней) CLI присылает сам, на каждый запрос —
+            // это те же цифры, что показывает /usage, только уже в JSON
+            if (event.type === 'rate_limit_event') {
+                ctx.emit({ type: 'rate_limit', info: event.rate_limit_info });
+                // храним и в базе, иначе после перезагрузки страницы этих цифр не достать
+                if (ctx.session && event.rate_limit_info) {
+                    setSessionRateLimit.run(JSON.stringify(event.rate_limit_info), ctx.session);
                 }
             }
-        }
+        };
 
-        // результат вызова инструмента приходит отдельным сообщением роли user —
-        // раньше не читался вовсе, теперь ложится в ту же строку, что и сам вызов
-        if (event.type === 'user' && Array.isArray(event.message?.content)) {
-            for (const part of event.message.content) {
-                if (part.type !== 'tool_result') continue;
-                const position = toolPositions.get(part.tool_use_id);
-                if (position === undefined || !startedSession) continue;
-                setMessageToolResult.run(clip(toolResultText(part.content)), part.is_error ? 1 : 0, startedSession, position);
-            }
-        }
-
-        if (event.type === 'result') {
-            if (event.is_error) emit({ type: 'error', error: event.result || 'CLI вернул ошибку' });
-            else answer = event.result || answer;
-
-            // usage.*_tokens здесь — это состав контекста только последнего запроса
-            // к модели за этот ход (не сумма) — то, что реально лежит в окне прямо
-            // сейчас, для этого и берём именно последний, а не накопленный turnMeta.usage;
-            // ponytail: окно фиксировано в 200k для всех моделей, свои размеры на модель — потом
-            const u = event.usage;
-            if (u) {
-                const used = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-                const percent = Math.min(100, Math.round(used / 200000 * 100));
-                if (startedSession) setSessionContext.run(percent, startedSession);
-                emit({ type: 'context', percent });
-            }
-            if (typeof event.total_cost_usd === 'number') turnMeta.costUsd = event.total_cost_usd;
-            if (typeof event.duration_ms === 'number') turnMeta.durationMs = event.duration_ms;
-        }
-
-        // лимиты подписки (5 часов / 7 дней) CLI присылает сам, на каждый запрос —
-        // это те же цифры, что показывает /usage, только уже в JSON
-        if (event.type === 'rate_limit_event') {
-            emit({ type: 'rate_limit', info: event.rate_limit_info });
-            // раньше уходило только живым слушателям вкладки — при перезагрузке
-            // страницы или просмотре сессии позже эти цифры было не достать
-            if (startedSession && event.rate_limit_info) {
-                setSessionRateLimit.run(JSON.stringify(event.rate_limit_info), startedSession);
-            }
-        }
-    };
-
-    try {
-        const input = mode === 'Chat' ? CHAT_PREAMBLE + prompt : prompt;
         await runClaude(target, args, {
-            input, timeoutMs: 600000, onLine,
-            onSpawn: (child) => { run.child = child; },
+            input, timeoutMs: CLAUDE_ASK_TIMEOUT_MS, onLine,
+            onSpawn: (child) => { ctx.run.child = child; },
         });
-        if (startedSession && answer) finishExchange(startedSession, answer, turnMeta);
-        emit({ type: 'done', text: answer });
-    } catch (err) {
-        emit({ type: 'error', error: err.message });
-    } finally {
-        // работа окончена — отпускаем подключившиеся страницы
-        if (startedSession) {
-            for (const listener of runs.get(startedSession) || []) listener.end();
-            runs.delete(startedSession);
-        }
-        // снимаем занятость только после записи в базу, иначе отложенный
-        // перезапуск сервера может оборвать нас между ответом и записью
-        setBusy(-1);
-        activeRuns.delete(runId);
-        resolveDone();
-        // переписка живёт в .sessions.db, а этот файл слежение намеренно не видит:
-        // без явного вызова память о только что прошедшей сессии не попала бы
-        // ни в vault, ни в поиск до следующей правки любого файла
-        scheduleMapUpdate();
+    });
+}
+
+// ---------- коннектор OpenCode CLI ----------
+//
+// сознательно не переиспользует ничего Claude-специфичного (TARGETS/activeTarget/
+// runClaude/askClaude) — в проекте нет общей абстракции над CLI, это её осознанный
+// отказ (см. CLAUDE.md и память команды .claude/agents/memory/opencode-integration.md).
+// Общими остаются только провайдеро-независимые вещи: таблицы sessions/messages
+// и DB-хелперы, реестр идущих ходов activeRuns (один на все провайдеры — задания
+// всех CLI выполняются строго по очереди, параллельно не работает больше одного).
+
+// бинарник не лежит в PATH (проверено вживую — см. память команды), поэтому ищем
+// его там, а при неудаче — по известному пути. Windows-путь по аналогии не
+// проверялся живьём, но код реально спрашивает `where`, а не подставляет путь вслепую
+function resolveOpenCodeBin(pathName, fallbackParts) {
+    try {
+        execFileSync(process.platform === 'win32' ? 'where' : 'which', [pathName], { stdio: 'ignore' });
+        return pathName; // нашёлся в PATH
+    } catch {
+        const fallback = path.join(os.homedir(), ...fallbackParts);
+        return fs.existsSync(fallback) ? fallback : pathName; // не нашли — оставляем как есть, ENOENT покажет runOpenCode
     }
 }
 
-// ---------- разбор тела запроса ----------
+const OPENCODE_BIN = process.env.OPENCODE_BIN;
+// id всех целей — с префиксом opencode-, а не голые wsl/windows/custom, как у Claude:
+// оба набора идут в общую колонку sessions.target, и совпадение id перепутало бы
+// принадлежность сессии не тому CLI (см. проверку владельца в askOpenCode)
+const OPENCODE_TARGETS = OPENCODE_BIN
+    ? [{ id: 'opencode-custom', label: 'OPENCODE_BIN', cmd: OPENCODE_BIN, args: [] }]
+    : process.platform === 'win32'
+        ? [
+            { id: 'opencode-windows', label: 'Windows', cmd: resolveOpenCodeBin('opencode.exe', ['.opencode', 'bin', 'opencode.exe']), args: [] },
+            // на Windows-хосте зовём WSL-копию так же, как это делает Claude (wsl.exe bash -lc "...") —
+            // но своей команде внутри shell-строки нужно кавычить аргументы (см. shQuote), т.к.
+            // opencode, в отличие от claude, принимает промпт позиционным аргументом, а не через stdin
+            { id: 'opencode-wsl', label: 'WSL', cmd: 'wsl.exe', args: ['bash', '-lc'], viaShell: true, binName: '~/.opencode/bin/opencode' },
+          ]
+        : [
+            { id: 'opencode-wsl', label: 'WSL', cmd: resolveOpenCodeBin('opencode', ['.opencode', 'bin', 'opencode']), args: [] },
+            { id: 'opencode-windows', label: 'Windows', cmd: 'opencode.exe', args: [] },
+          ];
 
-function readJson(req, limit = 100_000) {
+let activeOpenCodeTarget = null; // отдельная переменная от activeTarget Claude — иначе подключения затирают друг друга
+
+const OPENCODE_ASK_TIMEOUT_MS = Number(process.env.OPENCODE_ASK_TIMEOUT_MS) || 3_600_000;
+
+// одинарные кавычки для bash -lc: нужно только для viaShell-цели (wsl.exe), где вся
+// команда склеивается в одну строку — обычный spawn с массивом аргументов кавычек не требует
+function shQuote(value) {
+    return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+// runOpenCode — аналог runClaude, тот же паттерн (построчный NDJSON, таймаут, kill),
+// но prompt здесь не идёт через stdin: opencode run принимает его позиционным
+// аргументом (проверено вживую, см. память команды), stdin CLI не читает вовсе
+function runOpenCode(target, cliArgs, { timeoutMs, onLine, onSpawn } = {}) {
     return new Promise((resolve, reject) => {
-        let body = '';
-        req.on('data', (chunk) => {
-            body += chunk;
-            if (body.length > limit) {
-                reject(new Error('Слишком большой запрос'));
-                req.destroy();
+        const args = target.viaShell
+            ? [...target.args, shellLaunch([target.binName || 'opencode', ...cliArgs].map(shQuote).join(' '))]
+            : [...target.args, ...cliArgs];
+
+        const child = spawn(target.cmd, args, { windowsHide: true });
+        onSpawn?.(child);
+
+        let stdout = '';
+        let stderr = '';
+        let finished = false;
+
+        const timer = setTimeout(() => {
+            finished = true;
+            killProcessTree(child, target);
+            reject(new Error(`Превышено время ожидания (${Math.round(timeoutMs / 1000)} с)`));
+        }, timeoutMs);
+
+        const done = (err, value) => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            err ? reject(err) : resolve(value);
+        };
+
+        child.on('error', (err) => {
+            done(new Error(err.code === 'ENOENT' ? `${target.cmd} не найден` : err.message));
+        });
+
+        let tail = '';
+        child.stdout.on('data', (chunk) => {
+            if (!onLine) {
+                stdout += chunk;
+                return;
+            }
+            tail += chunk;
+            const lines = tail.split('\n');
+            tail = lines.pop();
+            for (const line of lines) {
+                if (line.trim()) onLine(line);
             }
         });
-        req.on('end', () => {
-            try {
-                resolve(body ? JSON.parse(body) : {});
-            } catch {
-                reject(new Error('Некорректный JSON'));
-            }
+        child.stderr.on('data', (chunk) => { stderr += takeRemotePid(child, String(chunk)); });
+
+        child.on('close', (code) => {
+            // opencode шлёт ошибку хода событием type:'error' внутри NDJSON, а не
+            // ненулевым кодом выхода (проверено вживую) — код нужен только для
+            // случаев, когда сам процесс не смог стартовать/упал вне протокола
+            if (code === 0) done(null, stdout);
+            else done(new Error(child.__stoppedByUser ? 'Остановлено пользователем' : (stderr.trim() || `CLI завершился с кодом ${code}`)));
         });
-        req.on('error', reject);
+
+        child.stdin.on('error', () => {});
+        child.stdin.end(); // CLI не читает stdin — промпт уже в аргументах
     });
+}
+
+async function detectOpenCodeInstalls() {
+    const checks = await Promise.allSettled(
+        OPENCODE_TARGETS.map(async (target) => ({
+            id: target.id,
+            label: target.label,
+            version: parseVersion(await runOpenCode(target, ['--version'], { timeoutMs: 15000 })),
+        }))
+    );
+
+    return checks.filter((c) => c.status === 'fulfilled').map((c) => c.value);
+}
+
+// список моделей — реальный, не хардкод: `opencode models` без флагов формата
+// печатает плоский текстовый список `provider/model`, по строке на модель
+// (проверено вживую — 6 бесплатных моделей opencode/* без авторизации)
+async function fetchOpenCodeModels(target) {
+    const stdout = await runOpenCode(target, ['models'], { timeoutMs: 15000 });
+    return stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
+async function askOpenCode({ prompt, model, sessionId, mode }, send) {
+    if (!activeOpenCodeTarget) return send({ type: 'error', error: 'OpenCode не подключён' });
+    const target = activeOpenCodeTarget;
+    if (!prompt) return send({ type: 'error', error: 'Пустой запрос' });
+
+    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id);
+    const args = ['run', handoff + prompt, '--format', 'json'];
+    if (model) args.push('--model', model);
+    if (resumeId) args.push('--session', resumeId);
+    // у OpenCode нет проверенного аналога --permission-mode/--disallowedTools у Claude
+    // (см. память команды) — режим Chat/Action пока только помечает строки в базе
+    // (mode-колонка), инструменты CLI на уровне флагов не ограничивает
+
+    return runTurn({ target, prompt, sessionId, model, mode }, send, async (ctx) => {
+        let cliSessionSeen = false;
+        // callID вызова инструмента -> позиция строки шага: tool_use приходит дважды
+        // на один callID (сперва running, потом completed), вторая запись только
+        // дописывает tool_result в ту же строку
+        const toolPositions = new Map();
+
+        const onLine = (line) => {
+            let event;
+            try {
+                event = JSON.parse(line);
+            } catch {
+                return; // не JSON — служебный вывод CLI
+            }
+
+            // sessionID лежит в каждом событии (не только в первом, как у Claude) —
+            // связываем его с нашей сессией один раз, для «--session» этого же CLI
+            if (event.sessionID && !cliSessionSeen) {
+                cliSessionSeen = true;
+                ctx.begin(event.sessionID);
+            }
+
+            if (event.type === 'text' && event.part?.text?.trim()) {
+                ctx.answer = event.part.text;
+                if (ctx.session) ctx.assistantPosition = recordAssistantText(ctx.session, event.part.text, ctx.meta.model, null, null);
+                ctx.emit({ type: 'text', text: event.part.text });
+                return;
+            }
+
+            if (event.type === 'tool_use' && event.part) {
+                const part = event.part;
+                const toolName = part.tool || 'tool';
+                const state = part.state || {};
+                let position = toolPositions.get(part.callID);
+                if (position === undefined && ctx.session) {
+                    const detail = state.title || state.input?.command || state.input?.filePath || '';
+                    position = recordStep(ctx.session, `${toolName} ${detail}`.trim(), toolName, state.input, part.callID, null, null);
+                    toolPositions.set(part.callID, position);
+                    ctx.emit(toolLabel({ name: toolName, input: state.input || {} }));
+                }
+                if (position !== undefined && ctx.session && (state.status === 'completed' || state.status === 'error')) {
+                    const output = typeof state.output === 'string' ? state.output : JSON.stringify(state.output ?? '');
+                    setMessageToolResult.run(clip(output), state.status === 'error' ? 1 : 0, null, ctx.session, position);
+                }
+                return;
+            }
+
+            if (event.type === 'step_finish' && event.part) {
+                const tokens = event.part.tokens || {};
+                ctx.meta.usage.inputTokens += tokens.input || 0;
+                ctx.meta.usage.outputTokens += tokens.output || 0;
+                ctx.meta.usage.cacheReadTokens += tokens.cache?.read || 0;
+                ctx.meta.usage.cacheCreationTokens += tokens.cache?.write || 0;
+                if (typeof event.part.cost === 'number') ctx.meta.costUsd = (ctx.meta.costUsd || 0) + event.part.cost;
+                if (event.part.reason) ctx.meta.stopReason = event.part.reason;
+                return;
+            }
+
+            if (event.type === 'error') {
+                // ошибка хода приходит внутри потока, а не кодом возврата процесса
+                // (проверено вживую — запуск с несуществующей моделью завершился кодом 0)
+                ctx.fail(event.error?.data?.message || event.error?.name || 'OpenCode вернул ошибку');
+                return;
+            }
+
+            // step_start и прочие неразобранные события: у OpenCode нет аналога
+            // thinking/rate_limit, своей ветки в общей схеме под них нет
+        };
+
+        await runOpenCode(target, args, {
+            timeoutMs: OPENCODE_ASK_TIMEOUT_MS, onLine,
+            onSpawn: (child) => { ctx.run.child = child; },
+        });
+    });
+}
+
+// ---------- коннектор Hermes ----------
+// Отличия от Claude и OpenCode собраны в SYSTEM/Hermes/hermes-agent-connector.js;
+// здесь — только общая для всех коннекторов часть: очередь по файлам, запись
+// хода в базу и поток событий наружу.
+
+const hermesConnector = require('./SYSTEM/Hermes/hermes-agent-connector.js');
+
+let activeHermesTarget = null; // своя переменная: подключения провайдеров не затирают друг друга
+
+const HERMES_ASK_TIMEOUT_MS = Number(process.env.HERMES_ASK_TIMEOUT_MS) || 3_600_000;
+
+async function askHermes({ prompt, model, sessionId, mode, skipHandoff }, send) {
+    if (!activeHermesTarget) return send({ type: 'error', error: 'Hermes не подключён' });
+    const target = activeHermesTarget;
+    if (!prompt) return send({ type: 'error', error: 'Пустой запрос' });
+
+    // своего id сессии Hermes не отдаёт (режим -z печатает только текст ответа) —
+    // и не нужно: id новой сессии заводит runTurn, одинаково для всех коннекторов
+    const usageFile = hermesConnector.usagePath();
+    // Hermes каждый раз стартует свою сессию (-z не умеет продолжать чужую), поэтому
+    // контекст переписки, если он есть, идёт пересказом впереди задания
+    const handoff = sessionId && !skipHandoff ? handoffPreamble(sessionId) : '';
+    const { cmd, args, env } = hermesConnector.command(target, handoff + prompt, { model, usageFile });
+
+    return runTurn({ target, prompt, sessionId, model, mode }, send, async (ctx) => {
+        await new Promise((resolve, reject) => {
+            const child = spawn(cmd, args, { cwd: ROOT, env: { ...process.env, ...env }, windowsHide: true });
+            ctx.run.child = child;
+
+            const timer = setTimeout(() => {
+                child.kill();
+                reject(new Error('Hermes не ответил за отведённое время'));
+            }, HERMES_ASK_TIMEOUT_MS);
+
+            // -z печатает только итоговый текст, поэтому stdout копим целиком,
+            // а наружу отдаём кусками — чтобы в чате было видно, что работа идёт
+            child.stdout.on('data', (chunk) => {
+                const text = String(chunk);
+                ctx.answer += text;
+                if (text.trim()) ctx.emit({ type: 'text', text });
+            });
+            // stderr у Hermes — служебные сообщения и текст ошибки; в ответ он не идёт,
+            // но последнюю строку сохраняем: без неё падение выглядит пустым ответом
+            child.stderr.on('data', (chunk) => {
+                const text = String(chunk).trim();
+                if (text) ctx.errorText = text.split(/\r?\n/).pop();
+            });
+
+            child.on('error', (err) => { clearTimeout(timer); reject(err); });
+            child.on('exit', (code) => {
+                clearTimeout(timer);
+                if (code === 0) resolve();
+                else reject(new Error(ctx.errorText || `Hermes завершился с кодом ${code}`));
+            });
+        }).finally(() => {
+            ctx.answer = ctx.answer.trim();
+            // отчёт о расходе пишет сам Hermes — из него в историю попадает то, чем
+            // именно был выполнен запрос: модель, число вызовов, стоимость
+            const usage = hermesConnector.readUsage(usageFile);
+            ctx.meta.model = usage?.model || model || null;
+            ctx.meta.costUsd = usage?.estimated_cost_usd ?? null;
+            ctx.meta.usage = {
+                inputTokens: usage?.input_tokens || 0,
+                outputTokens: usage?.output_tokens || 0,
+                cacheReadTokens: usage?.cache_read_tokens || 0,
+                cacheCreationTokens: usage?.cache_write_tokens || 0,
+            };
+            // по этой записи потом видно, кто именно выполнял: цель (windows/wsl),
+            // провайдер и модель, которые выбрал Hermes, и его собственный id сессии —
+            // по нему запуск находится в состоянии самого Hermes (DATA/hermes)
+            ctx.meta.resultMeta = {
+                executor: 'hermes',
+                target: target.id,
+                provider: usage?.provider || null,
+                model: usage?.model || null,
+                hermesSessionId: usage?.session_id || null,
+                apiCalls: usage?.api_calls ?? null,
+                failed: usage?.failed ?? null,
+                error: ctx.errorText || null,
+            };
+            // текст ответа Hermes отдаёт разом, а не событиями — своей строки в базе
+            // у него ещё нет, заводим её здесь, чтобы finishExchange дописал на неё
+            // метаданные хода, а не вставил вторую
+            if (ctx.answer) {
+                ctx.assistantPosition = recordAssistantText(ctx.session, ctx.answer, ctx.meta.model, null, null);
+            }
+        });
+    });
+}
+
+// ---------- связка: Claude планирует, Hermes выполняет ----------
+// Смысл разделения: у Claude большое контекстное окно и он идёт по подписке CLI —
+// пусть он превращает текст человека в точное задание. Дальше работает Hermes:
+// он дробит задание на подзадачи и раздаёт их своим подагентам на дешёвых
+// (вплоть до бесплатных) моделях — delegation.model в его конфиге.
+//
+// Оба хода ложатся в одну сессию по порядку: текст человека, задание от Claude,
+// результат Hermes. Кто именно выполнял ход, видно в result_meta сообщения.
+
+const PLANNER_PREAMBLE = `Ты составляешь задание для исполнителя-оркестратора, а не выполняешь его.
+
+Исполнитель не видит этой переписки и не может задать вопрос. Он работает моделями
+попроще, поэтому задание должно быть точным и самодостаточным.
+
+Разберись в проекте столько, сколько нужно, и напиши:
+- что требуется сделать, по пунктам, в порядке выполнения;
+- какие файлы затронуты (точные пути), что в них менять;
+- чем проверить результат;
+- чего делать НЕ нужно, если есть соблазн.
+
+Не пиши вступлений и рассуждений — только само задание. Ничего не меняй в файлах.
+
+Запрос человека: `;
+
+async function askPlannedByClaude(body, send) {
+    const { prompt, model, effort, sessionId } = body;
+    if (!prompt) return send({ type: 'error', error: 'Пустой запрос' });
+    if (!activeTarget) return send({ type: 'error', error: 'Claude не подключён — он здесь планировщик' });
+    if (!activeHermesTarget) return send({ type: 'error', error: 'Hermes не подключён — он здесь исполнитель' });
+
+    // ---- ход первый: Claude превращает текст в задание ----
+    let plan = '';
+    let planSession = sessionId || null;
+    let planFailed = null;
+
+    send({ type: 'text', text: '⟶ Claude составляет задание…\n' });
+    await askClaude(
+        { prompt: PLANNER_PREAMBLE + prompt, model, effort, sessionId, mode: 'Chat' },
+        (event) => {
+            if (event.type === 'session') planSession = event.id;
+            else if (event.type === 'done') plan = event.text || plan;
+            else if (event.type === 'error') planFailed = event.error;
+            // ход планировщика показываем целиком: человек должен видеть, что уходит
+            // исполнителю, и успеть остановить работу до правок в файлах
+            send(event.type === 'done' ? { type: 'text', text: event.text || '' } : event);
+        },
+    );
+
+    if (planFailed) return send({ type: 'error', error: `Планирование не удалось: ${planFailed}` });
+    if (!plan.trim()) return send({ type: 'error', error: 'Claude не вернул задание' });
+
+    // ---- ход второй: Hermes выполняет ----
+    send({ type: 'text', text: '\n⟶ Hermes выполняет задание…\n' });
+    // пересказ переписки здесь лишний: задание от Claude и есть весь нужный контекст,
+    // а пересказ повторил бы его вторым экземпляром
+    await askHermes({ prompt: plan.trim(), sessionId: planSession, mode: 'Action', skipHandoff: true }, send);
 }
 
 // ---------- хранилище сессий (SQLite) ----------
@@ -838,6 +1394,17 @@ db.exec(`
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
         updated_at TEXT NOT NULL
+    );
+
+    -- у каждого CLI своя история запусков: id сессии Claude в OpenCode не существует,
+    -- а у Windows-claude и WSL-claude разные папки историй. Поэтому наш id сессии
+    -- живёт в sessions, а id внутри конкретного CLI — здесь, по одному на цель.
+    -- Так переключение исполнителя продолжает ту же переписку, а не упирается в запрет
+    CREATE TABLE IF NOT EXISTS session_cli (
+        session_id TEXT NOT NULL,
+        target TEXT NOT NULL,
+        cli_session_id TEXT NOT NULL,
+        PRIMARY KEY (session_id, target)
     );
 
     CREATE TABLE IF NOT EXISTS messages (
@@ -860,11 +1427,14 @@ try {
     db.exec('ALTER TABLE sessions ADD COLUMN context_percent INTEGER');
 } catch { /* колонка уже есть */ }
 
+try {
+    db.exec('ALTER TABLE sessions ADD COLUMN context_window INTEGER');
+} catch { /* колонка уже есть */ }
+
 // метаданные сессии, которые CLI присылает только раз — событием system/init
 // в самом начале стрима (рабочая папка, доступные инструменты, режим разрешений,
 // подключённые MCP-серверы, слэш-команды) — и лимиты подписки (rate_limit_event,
-// те же цифры, что показывает /usage): раньше уходили только живым слушателям
-// вкладки и терялись при перезагрузке страницы или просмотре сессии позже
+// те же цифры, что показывает /usage): в базе, а не только у живых слушателей
 try {
     db.exec('ALTER TABLE sessions ADD COLUMN session_info TEXT');
 } catch { /* колонка уже есть */ }
@@ -875,10 +1445,9 @@ try {
 // разбор сессии по шагам (Flow, поиск раздувающих контекст мест): время,
 // модель/effort запроса и — только на строке ответа, где CLI реально их
 // присылает (событие result — на весь ход, а не на отдельный вызов инструмента) —
-// потраченные токены/стоимость/длительность. tool_input/tool_result — то, что
-// раньше обрезалось до 120 символов в toolLabel() для строки статуса, здесь
-// хранится с более щедрым лимитом (см. clip ниже), чтобы по нему можно было
-// разобрать, что именно сделал шаг
+// потраченные токены/стоимость/длительность. tool_input/tool_result хранятся
+// целиком (лимит — clip ниже), а не обрезанными до 120 символов строки статуса,
+// чтобы по ним можно было разобрать, что именно сделал шаг
 for (const [col, type] of [
     ['created_at', 'TEXT'],
     ['model', 'TEXT'],
@@ -891,17 +1460,33 @@ for (const [col, type] of [
     ['duration_ms', 'INTEGER'],
     ['tool_input', 'TEXT'],
     ['tool_result', 'TEXT'],
+    ['tool_result_images', 'TEXT'],
     ['tool_name', 'TEXT'],
     ['tool_error', 'INTEGER'],
     // tool_use_id — id вызова инструмента (part.id из событий assistant/tool_use),
     // parent_tool_use_id — тот же id, но родительского вызова, если этот шаг выполнен
-    // внутри субагента (Task): CLI шлёт вложенные шаги в тот же стрим, только с этим
-    // полем — раньше они ничем не отличались от шагов верхнего уровня и вклинивались
-    // в общую цепочку. stop_reason — почему модель остановилась на этом ходе
+    // внутри субагента (Task): CLI шлёт вложенные шаги в тот же стрим, и только это
+    // поле отличает их от шагов верхнего уровня. stop_reason — почему модель остановилась
     // (end_turn/max_tokens/refusal/…), с события assistant.message.stop_reason
     ['tool_use_id', 'TEXT'],
     ['parent_tool_use_id', 'TEXT'],
     ['stop_reason', 'TEXT'],
+    // режим хода (Chat/Action) — от него зависит доступный набор инструментов
+    // (CHAT_DENIED_TOOLS) и permission-mode CLI; input_sent — то, что реально
+    // ушло модели на stdin, если это отличается от text (в Chat перед вопросом
+    // приклеивается CHAT_PREAMBLE, см. askClaude)
+    ['mode', 'TEXT'],
+    ['input_sent', 'TEXT'],
+    // всё, что result присылает сверх duration_ms/total_cost_usd/usage (проверено
+    // живым тестовым запросом): тайминги до первого токена, отказы в разрешении,
+    // статистика субагентов и т.д. — одним JSON, как session_info/rate_limit
+    ['result_meta', 'TEXT'],
+    // разное по конкретной строке, что не влезает по смыслу в готовые колонки:
+    // у tool_use — part.caller (прямой вызов или из субагента), у thinking —
+    // факт/длина part.signature (крипто-подпись блока для API, не текст для
+    // чтения) — держим одной универсальной JSON-колонкой, а не заводим по
+    // колонке на каждое такое поле
+    ['extra_meta', 'TEXT'],
 ]) {
     try {
         db.exec(`ALTER TABLE messages ADD COLUMN ${col} ${type}`);
@@ -915,46 +1500,80 @@ try {
     db.exec('ALTER TABLE sessions ADD COLUMN target TEXT');
 } catch { /* колонка уже есть */ }
 
-// хранилище вкладки Flow (PROJECTS/Flow/flow.js): раньше жило в localStorage
-// браузера, теперь — здесь, ключ в ключ с прежними именами localStorage,
-// чтобы не переписывать код вокруг чтения/записи каждого поля отдельно
-db.exec(`
-    CREATE TABLE IF NOT EXISTS flow_state (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-    );
-`);
-const listFlowState = db.prepare('SELECT key, value FROM flow_state');
-const setFlowStateRow = db.prepare(`
-    INSERT INTO flow_state (key, value) VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-`);
+// хранилище вкладки Flow (PROJECTS/Flow/flow.js): на сервере, а не в localStorage
+// браузера — ключи совпадают с прежними именами localStorage, чтобы код вокруг
+// чтения/записи каждого поля остался прежним
+// ---------- агенты: один контракт на все CLI ----------
+// Claude и OpenCode отличаются только тем, как их запускают и как разбирают
+// вывод; снаружи оба отвечают одинаковым NDJSON. Всё различие собрано здесь,
+// чтобы маршруты /api/agent/* не знали, какой CLI за ними стоит, а третий
+// коннектор добавлялся строкой в этой таблице, а не четвёртой копией роутов.
+const AGENTS = {
+    claude: {
+        targets: () => TARGETS,
+        detect: () => detectInstalls(),
+        version: (target) => runClaude(target, ['--version'], { timeoutMs: 15000 }).then(parseVersion),
+        // список моделей у Claude фиксированный и лежит на клиенте
+        models: null,
+        activate: (target) => { activeTarget = target; },
+        // подключён ли CLI прямо сейчас — Hermes раздаёт шаги только тем, кто готов
+        connected: () => Boolean(activeTarget),
+        ask: askClaude,
+    },
+    opencode: {
+        targets: () => OPENCODE_TARGETS,
+        detect: () => detectOpenCodeInstalls(),
+        version: (target) => runOpenCode(target, ['--version'], { timeoutMs: 15000 }).then(parseVersion),
+        // а здесь его отдаёт сам CLI — заранее знать его нельзя
+        models: (target) => fetchOpenCodeModels(target),
+        // отдельная переменная от activeTarget: иначе подключения затирают друг друга
+        activate: (target) => { activeOpenCodeTarget = target; },
+        connected: () => Boolean(activeOpenCodeTarget),
+        ask: askOpenCode,
+    },
+    // Hermes отличается тем, что сам себе оркестратор: он планирует, помнит и
+    // выбирает модель. Для сервера это всё равно обычный исполнитель — строка здесь
+    hermes: {
+        targets: () => hermesConnector.targets(),
+        detect: async () => hermesConnector.detect(),
+        // версии у Hermes нет отдельной командой без запуска Python — метка цели
+        // говорит достаточно, а готовность установки видно в /api/hermes/setup/status
+        version: async () => 'установлен',
+        // модель выбирается в настройках Hermes, а не списком на клиенте
+        models: null,
+        activate: (target) => { activeHermesTarget = target; },
+        connected: () => Boolean(activeHermesTarget),
+        ask: askHermes,
+    },
+    // не отдельный CLI, а связка двух: планирует Claude, выполняет Hermes.
+    // Подключать нечего — она доступна ровно тогда, когда подключены оба
+    'hermes-plan': {
+        targets: () => [],
+        detect: async () => [],
+        version: async () => 'связка',
+        models: null,
+        activate: () => {},
+        connected: () => Boolean(activeTarget && activeHermesTarget),
+        ask: askPlannedByClaude,
+    },
+};
 
-// страницы, создаваемые кнопкой «+» в тулбаре (SYSTEM/new-button.js) — каждая
-// заводит настоящую папку в PROJECTS/ с README.md, чтобы попасть в общий список
-// разделов (PROJECTS/Projects/projects-tab.js) наравне со встроенными
-db.exec(`
-    CREATE TABLE IF NOT EXISTS pages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL
-    );
-`);
-try {
-    db.exec("ALTER TABLE pages ADD COLUMN folder TEXT NOT NULL DEFAULT ''");
-} catch { /* колонка уже есть */ }
-const listPages = db.prepare('SELECT id, title, folder FROM pages ORDER BY id');
-const getPage = db.prepare('SELECT folder FROM pages WHERE id = ?');
-const insertPage = db.prepare('INSERT INTO pages (title, folder) VALUES (?, ?)');
-const deletePage = db.prepare('DELETE FROM pages WHERE id = ?');
-
-// имя папки из заголовка: только буквы/цифры/пробелы/дефисы, без выхода за PROJECTS/
-function folderNameFromTitle(title) {
-    const base = title.replace(/[\\/:*?"<>|]/g, '').trim() || 'Проект';
-    let folder = base;
-    let n = 2;
-    while (fs.existsSync(path.join(ROOT, 'PROJECTS', folder))) folder = `${base} ${n++}`;
-    return folder;
+function agentByName(name) {
+    const agent = AGENTS[name];
+    if (!agent) throw new Error(`Неизвестный агент: ${name}`);
+    return agent;
 }
+
+// серверные половины фич: каждая заводит свои таблицы сама и отдаёт готовую
+// таблицу маршрутов. server.js их только собирает и не знает, что внутри
+const featureRoutes = {
+    ...require('./PROJECTS/Flow/flow-server.js').createRoutes({ db }),
+    // Hermes ходит к CLI через ту же таблицу AGENTS, что и маршруты /api/agent/*,
+    // и поэтому не знает, какой именно исполнитель за ней стоит
+    ...require('./SYSTEM/Hermes/hermes-server.js').createRoutes({ db, agents: AGENTS, eta }),
+    ...require('./PROJECTS/Chat/pages-server.js').createRoutes({ db, root: ROOT }),
+    ...require('./SYSTEM/toolbar-icons-server.js').createRoutes({ db }),
+};
 
 const upsertSession = db.prepare(`
     INSERT INTO sessions (id, title, updated_at, target)
@@ -963,6 +1582,36 @@ const upsertSession = db.prepare(`
 `);
 
 const getSessionTarget = db.prepare('SELECT target FROM sessions WHERE id = ?');
+
+// id этой сессии внутри конкретного CLI — им и только им можно продолжать
+const getCliSession = db.prepare('SELECT cli_session_id AS id FROM session_cli WHERE session_id = ? AND target = ?');
+const setCliSession = db.prepare(`
+    INSERT INTO session_cli (session_id, target, cli_session_id) VALUES (?, ?, ?)
+    ON CONFLICT(session_id, target) DO UPDATE SET cli_session_id = excluded.cli_session_id
+`);
+
+// Переключились на другой CLI: его историю продолжить нечем — своей записи об этой
+// переписке у него нет. Вместо запрета отдаём ему пересказ: последние ходы из нашей
+// базы, чтобы он понимал, о чём речь, и продолжал по существу
+const RESUME_MESSAGES = 12;
+
+function handoffPreamble(sessionId) {
+    const history = listMessages.all(sessionId)
+        .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.text?.trim())
+        .slice(-RESUME_MESSAGES);
+    if (!history.length) return '';
+
+    const lines = history.map((m) => `${m.role === 'user' ? 'Человек' : 'Ассистент'}: ${clip(m.text.trim())}`);
+    return [
+        'Это продолжение начатой переписки — её вёл другой CLI, поэтому своей истории у тебя нет.',
+        'Ниже последние ходы, чтобы ты понимал контекст. Отвечай на последнее сообщение человека.',
+        '',
+        ...lines,
+        '',
+        '--- продолжение ---',
+        '',
+    ].join('\n');
+}
 
 const upsertMessage = db.prepare(`
     INSERT INTO messages (session_id, position, role, text, created_at, model, effort)
@@ -981,20 +1630,24 @@ const setMessageUsage = db.prepare(`
 // имя инструмента — отдельной колонкой, а не только первым словом text: клиенту
 // (Flow) нужно название узла как структурные данные, а не парсинг строки статуса
 const setMessageToolCall = db.prepare('UPDATE messages SET tool_name = ?, tool_input = ? WHERE session_id = ? AND position = ?');
-const setMessageToolResult = db.prepare('UPDATE messages SET tool_result = ?, tool_error = ? WHERE session_id = ? AND position = ?');
+const setMessageToolResult = db.prepare('UPDATE messages SET tool_result = ?, tool_error = ?, tool_result_images = ? WHERE session_id = ? AND position = ?');
 const setMessageToolIds = db.prepare('UPDATE messages SET tool_use_id = ?, parent_tool_use_id = ? WHERE session_id = ? AND position = ?');
 const setMessageStopReason = db.prepare('UPDATE messages SET stop_reason = ? WHERE session_id = ? AND position = ?');
+const setMessageMode = db.prepare('UPDATE messages SET mode = ? WHERE session_id = ? AND position = ?');
+const setMessageInputSent = db.prepare('UPDATE messages SET input_sent = ? WHERE session_id = ? AND position = ?');
+const setMessageResultMeta = db.prepare('UPDATE messages SET result_meta = ? WHERE session_id = ? AND position = ?');
+const setMessageExtraMeta = db.prepare('UPDATE messages SET extra_meta = ? WHERE session_id = ? AND position = ?');
 
 const touchSession = db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?');
 const setSessionThumb = db.prepare('UPDATE sessions SET thumb = ? WHERE id = ?');
-const setSessionContext = db.prepare('UPDATE sessions SET context_percent = ? WHERE id = ?');
+const setSessionContext = db.prepare('UPDATE sessions SET context_percent = ?, context_window = ? WHERE id = ?');
 const setSessionInfo = db.prepare('UPDATE sessions SET session_info = ? WHERE id = ?');
 const setSessionRateLimit = db.prepare('UPDATE sessions SET rate_limit = ? WHERE id = ?');
-const getSessionMeta = db.prepare('SELECT context_percent AS contextPercent, session_info AS sessionInfo, rate_limit AS rateLimit FROM sessions WHERE id = ?');
+const getSessionMeta = db.prepare('SELECT context_percent AS contextPercent, context_window AS contextWindow, session_info AS sessionInfo, rate_limit AS rateLimit, target, thumb FROM sessions WHERE id = ?');
 
 const listSessions = db.prepare(`
     SELECT s.id, s.title, s.updated_at AS updatedAt, s.thumb AS thumb,
-           (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.role NOT IN ('tool', 'thinking')) AS messageCount
+           (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.role NOT IN ('tool', 'thinking', 'hook', 'system', 'unknown', 'top_level')) AS messageCount
     FROM sessions s
     ORDER BY s.updated_at DESC
 `);
@@ -1005,7 +1658,9 @@ const listMessages = db.prepare(`
            cache_read_tokens AS cacheReadTokens, cache_creation_tokens AS cacheCreationTokens,
            cost_usd AS costUsd, duration_ms AS durationMs,
            tool_name AS toolName, tool_input AS toolInput, tool_result AS toolResult, tool_error AS toolError,
-           tool_use_id AS toolUseId, parent_tool_use_id AS parentToolUseId, stop_reason AS stopReason
+           tool_result_images AS toolResultImages,
+           tool_use_id AS toolUseId, parent_tool_use_id AS parentToolUseId, stop_reason AS stopReason,
+           mode, input_sent AS inputSent, result_meta AS resultMeta, extra_meta AS extraMeta
     FROM messages WHERE session_id = ? ORDER BY position
 `);
 
@@ -1023,10 +1678,10 @@ const sumSessionUsage = db.prepare(`
 
 const countMessages = db.prepare('SELECT COUNT(*) AS n FROM messages WHERE session_id = ?');
 
-// разумный потолок на tool_input/tool_result/thinking — раньше их не хранили
-// вовсе, теперь хранят, но без лимита один Bash с большим выводом раздул бы
-// .sessions.db на пустом месте
-const DETAIL_CLIP_LEN = 4000;
+// потолок на tool_input/tool_result/thinking: без лимита один Bash с гигантским
+// выводом раздул бы .sessions.db, но значение выбрано так, чтобы обычные ответы
+// инструментов не резались вовсе
+const DETAIL_CLIP_LEN = 50000;
 function clip(text) {
     if (typeof text !== 'string') return text;
     return text.length > DETAIL_CLIP_LEN ? text.slice(0, DETAIL_CLIP_LEN) + '…' : text;
@@ -1040,6 +1695,26 @@ function toolResultText(content) {
         return content.map((part) => (part.type === 'text' ? part.text : `[${part.type}]`)).join('\n');
     }
     return '';
+}
+
+// картинки из tool_result (скриншоты Playwright/Chrome DevTools и т.п.): в тексте
+// шага от них остаётся метка «[image]», а сами байты лежат здесь —
+// как data-URL, тем же способом, что и sessions.thumb (см. THUMB_RE
+// ниже), с тем же лимитом на картинку — иначе один шаг с несколькими большими
+// скриншотами раздул бы .sessions.db
+const MAX_TOOL_IMAGE_BYTES = 300 * 1024;
+const MAX_TOOL_IMAGES_PER_RESULT = 6;
+function toolResultImages(content) {
+    if (!Array.isArray(content)) return null;
+    const images = [];
+    for (const part of content) {
+        if (images.length >= MAX_TOOL_IMAGES_PER_RESULT) break;
+        if (part.type !== 'image' || !part.source || part.source.type !== 'base64') continue;
+        const { media_type: mediaType, data } = part.source;
+        if (!mediaType || typeof data !== 'string' || data.length > MAX_TOOL_IMAGE_BYTES) continue;
+        images.push(`data:${mediaType};base64,${data}`);
+    }
+    return images.length ? JSON.stringify(images) : null;
 }
 
 // очистка списка: база пустеет. файлы истории Claude CLI не трогаем — они не наши
@@ -1058,10 +1733,13 @@ function deleteSession(id) {
 // ---------- запись сообщений из чата ----------
 
 // вопрос записываем сразу, как CLI сообщил id: сессия появляется в списке
-// в начале работы, а не после ответа
+// в начале работы, а не после ответа. Возвращает позицию строки — вызывающий
+// код дописывает сюда же mode/input_sent (см. askClaude)
 function startExchange(sessionId, question, target, model, effort) {
-    upsertSession.run(sessionId, extractTitle(question, 120), new Date().toISOString(), target || null);
-    upsertMessage.run(sessionId, countMessages.get(sessionId).n, 'user', question, new Date().toISOString(), model || null, effort || null);
+    upsertSession.run(sessionId, extractTitle(question, 300), new Date().toISOString(), target || null);
+    const position = countMessages.get(sessionId).n;
+    upsertMessage.run(sessionId, position, 'user', question, new Date().toISOString(), model || null, effort || null);
+    return position;
 }
 
 // тема сессии: режим комментариев кладёт в вопрос «Элемент интерфейса… Комментарий: …»,
@@ -1074,7 +1752,12 @@ function extractTitle(raw, maxLen) {
 }
 
 function sessionTitle(session) {
-    return extractTitle(session.title, 80);
+    // 80 символов подходили под старую фиксированную панель 210px — при
+    // ресайзе (sidebar-resize.js) в две строки реально влезает больше, а
+    // сервер обрезал текст ещё до браузера, так что расширение панели ничего
+    // не добавляло. -webkit-line-clamp сам подрежет визуально и добавит «…»,
+    // поэтому здесь достаточно щедрого запаса, а не точного расчёта под ширину
+    return extractTitle(session.title, 240);
 }
 
 // шаги работы (вызовы инструментов) хранятся вместе с перепиской,
@@ -1084,27 +1767,106 @@ function sessionTitle(session) {
 // ими пользуется Flow, чтобы показать на ноде название инструмента и реальную
 // команду, а не общее слово «Шаг». Возвращаем позицию, чтобы вызывающий код
 // мог позже дописать сюда же tool_result (он приходит отдельным событием)
-function recordStep(sessionId, text, toolName, toolInput, toolUseId, parentToolUseId) {
+function recordStep(sessionId, text, toolName, toolInput, toolUseId, parentToolUseId, caller) {
     const position = countMessages.get(sessionId).n;
     upsertMessage.run(sessionId, position, 'tool', text, new Date().toISOString(), null, null);
     setMessageToolCall.run(toolName || null, toolInput !== undefined ? clip(JSON.stringify(toolInput)) : null, sessionId, position);
     if (toolUseId || parentToolUseId) setMessageToolIds.run(toolUseId || null, parentToolUseId || null, sessionId, position);
+    // caller — {"type":"direct"} у обычного вызова, отличает прямой вызов
+    // от вызова изнутри субагента; не кладём в toolInput —
+    // Flow (flow.js:1669 toolInputSummary) читает его как есть, обёртка сломала бы вывод
+    if (caller) setMessageExtraMeta.run(JSON.stringify({ caller }), sessionId, position);
     return position;
 }
 
-// рассуждения модели (блоки thinking) — раньше терялись целиком, теперь идут
-// отдельной строкой в той же таблице, рядом с шагами
-function recordThinking(sessionId, text) {
-    upsertMessage.run(sessionId, countMessages.get(sessionId).n, 'thinking', clip(text), new Date().toISOString(), null, null);
+// вывод хука (SessionStart/PreToolUse/PostToolUse/…) — своя строка роли 'hook',
+// использует те же tool_name/tool_input/tool_result, что и обычные шаги
+// (см. комментарий у hookPositions выше). hook_started создаёт строку,
+// hook_response тем же hook_id дописывает результат — recordHookResponse
+function recordHookStart(sessionId, event) {
+    const position = countMessages.get(sessionId).n;
+    const label = [event.hook_name, event.hook_event].filter(Boolean).join(' · ') || 'hook';
+    upsertMessage.run(sessionId, position, 'hook', label, new Date().toISOString(), null, null);
+    setMessageToolCall.run(
+        event.hook_name || null,
+        clip(JSON.stringify({ hookId: event.hook_id || null, hookEvent: event.hook_event || null })),
+        sessionId, position,
+    );
+    return position;
+}
+
+function recordHookResponse(sessionId, position, event) {
+    const text = clip([
+        event.stdout || null,
+        event.output && event.output !== event.stdout ? event.output : null,
+        event.stderr ? `[stderr]\n${event.stderr}` : null,
+    ].filter(Boolean).join('\n\n'));
+    setMessageToolResult.run(text || null, event.exit_code ? 1 : 0, null, sessionId, position);
+}
+
+// рассуждения модели (блоки thinking) — отдельной строкой в той же таблице, рядом с шагами
+function recordThinking(sessionId, text, signature) {
+    const position = countMessages.get(sessionId).n;
+    upsertMessage.run(sessionId, position, 'thinking', clip(text), new Date().toISOString(), null, null);
+    // signature (600-2348 символов) — крипто-подпись блока для API, не читаемый
+    // текст; храним факт и длину, не саму строку
+    if (signature) setMessageExtraMeta.run(JSON.stringify({ signaturePresent: true, signatureLength: signature.length }), sessionId, position);
+}
+
+// текстовый кусок ответа — своя строка на каждое событие 'text' (за один ход
+// модель может выдать текст несколько раз подряд, чередуя с вызовами
+// инструментов); parentToolUseId — как у recordStep, отличает текст субагента
+// (Task) от текста верхнего уровня. Возвращаем позицию — finishExchange
+// дописывает на неё usage/stopReason/mode, а не вставляет ещё одну строку
+function recordAssistantText(sessionId, text, model, effort, parentToolUseId) {
+    const position = countMessages.get(sessionId).n;
+    upsertMessage.run(sessionId, position, 'assistant', text, new Date().toISOString(), model || null, effort || null);
+    if (parentToolUseId) setMessageToolIds.run(null, parentToolUseId, sessionId, position);
+    return position;
+}
+
+// перехватчик для частей ответа с типом, который сервер явно не разбирает:
+// WebSearch/WebFetch идут обычным tool_use, но CLI может прислать и что-то ещё
+// (см. DOCS/decisions/012)
+function recordUnknownPart(sessionId, part, parentToolUseId) {
+    const position = countMessages.get(sessionId).n;
+    upsertMessage.run(sessionId, position, 'unknown', part.type || 'unknown', new Date().toISOString(), null, null);
+    setMessageToolCall.run(part.type || null, clip(JSON.stringify(part)), sessionId, position);
+    if (parentToolUseId) setMessageToolIds.run(null, parentToolUseId, sessionId, position);
+    return position;
+}
+
+// перехватчик для system-подтипов, которые сервер явно не разбирает (init/
+// hook_started/hook_response/thinking_tokens — см. HANDLED_SYSTEM_SUBTYPES);
+// такие подтипы реально приходят, например permission_denied
+function recordSystemEvent(sessionId, event) {
+    const position = countMessages.get(sessionId).n;
+    upsertMessage.run(sessionId, position, 'system', event.subtype || 'system', new Date().toISOString(), null, null);
+    setMessageToolCall.run(event.subtype || null, clip(JSON.stringify(event)), sessionId, position);
+    return position;
+}
+
+// последний уровень перехвата: верхнеуровневый event.type, для которого нет
+// ни одной ветки в onLine (см. HANDLED_TOP_LEVEL_TYPES и DOCS/decisions/012)
+function recordTopLevelEvent(sessionId, event) {
+    const position = countMessages.get(sessionId).n;
+    upsertMessage.run(sessionId, position, 'top_level', event.type || 'unknown', new Date().toISOString(), null, null);
+    setMessageToolCall.run(event.type || null, clip(JSON.stringify(event)), sessionId, position);
+    return position;
 }
 
 // usage/cost/duration — только на весь ход (см. setMessageUsage) — приходят
 // с CLI в событии result до того, как известна позиция строки ответа, поэтому
-// finishExchange принимает их вместе с текстом и сам решает, что записать
+// finishExchange принимает их вместе с текстом и сам решает, что записать.
+// assistantPosition — если текст уже записан построчно (recordAssistantText),
+// новую строку вставлять не нужно, только дописать метаданные хода на неё же
 function finishExchange(sessionId, answer, meta = {}) {
     touchSession.run(new Date().toISOString(), sessionId);
-    const position = countMessages.get(sessionId).n;
-    upsertMessage.run(sessionId, position, 'assistant', answer, new Date().toISOString(), meta.model || null, meta.effort || null);
+    let position = meta.assistantPosition;
+    if (position == null) {
+        position = countMessages.get(sessionId).n;
+        upsertMessage.run(sessionId, position, 'assistant', answer, new Date().toISOString(), meta.model || null, meta.effort || null);
+    }
     const u = meta.usage || {};
     const hasUsage = u.inputTokens || u.outputTokens || u.cacheReadTokens || u.cacheCreationTokens;
     if (hasUsage || meta.costUsd != null || meta.durationMs != null) {
@@ -1115,6 +1877,9 @@ function finishExchange(sessionId, answer, meta = {}) {
         );
     }
     if (meta.stopReason) setMessageStopReason.run(meta.stopReason, sessionId, position);
+    if (meta.mode) setMessageMode.run(meta.mode, sessionId, position);
+    if (meta.resultMeta) setMessageResultMeta.run(JSON.stringify(meta.resultMeta), sessionId, position);
+    return position;
 }
 
 // ---------- граф Obsidian ----------
@@ -1132,64 +1897,73 @@ const {
 
 // ---------- API коннектора ----------
 
-function sendJson(res, payload, status = 200) {
-    const body = JSON.stringify(payload);
-    res.writeHead(status, {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Content-Length': Buffer.byteLength(body),
-        'Cache-Control': 'no-store',
-    });
-    res.end(body);
+// «5 мин назад» для серверных фрагментов. Раньше это считал браузер в app.js;
+// после переезда панели на htmx время форматирует тот, кто рисует разметку
+function formatWhen(iso) {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return '';
+
+    const minutes = Math.round((Date.now() - date.getTime()) / 60000);
+    if (minutes < 1) return 'только что';
+    if (minutes < 60) return `${minutes} мин назад`;
+    if (minutes < 24 * 60) return `${Math.round(minutes / 60)} ч назад`;
+    return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
 }
 
 async function handleApi(req, res, urlPath) {
-    if (req.method !== 'POST') {
-        sendJson(res, { ok: false, error: 'Ожидается POST' }, 405);
+    // фрагменты только читают состояние, и htmx тянет их обычным hx-get —
+    // остальному API по-прежнему нужен POST
+    const readOnly = urlPath.startsWith('/api/fragment/');
+    if (req.method !== 'POST' && !(readOnly && req.method === 'GET')) {
+        sendJson(res, { ok: false, error: readOnly ? 'Ожидается GET или POST' : 'Ожидается POST' }, 405);
         return;
     }
 
     try {
-        if (urlPath === '/api/claude/detect') {
-            sendJson(res, { installs: await detectInstalls() });
+        // сначала маршруты, вынесенные в фичи, — они не знают друг о друге
+        // и не могут перехватить чужой путь: ключ здесь всегда полный
+        const feature = featureRoutes[urlPath];
+        if (feature) {
+            await feature(req, res);
             return;
         }
 
-        if (urlPath === '/api/claude/connect') {
-            const { id } = await readJson(req);
-            const target = TARGETS.find((t) => t.id === id);
+        // ---- агенты: один набор маршрутов на все CLI (таблица AGENTS выше) ----
+        // имя CLI приходит полем agent в теле, а не в пути: так добавление
+        // третьего коннектора не добавляет ни одного маршрута
+
+        if (urlPath === '/api/agent/detect') {
+            const { agent } = await readJson(req);
+            sendJson(res, { installs: await agentByName(agent).detect() });
+            return;
+        }
+
+        if (urlPath === '/api/agent/connect') {
+            const { agent, id } = await readJson(req);
+            const adapter = agentByName(agent);
+            const target = adapter.targets().find((t) => t.id === id);
             if (!target) {
                 sendJson(res, { ok: false, error: `Неизвестное окружение: ${id}` });
                 return;
             }
 
-            const version = parseVersion(await runClaude(target, ['--version'], { timeoutMs: 15000 }));
-            activeTarget = target;
-            sendJson(res, { ok: true, id: target.id, label: target.label, version });
+            const version = await adapter.version(target);
+            const models = adapter.models ? await adapter.models(target) : undefined;
+            adapter.activate(target);
+            sendJson(res, { ok: true, id: target.id, label: target.label, version, models });
             return;
         }
 
-        if (urlPath === '/api/claude/stop') {
+        if (urlPath === '/api/agent/stop') {
             const { sessionId } = await readJson(req);
+            // реестр запусков общий на все CLI (activeRuns), поэтому и остановка одна
             sendJson(res, { ok: true, stopped: stopActiveRun(sessionId || null) });
             return;
         }
 
-        // вызывается PreToolUse-хуком (.claude/hooks/file-lock.js) прямо перед
-        // Edit/Write/NotebookEdit — может держать ответ до минуты, пока файл не освободится
-        if (urlPath === '/api/claude/lock-check') {
-            const { file, sessionId } = await readJson(req);
-            if (!file) {
-                sendJson(res, { ok: false, reason: 'Не указан файл' });
-                return;
-            }
-            const result = await checkFileLock(file, sessionId || null);
-            console.log(`[lock-check] ${path.basename(file)}: ${result.ok ? 'свободен' : 'занят — ' + result.reason}`);
-            sendJson(res, result);
-            return;
-        }
-
-        if (urlPath === '/api/claude/ask') {
+        if (urlPath === '/api/agent/ask') {
             const body = await readJson(req);
+            const adapter = agentByName(body.agent);
             res.writeHead(200, {
                 'Content-Type': 'application/x-ndjson; charset=utf-8',
                 'Cache-Control': 'no-store',
@@ -1199,7 +1973,7 @@ async function handleApi(req, res, urlPath) {
             let open = true;
             req.on('close', () => { open = false; });
 
-            await askClaude(body, (event) => {
+            await adapter.ask(body, (event) => {
                 if (open) res.write(JSON.stringify(event) + '\n');
             });
             if (open) res.end();
@@ -1239,7 +2013,54 @@ async function handleApi(req, res, urlPath) {
                 title: sessionTitle(session),
                 running: runs.has(session.id),
             }));
-            sendJson(res, { ok: true, sessions, queued: waitingCount });
+            sendJson(res, { ok: true, sessions, active: activeRuns.size });
+            return;
+        }
+
+        // готовый HTML панели наблюдения на Home вместо JSON: разметку собирает
+        // сервер, htmx подменяет только этот кусок страницы. Карточка Providers
+        // сюда не входит — её состояние есть только в браузере
+        if (urlPath === '/api/fragment/home-observation') {
+            const sessions = listSessions.all().map((session) => ({
+                id: session.id,
+                title: sessionTitle(session),
+                updatedAt: session.updatedAt,
+                messageCount: session.messageCount,
+                running: runs.has(session.id),
+            }));
+
+            const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+            const html = eta.render('home-observation', {
+                total: sessions.length,
+                active: activeRuns.size,
+                messages: sessions.reduce((sum, s) => sum + s.messageCount, 0),
+                today: sessions.filter((s) => new Date(s.updatedAt).getTime() >= dayAgo).length,
+                lastActive: sessions[0] ? formatWhen(sessions[0].updatedAt) : '—',
+                running: sessions.filter((s) => s.running),
+                recent: sessions.slice(0, 6).map((s) => ({
+                    ...s,
+                    meta: s.running ? 'выполняется…' : `${formatWhen(s.updatedAt)} · ${s.messageCount} сообщ.`,
+                })),
+            });
+            sendHtml(res, html);
+            return;
+        }
+
+        // список сессий панели Chat тем же приёмом, что и home-observation: разметку
+        // строит сервер, htmx подменяет #sessionList целиком по hx-swap-oob. Кто сейчас
+        // выбран (aria-current) серверу не известно — это чинит app.js после подмены
+        if (urlPath === '/api/fragment/chat-sessions') {
+            const sessions = listSessions.all().map((session) => {
+                const running = runs.has(session.id);
+                return {
+                    id: session.id,
+                    title: sessionTitle(session),
+                    thumb: session.thumb,
+                    running,
+                    meta: running ? 'выполняется…' : `${formatWhen(session.updatedAt)} · ${session.messageCount} сообщ.`,
+                };
+            });
+            sendHtml(res, eta.render('chat-sessions', { sessions }));
             return;
         }
 
@@ -1285,7 +2106,7 @@ async function handleApi(req, res, urlPath) {
             return; // ответ закроется, когда закончится работа
         }
 
-        // снимок экрана из режима Edit: клиент попросил его сразу после отправки
+        // снимок экрана из режима Karandash: клиент попросил его сразу после отправки
         // комментария, пока выбранный элемент ещё обведён рамкой
         if (urlPath === '/api/screenshot') {
             const thumb = await captureScreenshot(Number(process.env.SCREENSHOT_SCREEN) || 0);
@@ -1314,19 +2135,7 @@ async function handleApi(req, res, urlPath) {
             return;
         }
 
-        // какая вкладка открывается по умолчанию при заходе на страницу — настройка из Settings
-        if (urlPath === '/api/default-view') {
-            const { view } = await readJson(req);
-            if (!DEFAULT_VIEW_OPTIONS.includes(view)) {
-                sendJson(res, { ok: false, error: 'Неизвестная вкладка' });
-                return;
-            }
-            setEnvValue('DEFAULT_VIEW', view);
-            sendJson(res, { ok: true });
-            return;
-        }
-
-        // превью элемента, к которому был оставлен комментарий из режима Edit —
+        // превью элемента, к которому был оставлен комментарий из режима Karandash —
         // приходит уже готовой data URL (скриншот системы либо клиентский снимок)
         if (urlPath === '/api/sessions/thumb') {
             const { id, thumb } = await readJson(req);
@@ -1354,70 +2163,34 @@ async function handleApi(req, res, urlPath) {
                 ok: true,
                 messages: listMessages.all(id),
                 contextPercent: meta.contextPercent ?? null,
+                contextWindow: meta.contextWindow ?? null,
                 sessionInfo,
                 rateLimit,
                 usage: sumSessionUsage.get(id),
+                target: meta.target ?? null,
+                thumb: meta.thumb ?? null,
             });
             return;
         }
 
         // хранилище вкладки Flow целиком: список пунктов меню, позиции/тексты
         // нод, граф связей, зум/пан каждого канваса — см. flow_state выше
-        if (urlPath === '/api/flow/state') {
-            const state = {};
-            for (const row of listFlowState.all()) {
-                try {
-                    state[row.key] = JSON.parse(row.value);
-                } catch { /* битая строка — пропускаем, лучше потерять одно поле, чем всё */ }
-            }
-            sendJson(res, { ok: true, state });
-            return;
-        }
-
-        if (urlPath === '/api/flow/state/set') {
-            const { key, value } = await readJson(req);
-            if (typeof key !== 'string' || !key) {
-                sendJson(res, { ok: false, error: 'Нужен key' });
-                return;
-            }
-            setFlowStateRow.run(key, JSON.stringify(value ?? null));
-            sendJson(res, { ok: true });
-            return;
-        }
-
-        if (urlPath === '/api/pages') {
-            sendJson(res, { ok: true, pages: listPages.all() });
-            return;
-        }
-
-        if (urlPath === '/api/pages/create') {
-            const { title } = await readJson(req);
-            if (typeof title !== 'string' || !title) {
-                sendJson(res, { ok: false, error: 'Нужен title' });
-                return;
-            }
-            const folder = folderNameFromTitle(title);
-            fs.mkdirSync(path.join(ROOT, 'PROJECTS', folder), { recursive: true });
-            fs.writeFileSync(path.join(ROOT, 'PROJECTS', folder, 'README.md'), `# ${title}\n`, 'utf8');
-            const info = insertPage.run(title, folder);
-            sendJson(res, { ok: true, id: info.lastInsertRowid, title, folder, readme: `PROJECTS/${folder}/README.md` });
-            return;
-        }
-
-        if (urlPath === '/api/pages/delete') {
-            const { id } = await readJson(req);
-            // страница создаётся вместе с настоящей папкой (см. /api/pages/create) —
-            // удаляем вместе с ней, иначе на диске остаётся мусор
-            const page = getPage.get(id);
-            if (page?.folder) fs.rmSync(path.join(ROOT, 'PROJECTS', page.folder), { recursive: true, force: true });
-            deletePage.run(id);
-            sendJson(res, { ok: true });
-            return;
-        }
-
         sendJson(res, { ok: false, error: 'Неизвестный эндпоинт' }, 404);
     } catch (err) {
-        sendJson(res, { ok: false, error: err.message });
+        // сюда попадают только неожиданные падения: там, где ошибка предусмотрена,
+        // обработчик сам отвечает 200 с { ok: false }. Поэтому здесь код 500 и
+        // запись в консоль — иначе баг в сервере выглядит как успешный ответ
+        // и находится потом по симптомам в интерфейсе
+        console.error(`[api] ${urlPath}: ${err.stack || err.message}`);
+
+        // htmx на 200 попробовал бы разложить тело по oob-целям, ничего не нашёл
+        // и тихо оставил панель замороженной
+        if (urlPath.startsWith('/api/fragment/')) {
+            sendHtml(res, `<!-- ошибка фрагмента: ${escapeHtml(err.message)} -->`, 500);
+            return;
+        }
+        // тело прежнее: App.api() читает JSON независимо от кода ответа
+        sendJson(res, { ok: false, error: err.message }, 500);
     }
 }
 
@@ -1432,37 +2205,8 @@ function isLocalRequest(req) {
         || address.startsWith('127.');
 }
 
-// адрес из WSL: в виртуалке живёт свой Claude CLI, и его PreToolUse-хук
-// (.claude/hooks/file-lock.js) до 127.0.0.1 хоста не достучится — при обычной (NAT)
-// сети WSL2 это loopback самой виртуалки. Запрос приходит с адреса на адаптере
-// «vEthernet (WSL)» — его и узнаём по маске самого адаптера, а не по зашитой
-// подсети: она меняется при каждом перезапуске WSL
-function ipToInt(ip) {
-    const parts = String(ip).split('.');
-    return parts.length === 4 ? parts.reduce((acc, part) => acc * 256 + (Number(part) & 255), 0) : null;
-}
-
-function isWslRequest(req) {
-    const value = ipToInt((req.socket.remoteAddress || '').replace(/^::ffff:/, ''));
-    if (value === null) return false;
-    for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
-        if (!/WSL/i.test(name)) continue;
-        for (const item of addresses || []) {
-            if (item.family !== 'IPv4') continue;
-            const net = ipToInt(item.address);
-            const mask = ipToInt(item.netmask);
-            if (net !== null && mask !== null && (value & mask) === (net & mask)) return true;
-        }
-    }
-    return false;
-}
-
 const server = http.createServer((req, res) => {
-    // из WSL пускаем ровно один маршрут — сверку блокировок для хука.
-    // остальное API читает и пишет файлы проекта и запускает CLI — открывать
-    // его виртуалке целиком незачем
-    if (!isLocalRequest(req)
-        && !(isWslRequest(req) && (req.url || '').startsWith('/api/claude/lock-check'))) {
+    if (!isLocalRequest(req)) {
         res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('403 Forbidden: сервер отвечает только на локальные запросы');
         return;
@@ -1508,8 +2252,7 @@ const server = http.createServer((req, res) => {
         if (ext === '.html') {
             let html = data.toString('utf8')
                 .replace('{{APP_VERSION}}', currentVersion())
-                .replace('{{VERSION_LIST}}', versionHistory())
-                .replace('{{DEFAULT_VIEW}}', escapeHtml(process.env.DEFAULT_VIEW || 'home'));
+                .replace('{{VERSION_LIST}}', versionHistory());
             if (LIVE_RELOAD) {
                 html = html.includes('</body>')
                     ? html.replace('</body>', `${RELOAD_SNIPPET}</body>`)
@@ -1537,8 +2280,23 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, () => {
-    console.log(`Сервер запущен: http://localhost:${PORT}`);
+    // prepareVault() синхронна и на этом проекте занимает ~20 с: пока она идёт,
+    // event loop занят и сокет никому не отвечает. Поэтому «Сервер запущен»
+    // печатается после неё — иначе и человек, и смоук идут на порт, который
+    // молчит, и получают таймаут вместо страницы
+    console.log('Собираю карту проекта — это занимает несколько секунд...');
     prepareVault();
+    console.log(`Сервер запущен: http://localhost:${PORT} (среда: ${detectRuntimePlatform()})`);
+
+    // первый запуск проекта доводит себя до рабочего состояния сам: скачивает
+    // Hermes, ставит ему окружение и пишет конфиг. Идёт в фоне — интерфейс
+    // открывается сразу и показывает ход установки. Отключается HERMES_AUTOINSTALL=0
+    if (process.env.HERMES_AUTOINSTALL !== '0' && !hermesSetup.isReady()) {
+        console.log('Hermes ещё не установлен — ставлю в фоне, ход виден на вкладке Hermes.');
+        hermesSetup.installOnce({ onLog: (line) => console.log(`[hermes-setup] ${line}`) })
+            .then(() => console.log('Hermes готов — выберите провайдера в настройках.'))
+            .catch((err) => console.error(`Установка Hermes не удалась: ${err.message}`));
+    }
     if (LIVE_RELOAD) {
         watchFiles();
         console.log('Автообновление включено — страница перезагрузится после сохранения файла.');

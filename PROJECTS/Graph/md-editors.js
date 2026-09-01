@@ -1,4 +1,4 @@
-// EasyMDE для файловой панели чата (#chatFileEditorText).
+// EasyMDE для файловых панелей: чата (#chatFileEditorText) и вкладки Book (#bookFileEditorText).
 (function () {
     const nativeValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
     const nativeReadOnly = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'readOnly');
@@ -32,5 +32,6 @@
 
     document.addEventListener('DOMContentLoaded', () => {
         attach(document.getElementById('chatFileEditorText'));
+        attach(document.getElementById('bookFileEditorText'));
     });
 })();

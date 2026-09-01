@@ -1,16 +1,19 @@
 // Кнопка «+» (id newButton): по клику создаёт ещё одну кнопку по своему образцу,
 // у новой кнопки — своя страница с "Hello World" по центру, и настоящая папка
 // в PROJECTS/ с README.md (см. /api/pages/create в server.js) — так новый раздел
-// попадает в общий список карточек (PROJECTS/Projects/projects-tab.js) наравне
+// попадает в общий список карточек (PROJECTS/Book/book-tab.js) наравне
 // со встроенными. Список созданных страниц хранится на сервере (см. /api/pages),
 // иначе они пропадали бы при каждой перезагрузке страницы.
 (function () {
     const newButton = document.getElementById('newButton');
     const toolbar = newButton.closest('.toolbar');
+    const feedPanel = document.getElementById('sessionFeedPanel');
     const generatedPages = [];
 
     function hideGeneratedPages() {
         for (const page of generatedPages) page.hidden = true;
+        // выбор сессии относится только к этим страницам — на обычных вкладках его быть не должно
+        if (feedPanel) feedPanel.hidden = true;
     }
 
     // переключение на обычную вкладку (Graph/Flow/Kanban/Projects/Home) скрывает сгенерированные страницы
@@ -21,10 +24,8 @@
     function addPageButton(title, id, readme) {
         const page = document.createElement('main');
         page.id = `generatedPage${id}`;
-        page.className = 'view';
+        page.className = 'view view--generated';
         page.hidden = true;
-        page.style.cssText = 'display:flex;align-items:center;justify-content:center;';
-        page.textContent = 'Hello World';
         document.body.appendChild(page);
         generatedPages.push(page);
 
@@ -35,7 +36,7 @@
         btn.dataset.removable = 'true';
         btn.dataset.page = page.id;
         btn.dataset.pageId = id;
-        // читает PROJECTS/Projects/projects-tab.js — так карточка попадает в общий список разделов
+        // читает PROJECTS/Book/book-tab.js — так карточка попадает в общий список разделов
         btn.dataset.readme = readme;
         // иконка «+» уже занята кнопкой newButton — у сгенерированных страниц своя, номер страницы
         const svg = btn.querySelector('svg');
@@ -55,6 +56,14 @@
             for (const view of Object.values(App.VIEWS)) view.hidden = true;
             for (const vb of document.querySelectorAll('.toolbar [data-view]')) vb.setAttribute('aria-pressed', 'false');
             page.hidden = false;
+            if (feedPanel) feedPanel.hidden = false;
+            // содержимое страницы рисует SYSTEM/session-feed-page.js — лента выбранной
+            // сессии. Строим при первом показе, а не при создании кнопки: иначе каждая
+            // из страниц дёргала бы /api/sessions ещё до того, как её открыли
+            if (!page.dataset.built) {
+                page.dataset.built = '1';
+                window.SessionFeedPage?.build(page);
+            }
         });
         toolbar.insertBefore(btn, newButton);
     }

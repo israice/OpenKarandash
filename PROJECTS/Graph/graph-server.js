@@ -13,8 +13,11 @@ const { DatabaseSync } = require('node:sqlite');
 const ROOT = path.resolve(__dirname, '..', '..');
 
 // всё, что сервер производит сам, лежит в одной папке: vault, поисковый индекс,
-// база сессий. её не обходят ни карта, ни сторож файлов
-const DATA_DIR = 'DATA';
+// база сессий. её не обходят ни карта, ни сторож файлов.
+// DATA_DIR в окружении подменяет папку целиком — так смоук работает на своих
+// данных и не дерётся за .sessions.db/.index.db с рабочим сервером (см.
+// DOCS/decisions/001 и SYSTEM/smoke.js)
+const DATA_DIR = process.env.DATA_DIR || 'DATA';
 const VAULT_DIR = `${DATA_DIR}/vault`; // Obsidian vault проекта: создаётся сам
 fs.mkdirSync(path.join(ROOT, DATA_DIR), { recursive: true }); // до открытия баз ниже
 
@@ -62,7 +65,10 @@ function collectNotes(dir, base, acc = []) {
 //   .git — служебная база на тысячи объектов, содержимое проекта в ней дублируется
 //   DATA — то, что сервер произвёл сам: карта из vault уже в графе узлами,
 //   и заметки о заметках плодились бы с каждой пересборкой
+//   SYSTEM/Hermes/agent и runtime — чужой код и окружения Python: 250 МБ,
+//   которым нечего делать в карте проекта (список — SYSTEM/core/scan.js)
 const MAP_SKIP = new Set(['.git', 'node_modules', DATA_DIR]);
+const scan = require('../../SYSTEM/core/scan.js');
 
 function projectFiles(dir = ROOT, acc = []) {
     let entries;
@@ -74,6 +80,7 @@ function projectFiles(dir = ROOT, acc = []) {
     for (const entry of entries) {
         if (MAP_SKIP.has(entry.name)) continue;
         const full = path.join(dir, entry.name);
+        if (scan.isSkipped(ROOT, full, entry.name)) continue;
         if (entry.isDirectory()) projectFiles(full, acc);
         else acc.push(path.relative(ROOT, full).split(path.sep).join('/'));
     }

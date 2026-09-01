@@ -14,21 +14,11 @@
     "hooks": {
         "PreToolUse": [
             {
-                "matcher": "Edit|Write|NotebookEdit",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node .claude/hooks/file-lock.js",
-                        "timeout": 100
-                    }
-                ]
-            },
-            {
                 "matcher": "Bash",
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "node .claude/hooks/no-bg-server.js",
+                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-bg-server.js\"",
                         "timeout": 10
                     }
                 ]
@@ -40,7 +30,18 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "node .claude/hooks/syntax-check.js",
+                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/syntax-check.js\"",
+                        "timeout": 10
+                    }
+                ]
+            }
+        ],
+        "Stop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/language-check.js\"",
                         "timeout": 10
                     }
                 ]

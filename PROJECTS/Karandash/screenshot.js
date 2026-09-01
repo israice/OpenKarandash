@@ -1,5 +1,5 @@
-// Кнопка Edit, серверная половина: снимок экрана для миниатюры сессии.
-// Модуль лежит рядом с button-edit.js — вся кнопка Edit собрана в одной папке.
+// Кнопка Karandash, серверная половина: снимок экрана для миниатюры сессии.
+// Модуль лежит рядом с karandash.js — вся кнопка Karandash собрана в одной папке.
 // server.js только подключает его и вешает на роут POST /api/screenshot.
 
 const fs = require('fs');
@@ -24,7 +24,7 @@ const { spawn } = require('child_process');
 const SCREENSHOT_WIDTH = 480;
 
 // список подключённых экранов — для настройки в Settings, откуда выбирают,
-// с какого монитора кнопка Edit снимает миниатюру
+// с какого монитора кнопка Karandash снимает миниатюру
 function listScreens() {
     const script = `
         Add-Type -AssemblyName System.Windows.Forms
