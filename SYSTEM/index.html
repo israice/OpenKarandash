@@ -16,7 +16,6 @@
     <link rel="stylesheet" href="SYSTEM/styles/messages.css">
     <link rel="stylesheet" href="SYSTEM/styles/task-card.css">
     <link rel="stylesheet" href="SYSTEM/styles/sessions.css">
-    <link rel="stylesheet" href="SYSTEM/styles/session-feed.css">
     <!-- Кнопка Karandash живёт целиком в PROJECTS/Karandash: и стили, и скрипт. -->
     <link rel="stylesheet" href="PROJECTS/Karandash/karandash.css">
     <!-- Вкладка Graph живёт целиком в PROJECTS/Graph: стили, скрипт и серверная половина. -->
@@ -35,26 +34,28 @@
 </head>
 <body>
     <div class="topbar">
-        <div class="flow-canvas__zoom btn-group" id="flowZoomPanel" hidden>
-            <select class="flow-canvas__zoom-select" id="flowSessionSelect" title="Открыть сессию в Flow" hidden>
-                <option value="">Сессия…</option>
+        <!-- Панели самих страниц кнопки «+» (например, выбор сессии у Feed) сюда
+             не пишутся: их вставляет модуль страницы из своей папки, см. new-button.js. -->
+        <div class="flow-canvas__zoom btn-group" id="flowZoomPanel" role="toolbar" aria-label="Page tools" hidden>
+            <select class="flow-canvas__zoom-select" id="flowSessionSelect" title="Open session in Flow" hidden>
+                <option value="">Session…</option>
             </select>
-            <button type="button" class="flow-canvas__zoom-btn btn-group__btn" id="flowZoomOut" title="Уменьшить">−</button>
+            <button type="button" class="flow-canvas__zoom-btn btn-group__btn" id="flowZoomOut" title="Zoom out">−</button>
             <span class="flow-canvas__zoom-value" id="flowZoomValue">100%</span>
-            <button type="button" class="flow-canvas__zoom-btn btn-group__btn" id="flowZoomIn" title="Увеличить">+</button>
-            <button type="button" class="flow-canvas__zoom-btn btn-group__btn" id="flowLayoutReset" title="Разложить ноды по дереву без наложений">⊞</button>
-            <button type="button" class="flow-canvas__zoom-btn btn-group__btn" id="flowCanvasReset" title="Обнулить канвас: удалить все добавленные ноды">↺</button>
+            <button type="button" class="flow-canvas__zoom-btn btn-group__btn" id="flowZoomIn" title="Zoom in">+</button>
+            <button type="button" class="flow-canvas__zoom-btn btn-group__btn" id="flowLayoutReset" title="Lay nodes out as a tree without overlaps">⊞</button>
+            <button type="button" class="flow-canvas__zoom-btn btn-group__btn" id="flowCanvasReset" title="Reset canvas: remove all added nodes">↺</button>
         </div>
-        <!-- Панель страницы кнопки «+» (SYSTEM/session-feed-page.js): выбор сессии,
-             под ней на самой странице — её лента. Видна только пока открыта такая страница. -->
-        <div class="flow-canvas__zoom btn-group" id="sessionFeedPanel" hidden>
-            <select class="flow-canvas__zoom-select" id="sessionFeedSelect" title="Сессия, лента которой показана ниже">
-                <option value="">— выберите сессию —</option>
-            </select>
-            <button type="button" class="flow-canvas__zoom-btn btn-group__btn" id="sessionFeedCopyId" title="Скопировать id сессии">⧉</button>
+        <!-- Левая панель тулбара: кнопка «Новое» и созданные ею страницы (SYSTEM/new-button.js) -->
+        <div class="toolbar btn-group toolbar--left" role="toolbar" aria-label="New projects">
+            <button type="button" class="icon-button btn-group__btn" id="newButton" aria-label="New" title="New">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 5v14M5 12h14"></path>
+                </svg>
+            </button>
         </div>
         <!-- Новая кнопка здесь — только с иконкой, ещё не занятой соседями по .btn-group__btn -->
-        <div class="toolbar btn-group" role="toolbar" aria-label="Действия">
+        <div class="toolbar btn-group" role="toolbar" aria-label="System projects">
             <button type="button" class="icon-button btn-group__btn" id="graphButton" data-view="graph" aria-pressed="false" aria-label="Graph" title="Graph">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <circle cx="6" cy="6" r="2.5"></circle>
@@ -77,7 +78,7 @@
                     <rect x="16" y="4" width="5" height="14" rx="1.5"></rect>
                 </svg>
             </button>
-            <button type="button" class="icon-button btn-group__btn" id="chatButton" data-view="chat" aria-pressed="false" aria-label="Projects" title="Projects">
+            <button type="button" class="icon-button btn-group__btn" id="chatButton" data-view="chat" aria-pressed="false" aria-label="Sessions" title="Sessions">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-5.5A8 8 0 0 1 11 4h2a8 8 0 0 1 8 8z"></path>
                 </svg>
@@ -95,12 +96,7 @@
                     <path d="M5.5 9.5V21h13V9.5"></path>
                 </svg>
             </button>
-            <button type="button" class="icon-button btn-group__btn" id="newButton" aria-label="Новое" title="Новое">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M12 5v14M5 12h14"></path>
-                </svg>
-            </button>
-            <button type="button" class="icon-button btn-group__btn" id="addButton" aria-label="Добавить" title="Добавить">
+            <button type="button" class="icon-button btn-group__btn" id="addButton" aria-label="Add" title="Add">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M12 5v14M5 12l7 7 7-7"></path>
                 </svg>
@@ -114,15 +110,15 @@
         <div class="dashboard">
             <div class="stat-tile">
                 <span class="stat-tile__value" id="runningCount">0</span>
-                <span class="stat-tile__label">сессий сейчас работает</span>
+                <span class="stat-tile__label">sessions running now</span>
             </div>
             <div class="stat-tile">
                 <span class="stat-tile__value" id="totalCount">0</span>
-                <span class="stat-tile__label">сессий всего</span>
+                <span class="stat-tile__label">sessions total</span>
             </div>
             <div class="stat-tile">
                 <span class="stat-tile__value" id="activeCount">0</span>
-                <span class="stat-tile__label">выполняется</span>
+                <span class="stat-tile__label">in progress</span>
             </div>
         </div>
 
@@ -136,32 +132,32 @@
 
         <div class="observation">
             <section class="obs-card">
-                <h2 class="obs-card__title">Активность</h2>
+                <h2 class="obs-card__title">Activity</h2>
                 <ul class="obs-card__stats" id="obsStats">
-                    <li><span>Сообщений всего</span><strong>0</strong></li>
-                    <li><span>Сессий за 24 часа</span><strong>0</strong></li>
-                    <li><span>Последняя активность</span><strong>—</strong></li>
+                    <li><span>Messages total</span><strong>0</strong></li>
+                    <li><span>Sessions in 24 hours</span><strong>0</strong></li>
+                    <li><span>Last activity</span><strong>—</strong></li>
                 </ul>
             </section>
 
             <section class="obs-card">
                 <h2 class="obs-card__title">Providers</h2>
                 <div class="obs-connection">
-                    <p class="obs-connection__text obs-connection__text--off" id="obsConnectionText">Не подключено · подключите провайдера в настройках</p>
+                    <p class="obs-connection__text obs-connection__text--off" id="obsConnectionText">Not connected · connect a provider in settings</p>
                 </div>
             </section>
 
             <section class="obs-card">
-                <h2 class="obs-card__title">Активные сессии</h2>
+                <h2 class="obs-card__title">Active sessions</h2>
                 <ul class="obs-list" id="obsRunningList">
-                    <li class="obs-list__empty">Сейчас ничего не выполняется</li>
+                    <li class="obs-list__empty">Nothing is running right now</li>
                 </ul>
             </section>
 
             <section class="obs-card">
-                <h2 class="obs-card__title">Последние сессии</h2>
+                <h2 class="obs-card__title">Recent sessions</h2>
                 <ul class="obs-list" id="obsRecentList">
-                    <li class="obs-list__empty">Сессий пока нет</li>
+                    <li class="obs-list__empty">No sessions yet</li>
                 </ul>
             </section>
         </div>
@@ -172,20 +168,20 @@
                     <div class="task-card__from">
                         <span class="task-card__tag task-card__tag--sender">
                             <span class="task-card__avatar">🗂️</span>
-                            <span class="task-card__sender">Секретарь</span>
+                            <span class="task-card__sender">Secretary</span>
                             <span class="task-card__time">2026/08/26 14:02</span>
                         </span>
                         <span class="task-card__tag task-card__tag--status">
                             <span class="task-card__pulse"></span>
-                            <span>Задание начато</span>
+                            <span>Task started</span>
                         </span>
                     </div>
-                    <p class="task-card__desc">Требуется: разобрать баг с потерей пользовательской сессии после обновления токена, воспроизвести его на тестовом стенде, найти первопричину в цепочке обработки запросов и добавить недостающие автотесты, чтобы регрессия не повторилась в будущих релизах.</p>
+                    <p class="task-card__desc">Needed: investigate the bug where the user session is lost after a token refresh, reproduce it on the test bench, find the root cause in the request handling chain, and add the missing automated tests so the regression does not return in future releases.</p>
                     <div class="task-card__agents">
-                        <span class="task-card__agents-label">Исполнители:</span>
-                        <span class="task-card__agent">🔎 Исследователь</span>
-                        <span class="task-card__agent">🛠️ Разработчик</span>
-                        <span class="task-card__agent">✅ Проверяющий</span>
+                        <span class="task-card__agents-label">Assignees:</span>
+                        <span class="task-card__agent">🔎 Researcher</span>
+                        <span class="task-card__agent">🛠️ Developer</span>
+                        <span class="task-card__agent">✅ Reviewer</span>
                     </div>
                 </div>
             </div>
@@ -194,15 +190,15 @@
                     <div class="task-card__from">
                         <span class="task-card__tag task-card__tag--sender">
                             <span class="task-card__avatar">🛠️</span>
-                            <span class="task-card__sender">Разработчик</span>
+                            <span class="task-card__sender">Developer</span>
                             <span class="task-card__time">2026/08/26 14:07</span>
                         </span>
                         <span class="task-card__tag task-card__tag--status task-card__tag--status-blue">
                             <span class="task-card__pulse"></span>
-                            <span>Нужен ответ</span>
+                            <span>Response needed</span>
                         </span>
                     </div>
-                    <p class="task-card__desc">Пока разбирался с багом, заметил, что память сейчас хранит только один тип данных. Предлагаю добавить ещё несколько видов памяти (например, для предпочтений по стилю кода и для истории принятых архитектурных решений) — это ускорит будущие задачи. Добавить?</p>
+                    <p class="task-card__desc">While working on the bug I noticed that memory currently stores only one kind of data. I suggest adding a few more memory types (for example, code style preferences and a history of architectural decisions) — that would speed up future tasks. Add them?</p>
                     <div class="task-card__progress">
                         <div class="task-card__progress-track">
                             <div class="task-card__progress-fill" style="width: 65%"></div>
@@ -228,37 +224,37 @@
                     <div class="task-card__from">
                         <span class="task-card__tag task-card__tag--sender">
                             <span class="task-card__avatar">🗂️</span>
-                            <span class="task-card__sender">Секретарь</span>
+                            <span class="task-card__sender">Secretary</span>
                             <span class="task-card__time">2026/08/26 14:21</span>
                         </span>
                         <span class="task-card__tag task-card__tag--status task-card__tag--status-green">
-                            <span>Задание выполнено</span>
+                            <span>Task completed</span>
                         </span>
                     </div>
                     <div class="task-card__report">
                         <div>
-                            <p class="task-card__report-part-label">Что просили сделать</p>
-                            <p class="task-card__report-part-text">Разобрать баг с потерей пользовательской сессии после обновления токена и найти первопричину в цепочке обработки запросов. Добавить недостающие автотесты на регрессию.</p>
+                            <p class="task-card__report-part-label">What was requested</p>
+                            <p class="task-card__report-part-text">Investigate the bug where the user session is lost after a token refresh and find the root cause in the request handling chain. Add the missing regression tests.</p>
                         </div>
                         <div>
-                            <p class="task-card__report-part-label">Что сделано</p>
-                            <p class="task-card__report-part-text">Причина найдена: токен обновлялся раньше, чем инвалидировался старый сессионный ключ. Исправлено, добавлены автотесты на гонку обновления токена.</p>
+                            <p class="task-card__report-part-label">What was done</p>
+                            <p class="task-card__report-part-text">Root cause found: the token was refreshed before the old session key was invalidated. Fixed, and tests were added for the token refresh race.</p>
                         </div>
                     </div>
                     <div class="task-card__shots">
                         <div class="task-card__shot">
-                            <p class="task-card__shot-label">До</p>
-                            <img src="SYSTEM/assets/screenshots/task-report-before.png" alt="Скриншот до изменений">
+                            <p class="task-card__shot-label">Before</p>
+                            <img src="SYSTEM/assets/screenshots/task-report-before.png" alt="Screenshot before the changes">
                         </div>
                         <div class="task-card__shot">
-                            <p class="task-card__shot-label">После</p>
-                            <img src="SYSTEM/assets/screenshots/task-report-after.png" alt="Скриншот после изменений">
+                            <p class="task-card__shot-label">After</p>
+                            <img src="SYSTEM/assets/screenshots/task-report-after.png" alt="Screenshot after the changes">
                         </div>
                     </div>
                     <div class="task-card__resolution">
-                        <input type="text" class="task-card__resolution-input" placeholder="Комментарий для исправлений…">
+                        <input type="text" class="task-card__resolution-input" placeholder="Comment for revisions…">
                         <button type="button" class="task-card__action task-card__action--send">Send</button>
-                        <button type="button" class="task-card__action task-card__action--approve">Одобрено</button>
+                        <button type="button" class="task-card__action task-card__action--approve">Approve</button>
                     </div>
                 </div>
             </div>
@@ -267,20 +263,20 @@
 
     <main class="view view--graph" id="graphView" hidden>
         <div class="graph-panel" id="graphPanel" hidden>
-            <input type="search" class="graph-search" id="graphSearch" placeholder="Поиск по коду, заметкам, сессиям" aria-label="Поиск по проекту">
+            <input type="search" class="graph-search" id="graphSearch" placeholder="Search code, notes, sessions" aria-label="Search the project">
             <div class="graph-chips" id="graphChips"></div>
             <p class="graph-hint" id="graphHint"></p>
         </div>
         <aside class="graph-details" id="graphDetails" hidden>
-            <button type="button" class="graph-details__close" id="graphDetailsClose" aria-label="Закрыть">×</button>
+            <button type="button" class="graph-details__close" id="graphDetailsClose" aria-label="Close">×</button>
             <h2 class="graph-details__title" id="graphDetailsTitle"></h2>
             <p class="graph-details__meta" id="graphDetailsMeta"></p>
             <div id="graphDetailsBody"></div>
         </aside>
-        <svg class="graph-canvas" id="graphCanvas" role="img" aria-label="Граф проекта"><g id="graphSurface"></g></svg>
+        <svg class="graph-canvas" id="graphCanvas" role="img" aria-label="Project graph"><g id="graphSurface"></g></svg>
         <div class="graph-empty" id="graphEmpty" hidden>
-            <p class="graph-empty__title" id="graphEmptyTitle">Граф пока пуст</p>
-            <p class="graph-empty__hint" id="graphEmptyHint">Карта проекта собирается автоматически при открытии вкладки.</p>
+            <p class="graph-empty__title" id="graphEmptyTitle">The graph is empty for now</p>
+            <p class="graph-empty__hint" id="graphEmptyHint">The project map is built automatically when the tab is opened.</p>
         </div>
     </main>
 
@@ -288,7 +284,7 @@
         <nav class="side-nav" id="flowNav" aria-label="Flows">
             <h2 class="side-nav__title side-nav__title--collapsible" id="flowFlowsTitle">
                 <span>Flows</span>
-                <button type="button" class="side-nav__arrow side-nav__arrow--active" id="flowFlowsAddBtn" title="Добавить flow">+</button>
+                <button type="button" class="side-nav__arrow side-nav__arrow--active" id="flowFlowsAddBtn" title="Add flow">+</button>
             </h2>
 
         </nav>
@@ -318,47 +314,47 @@
                                 <span class="flow-node__subtitle" id="flowNodeStartMeta"></span>
                             </span>
                         </div>
-                        <div class="flow-node__body">Стартовая точка потока: сюда попадает новая задача перед тем, как секретарь распределит её по колонкам доски.</div>
-                        <button type="button" class="flow-node__add-bottom" title="Добавить узел (или перетащить к другой ноде, чтобы соединить)">+</button>
-                        <button type="button" class="flow-node__add-right" title="Добавить узел (или перетащить к другой ноде, чтобы соединить)">+</button>
+                        <div class="flow-node__body">The starting point of the flow: a new task lands here before the secretary distributes it across the board columns.</div>
+                        <button type="button" class="flow-node__add-bottom" title="Add a node (or drag onto another node to connect)">+</button>
+                        <button type="button" class="flow-node__add-right" title="Add a node (or drag onto another node to connect)">+</button>
                     </div>
                     <div class="flow-node" id="flowNodeSecretary">
                         <div class="flow-node__header">
                             <span class="flow-node__avatar">🗂️</span>
                             <span class="flow-node__titles">
                                 <span class="flow-node__title-row">
-                                    <span class="flow-node__title">Секретарь</span>
+                                    <span class="flow-node__title">Secretary</span>
                                     <span class="flow-node__badge">
                                         <span class="flow-node__badge-dot"></span>
-                                        Временная нода
+                                        Temporary node
                                     </span>
                                 </span>
-                                <span class="flow-node__subtitle">Агент-диспетчер · Исполнитель</span>
+                                <span class="flow-node__subtitle">Dispatcher agent · Executor</span>
                             </span>
                         </div>
-                        <div class="flow-node__body">Принимает задачи и распределяет их по колонкам доски.</div>
+                        <div class="flow-node__body">Receives tasks and distributes them across the board columns.</div>
                         <div class="flow-node__footer flow-node__footer--controls">
-                            <select class="chat__session-select flow-node__control" id="flowNodeSecretaryProvider" aria-label="Провайдер"></select>
-                            <select class="chat__session-select flow-node__control" id="flowNodeSecretaryModel" aria-label="Модель"></select>
+                            <select class="chat__session-select flow-node__control" id="flowNodeSecretaryProvider" aria-label="Provider"></select>
+                            <select class="chat__session-select flow-node__control" id="flowNodeSecretaryModel" aria-label="Model"></select>
                             <select class="chat__session-select flow-node__control" id="flowNodeSecretaryEffort" aria-label="Effort"></select>
                         </div>
-                        <button type="button" class="flow-node__add-bottom" title="Добавить узел (или перетащить к другой ноде, чтобы соединить)">+</button>
-                        <button type="button" class="flow-node__add-right" title="Добавить узел (или перетащить к другой ноде, чтобы соединить)">+</button>
+                        <button type="button" class="flow-node__add-bottom" title="Add a node (or drag onto another node to connect)">+</button>
+                        <button type="button" class="flow-node__add-right" title="Add a node (or drag onto another node to connect)">+</button>
                     </div>
                     <template id="flowNodeTemplate">
                         <div class="flow-node">
                             <div class="flow-node__footer flow-node__footer--controls">
-                                <select class="chat__session-select flow-node__control flow-node__type" aria-label="Тип узла" style="color:#5aa9ff">
+                                <select class="chat__session-select flow-node__control flow-node__type" aria-label="Node type" style="color:#5aa9ff">
                                     <option value="question" style="color:#5aa9ff">Quastion</option>
                                     <option value="action" style="color:#4caf50">Action</option>
                                     <option value="ask_human" style="color:#ff9800">Ask Human</option>
                                     <option value="system" style="color:#c084fc">System</option>
                                 </select>
-                                <button type="button" class="flow-node__control flow-node__context-toggle" aria-pressed="true" aria-label="Контекст: включён">
+                                <button type="button" class="flow-node__control flow-node__context-toggle" aria-pressed="true" aria-label="Context: on">
                                     <span class="flow-node__context-toggle-track"><span class="flow-node__context-toggle-thumb">C</span></span>
                                 </button>
                                 <span class="flow-node__scope">
-                                    <button type="button" class="flow-node__scope-btn" aria-label="Кто видит узел" title="Кто видит узел">🔒</button>
+                                    <button type="button" class="flow-node__scope-btn" aria-label="Who can see the node" title="Who can see the node">🔒</button>
                                     <div class="flow-node__scope-menu" hidden>
                                         <button type="button" class="flow-node__scope-item" data-scope="locked">🔒 Locked</button>
                                         <button type="button" class="flow-node__scope-item" data-scope="user">👤 User</button>
@@ -367,14 +363,14 @@
                                 </span>
                             </div>
                             <div class="flow-node__footer flow-node__footer--controls">
-                                <select class="chat__session-select flow-node__control flow-node__provider" aria-label="Провайдер"></select>
-                                <select class="chat__session-select flow-node__control flow-node__model" aria-label="Модель"></select>
+                                <select class="chat__session-select flow-node__control flow-node__provider" aria-label="Provider"></select>
+                                <select class="chat__session-select flow-node__control flow-node__model" aria-label="Model"></select>
                                 <select class="chat__session-select flow-node__control flow-node__effort" aria-label="Effort"></select>
                             </div>
                             <div class="flow-node__header flow-node__header--stacked">
                                 <span class="flow-node__title-line">
                                     <span class="flow-node__avatar-picker">
-                                        <button type="button" class="flow-node__avatar" aria-label="Иконка узла" title="Иконка узла">🧩</button>
+                                        <button type="button" class="flow-node__avatar" aria-label="Node icon" title="Node icon">🧩</button>
                                         <div class="flow-node__avatar-menu" hidden>
                                             <button type="button" class="flow-node__avatar-item" data-avatar="🧩">🧩</button>
                                             <button type="button" class="flow-node__avatar-item" data-avatar="❓">❓</button>
@@ -388,19 +384,19 @@
                                     </span>
                                     <span class="flow-node__titles">
                                         <span class="flow-node__title-row">
-                                            <span class="flow-node__title">Новый узел</span>
+                                            <span class="flow-node__title">New node</span>
                                         </span>
-                                        <span class="flow-node__subtitle">Заглушка</span>
+                                        <span class="flow-node__subtitle">Placeholder</span>
                                     </span>
                                 </span>
                             </div>
-                            <div class="flow-node__body">Шаблонный узел, вставленный на ребро.</div>
+                            <div class="flow-node__body">A template node inserted on an edge.</div>
                             <div class="flow-node__questions">
-                                <div class="flow-node__question"><span class="flow-node__question-handle" aria-hidden="true">⠿</span><span class="flow-node__question-text" contenteditable="true" data-placeholder="Вопрос"></span></div>
-                                <button type="button" class="flow-node__questions-add" title="Добавить вопрос">Add</button>
+                                <div class="flow-node__question"><span class="flow-node__question-handle" aria-hidden="true">⠿</span><span class="flow-node__question-text" contenteditable="true" data-placeholder="Question"></span></div>
+                                <button type="button" class="flow-node__questions-add" title="Add question">Add</button>
                             </div>
-                            <button type="button" class="flow-node__add-bottom" title="Добавить узел (или перетащить к другой ноде, чтобы соединить)">+</button>
-                            <button type="button" class="flow-node__add-right" title="Добавить узел (или перетащить к другой ноде, чтобы соединить)">+</button>
+                            <button type="button" class="flow-node__add-bottom" title="Add a node (or drag onto another node to connect)">+</button>
+                            <button type="button" class="flow-node__add-right" title="Add a node (or drag onto another node to connect)">+</button>
                         </div>
                     </template>
                 </div>
@@ -412,50 +408,16 @@
         <div class="board" id="board"></div>
     </div>
 
-    <!-- Вкладка Book: слева карточка на каждый раздел интерфейса, клик по ней
-         открывает README раздела справа — тот же приём, что раньше был во
-         вкладке Projects боковой панели Sessions (стрелки ←/→ рядом с Tasks),
-         только теперь это отдельная страница верхнего меню. -->
-    <div class="view view--side view--book" id="bookView" hidden>
-        <nav class="side-nav" id="bookNav" aria-label="Book">
-            <h2 class="side-nav__title side-nav__title--nav"><span>Book</span></h2>
-            <ul class="session-list project-cards" id="bookList"></ul>
-            <div class="session-resize" id="bookResize" aria-hidden="true"></div>
-        </nav>
-        <div class="view__content">
-            <p class="book-empty" id="bookEmpty">Выберите раздел слева</p>
-            <div class="chat__file-editor" id="bookFileEditor" hidden>
-                <div class="chat__file-editor-header">
-                    <h2 class="chat__file-editor-title" id="bookFileEditorTitle"></h2>
-                    <p class="file-modal__meta" id="bookFileEditorMeta"></p>
-                </div>
-                <div class="file-modal__links" id="bookFileEditorLinks"></div>
-                <textarea class="file-modal__text" id="bookFileEditorText" spellcheck="false" aria-label="Содержимое файла"></textarea>
-                <div class="file-modal__footer">
-                    <span class="file-modal__status" id="bookFileEditorStatus"></span>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <main class="view view--hermes" id="hermesView" hidden>
-        <div class="hermes">
-            <p class="modal__hint">Hermes работает как исполнитель в чате: выберите его или связку «Claude → Hermes» в шапке сессии. Здесь виден только ход установки.</p>
-            <!-- пока Hermes ставится, здесь виден ход установки; когда готов — строка о готовности -->
-            <div id="hermesSetup"
-                 hx-get="/api/fragment/hermes-setup"
-                 hx-trigger="load, every 3s"
-                 hx-swap="innerHTML"></div>
-        </div>
-    </main>
+    <!-- Вкладка Book разметки в этом файле не имеет: и панель со списком
+         разделов, и панель README справа строит PROJECTS/Book/book-tab.js. -->
 
     <div class="view view--chat" id="chatView" hidden>
         <nav class="side-nav chat__sessions" id="sessionsPanel" aria-label="Sessions">
             <h2 class="side-nav__title side-nav__title--nav">
-                <span>Tasks</span>
+                <span>Sessions</span>
             </h2>
             <button type="button" class="session-new" id="sessionNew">+ New</button>
-            <!-- разметку строит сервер (SYSTEM/templates/chat-sessions.eta), htmx
+            <!-- разметку строит сервер (PROJECTS/Chat/chat-sessions.eta), htmx
                  подменяет #sessionList по hx-swap-oob; hx-swap="none" на самом
                  инициаторе, чтобы этот скрытый div не подменился вместо списка -->
             <div hidden
@@ -470,9 +432,9 @@
         <div class="chat__main">
             <div class="chat__session-bar" id="chatSessionBar" hidden>
                 <div class="chat__session-controls">
-                    <select class="chat__session-select flow-node__control" id="chatSessionProviderSelect" aria-label="Провайдер для этой сессии"></select>
-                    <select class="chat__session-select flow-node__control" id="chatSessionModelSelect" aria-label="Модель для этой сессии"></select>
-                    <select class="chat__session-select flow-node__control" id="chatSessionEffortSelect" aria-label="Effort для этой сессии"></select>
+                    <select class="chat__session-select flow-node__control" id="chatSessionProviderSelect" aria-label="Provider for this session"></select>
+                    <select class="chat__session-select flow-node__control" id="chatSessionModelSelect" aria-label="Model for this session"></select>
+                    <select class="chat__session-select flow-node__control" id="chatSessionEffortSelect" aria-label="Effort for this session"></select>
                 </div>
             </div>
             <div class="chat__messages" id="chatMessages">
@@ -486,20 +448,20 @@
                     <p class="file-modal__meta" id="chatFileEditorMeta"></p>
                 </div>
                 <div class="file-modal__links" id="chatFileEditorLinks"></div>
-                <textarea class="file-modal__text" id="chatFileEditorText" spellcheck="false" aria-label="Содержимое файла"></textarea>
+                <textarea class="file-modal__text" id="chatFileEditorText" spellcheck="false" aria-label="File contents"></textarea>
                 <div class="file-modal__footer">
                     <span class="file-modal__status" id="chatFileEditorStatus"></span>
-                    <button type="button" class="file-modal__save" id="chatFileEditorSave">Сохранить</button>
+                    <button type="button" class="file-modal__save" id="chatFileEditorSave">Save</button>
                 </div>
             </div>
 
             <div class="chat__gauges" id="chatGauges">
-                <span class="chat__gauge" id="chatGaugeContext">Контекст: —</span>
+                <span class="chat__gauge" id="chatGaugeContext">Context: —</span>
             </div>
 
             <form class="chat__composer" id="chatComposer">
-                <textarea class="chat__input" id="chatInput" rows="1" placeholder="Напишите сообщение..." aria-label="Сообщение"></textarea>
-                <div class="segmented" id="chatMode" role="radiogroup" aria-label="Режим отправки">
+                <textarea class="chat__input" id="chatInput" rows="1" placeholder="Write a message..." aria-label="Message"></textarea>
+                <div class="segmented" id="chatMode" role="radiogroup" aria-label="Send mode">
                     <span class="segmented__thumb" aria-hidden="true"></span>
                     <button type="button" class="segmented__option" role="radio" aria-checked="false" data-mode="Chat" tabindex="-1">Chat</button>
                     <button type="button" class="segmented__option" role="radio" aria-checked="true" data-mode="Action" tabindex="0">Action</button>
@@ -560,6 +522,8 @@
          Файл ставится через npm (package.json), поэтому путь ведёт в node_modules -->
     <script src="node_modules/htmx.org/dist/htmx.min.js" defer></script>
     <script src="PROJECTS/Settings/settings.js" defer></script>
+    <!-- book-tab.js раньше app.js: тот на старте ищет #bookView в DOM -->
+    <script src="PROJECTS/Book/book-tab.js" defer></script>
     <script src="SYSTEM/app.js" defer></script>
     <script src="PROJECTS/Graph/graph.js" defer></script>
     <script src="PROJECTS/Graph/vendor/easymde/easymde.min.js" defer></script>
@@ -568,9 +532,7 @@
     <script src="PROJECTS/Flow/flow-session-sync.js" defer></script>
     <script src="PROJECTS/Kanban/kanban.js" defer></script>
     <script src="PROJECTS/Karandash/karandash.js" defer></script>
-    <script src="PROJECTS/Book/book-tab.js" defer></script>
     <script src="SYSTEM/tabs.js" defer></script>
-    <script src="SYSTEM/session-feed-page.js" defer></script>
     <script src="SYSTEM/new-button.js" defer></script>
     <script src="SYSTEM/toolbar-reorder.js" defer></script>
     <script src="SYSTEM/toolbar-menu.js" defer></script>

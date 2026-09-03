@@ -1,5 +1,5 @@
 // Кнопка "+" в тулбаре табов: выпадающее меню со всеми остальными кнопками
-// этого тулбара (иконка + название + toggle показать/скрыть). Скрытые кнопки
+// обеих групп тулбара (иконка + название + toggle показать/скрыть). Скрытые кнопки
 // прячутся из тулбара и переживают перезагрузку через localStorage. Выбранные
 // иконки — общие для всех окружений, поэтому хранятся на сервере
 // (SYSTEM/toolbar-icons-server.js), а не в localStorage конкретного браузера.
@@ -39,15 +39,33 @@
     const hidden = loadHidden();
 
     // сервер — общий источник истины для всех окружений; локально держим
-    // только последний полученный снимок, чтобы применять иконки к кнопкам,
-    // которые появляются в DOM позже (см. вызов applyIcons() в renderMenu)
+    // только последний полученный снимок, чтобы применять иконки и названия
+    // к кнопкам, которые появляются в DOM позже (см. renderMenu)
     let icons = {};
+    let names = {};
 
     async function loadIcons() {
         try {
             const res = await App.api('/api/toolbar/icons', {});
             return res?.icons || {};
         } catch { return {}; }
+    }
+
+    async function loadNames() {
+        try {
+            const res = await App.api('/api/toolbar/names', {});
+            return res?.names || {};
+        } catch { return {}; }
+    }
+
+    function applyNames() {
+        for (const btn of otherButtons()) {
+            // у страниц кнопки «Новое» название приходит из pages.title —
+            // toolbar_names хранит только переименования встроенных кнопок
+            if (btn.dataset.pageId || !names[btn.id]) continue;
+            btn.title = names[btn.id];
+            btn.setAttribute('aria-label', names[btn.id]);
+        }
     }
 
     function applyIcon(btn, iconKey) {
@@ -92,7 +110,17 @@
         if (newName && newName !== oldName) {
             btn.title = newName;
             btn.setAttribute('aria-label', newName);
-            if (btn.dataset.pageId) await App.api('/api/pages/rename', { id: btn.dataset.pageId, title: newName });
+            // название встроенной кнопки — в toolbar_names, страницы «+» — в pages.title
+            if (btn.dataset.pageId) {
+                // папка страницы переезжает вместе с заголовком (см. /api/pages/rename),
+                // а из неё грузится и README карточки Book, и сам модуль страницы
+                const { folder } = await App.api('/api/pages/rename', { id: btn.dataset.pageId, title: newName });
+                if (folder) {
+                    btn.dataset.folder = folder;
+                    btn.dataset.readme = `PROJECTS/${folder}/README.md`;
+                }
+            }
+            else { names[btn.id] = newName; await App.api('/api/toolbar/names/set', { buttonId: btn.id, name: newName }); }
         }
         renderMenu();
     }
@@ -115,7 +143,10 @@
     }
 
     function otherButtons() {
-        return [...toolbar.querySelectorAll('.btn-group__btn')].filter((btn) => btn !== addButton);
+        // обе группы тулбара: и правая с вкладками, и левая с кнопкой «Новое»
+        // и созданными ею страницами (SYSTEM/new-button.js) — иначе кнопки левой
+        // группы теряют сохранённые иконки и пропадают из этого меню
+        return [...document.querySelectorAll('.toolbar .btn-group__btn')].filter((btn) => btn !== addButton);
     }
 
     function applyHidden() {
@@ -123,6 +154,7 @@
     }
     applyHidden();
     loadIcons().then((loaded) => { icons = loaded; applyIcons(); });
+    loadNames().then((loaded) => { names = loaded; applyNames(); });
 
     addButton.setAttribute('aria-haspopup', 'true');
     addButton.setAttribute('aria-expanded', 'false');
@@ -184,8 +216,9 @@
     function renderMenu() {
         closePicker();
         // страницы, добавленные кнопкой «+» (SYSTEM/new-button.js), могут появиться
-        // в DOM позже начальной загрузки — подхватываем их сохранённую иконку тут же
+        // в DOM позже начальной загрузки — подхватываем их сохранённые иконку и название тут же
         applyIcons();
+        applyNames();
         menu.innerHTML = '';
         for (const btn of otherButtons()) {
             // name — это title страницы (SYSTEM/new-button.js), может быть произвольным
@@ -203,8 +236,8 @@
             iconSpan.className = 'toolbar-menu__icon toolbar-menu__icon--pickable';
             iconSpan.setAttribute('role', 'button');
             iconSpan.tabIndex = 0;
-            iconSpan.title = 'Сменить иконку';
-            iconSpan.setAttribute('aria-label', `${name}: сменить иконку`);
+            iconSpan.title = 'Change icon';
+            iconSpan.setAttribute('aria-label', `${name}: change icon`);
             iconSpan.addEventListener('click', (e) => { e.stopPropagation(); openIconPicker(item, btn); });
             if (icon) iconSpan.append(icon.cloneNode(true));
 
@@ -219,7 +252,7 @@
             toggle.dataset.target = btn.id;
             toggle.setAttribute('role', 'menuitemcheckbox');
             toggle.setAttribute('aria-checked', String(!hidden.has(btn.id)));
-            toggle.setAttribute('aria-label', `${name}: показать/скрыть`);
+            toggle.setAttribute('aria-label', `${name}: show/hide`);
             toggle.innerHTML = '<span class="toolbar-menu__toggle-track"><span class="toolbar-menu__toggle-thumb"></span></span>';
 
             const del = document.createElement('button');
@@ -227,7 +260,7 @@
             del.className = 'toolbar-menu__delete';
             del.dataset.target = btn.id;
             del.disabled = !removable;
-            del.setAttribute('aria-label', `${name}: удалить страницу`);
+            del.setAttribute('aria-label', `${name}: delete page`);
             del.innerHTML = `
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path>
@@ -244,6 +277,10 @@
         renderMenu();
         menu.hidden = false;
         addButton.setAttribute('aria-expanded', 'true');
+        // меню растёт вниз от кнопки — без ограничения при большом числе строк
+        // низ уходит за пределы окна; считаем фактически доступное место
+        const rect = addButton.getBoundingClientRect();
+        menu.style.maxHeight = `${window.innerHeight - rect.bottom - 16}px`;
     }
 
     function closeMenu() {

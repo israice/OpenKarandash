@@ -10,6 +10,10 @@
             let centerFlowNode = null;
             let buildSessionFlow = null;
             let pendingCenter = false;
+            // та же отсрочка для построения графа из сессии: flow-session-sync.js
+            // зовёт buildFromSession при загрузке страницы, когда состояние канваса
+            // могло ещё не доехать с сервера — запоминаем аргументы и строим после init
+            let pendingBuild = null;
             window.MissionFlow = {
                 center() {
                     if (centerFlowNode) {
@@ -22,6 +26,7 @@
                 // вызывается из PROJECTS/Flow/flow-session-sync.js по кнопке в тулбаре
                 buildFromSession(flow, messages) {
                     if (buildSessionFlow) buildSessionFlow(flow, messages);
+                    else pendingBuild = { flow, messages };
                 },
             };
 
@@ -70,8 +75,8 @@
                 const del = document.createElement('button');
                 del.type = 'button';
                 del.className = 'side-nav__delete';
-                del.title = 'Удалить';
-                del.setAttribute('aria-label', 'Удалить');
+                del.title = 'Delete';
+                del.setAttribute('aria-label', 'Delete');
                 del.innerHTML = `
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <polyline points="3 6 5 6 21 6"></polyline>
@@ -90,7 +95,7 @@
                 del.addEventListener('click', async (e) => {
                     e.stopPropagation();
                     const title = item.dataset.flow || item.textContent;
-                    const ok = await App.confirmModal(`Удалить «${title}» из меню?`, { title: 'Удалить пункт меню' });
+                    const ok = await App.confirmModal(`Remove "${title}" from the menu?`, { title: 'Delete menu item' });
                     if (!ok) return;
                     if (onRemove) onRemove();
                     row.remove();
@@ -138,7 +143,7 @@
             }
             const flowsAddBtn = document.getElementById('flowFlowsAddBtn');
             flowsAddBtn.addEventListener('click', () => {
-                const title = prompt('Имя нового flow:');
+                const title = prompt('Name of the new flow:');
                 if (!title || !title.trim()) return;
                 const name = title.trim();
                 const custom = loadCustomFlows();
@@ -158,7 +163,7 @@
             tempAddBtn.type = 'button';
             tempAddBtn.className = 'side-nav__arrow side-nav__arrow--active';
             tempAddBtn.textContent = '+';
-            tempAddBtn.title = 'Добавить черновик';
+            tempAddBtn.title = 'Add draft';
             tempTitle.append(tempTitleText, tempAddBtn);
             flowNav.append(tempTitle);
 
@@ -187,7 +192,7 @@
                 addTempItem(title);
             }
             tempAddBtn.addEventListener('click', () => {
-                const title = prompt('Имя нового черновика:');
+                const title = prompt('Name of the new draft:');
                 if (!title || !title.trim()) return;
                 const name = title.trim();
                 const custom = loadCustomTemps();
@@ -208,14 +213,14 @@
             agentsAddBtn.type = 'button';
             agentsAddBtn.className = 'side-nav__arrow side-nav__arrow--active';
             agentsAddBtn.textContent = '+';
-            agentsAddBtn.title = 'Добавить minion';
+            agentsAddBtn.title = 'Add minion';
             agentsTitle.append(agentsTitleText, agentsAddBtn);
             flowNav.append(agentsTitle);
 
             const AGENT_ICONS = {
-                'Секретарь': '📋',
-                'Разработчик UI': '🎨',
-                'Разработчик backend': '⚙️',
+                'Secretary': '📋',
+                'UI developer': '🎨',
+                'Backend developer': '⚙️',
                 'QA': '🐞',
                 'HR': '🧑‍💼',
             };
@@ -246,7 +251,7 @@
                 flowNav.append(row);
             }
 
-            for (const title of ['Секретарь', 'Разработчик UI', 'Разработчик backend', 'QA', 'HR']) {
+            for (const title of ['Secretary', 'UI developer', 'Backend developer', 'QA', 'HR']) {
                 addAgentItem(title, AGENT_ICONS[title]);
             }
             for (const title of loadCustomAgents()) {
@@ -254,7 +259,7 @@
             }
 
             agentsAddBtn.addEventListener('click', () => {
-                const title = prompt('Имя нового minion’а:');
+                const title = prompt('Name of the new minion:');
                 if (!title || !title.trim()) return;
                 const name = title.trim();
                 const custom = loadCustomAgents();
@@ -407,7 +412,7 @@
                 // (на New это стартовая пара node/startNode, на остальных канвасах
                 // дефолта нет — ensureRootNode сразу поставит пустую ноду-заглушку)
                 canvasReset.addEventListener('click', async () => {
-                    const ok = await App.confirmModal('Удалить все добавленные ноды на этом канвасе?', { title: 'Очистить канвас' });
+                    const ok = await App.confirmModal('Remove all added nodes on this canvas?', { title: 'Clear canvas' });
                     if (!ok) return;
                     const keep = currentFlow === 'New' ? new Set([node, startNode]) : new Set();
                     for (const n of [...nodeFlow.keys()]) {
@@ -501,7 +506,7 @@
                     const btn = group.querySelector('.flow-node__questions-add');
                     const field = document.createElement('div');
                     field.className = 'flow-node__question';
-                    field.innerHTML = '<span class="flow-node__question-handle" aria-hidden="true">⠿</span><span class="flow-node__question-text" data-placeholder="Вопрос"></span>';
+                    field.innerHTML = '<span class="flow-node__question-handle" aria-hidden="true">⠿</span><span class="flow-node__question-text" data-placeholder="Question"></span>';
                     const textEl = field.querySelector('.flow-node__question-text');
                     textEl.contentEditable = 'false';
                     textEl.textContent = text || '';
@@ -907,7 +912,7 @@
                     addBtn.type = 'button';
                     addBtn.className = 'flow-edge__add';
                     addBtn.textContent = '+';
-                    addBtn.title = 'Вставить узел';
+                    addBtn.title = 'Insert node';
                     surface.append(addBtn);
 
                     const edge = { from, to, path, addBtn, direction: direction || 'horizontal' };
@@ -1441,7 +1446,7 @@
                     if (!toggle) return;
                     const on = toggle.getAttribute('aria-pressed') !== 'true';
                     toggle.setAttribute('aria-pressed', String(on));
-                    toggle.setAttribute('aria-label', on ? 'Контекст: включён' : 'Контекст: выключен');
+                    toggle.setAttribute('aria-label', on ? 'Context: on' : 'Context: off');
                 });
 
                 canvas.addEventListener('mousedown', (e) => {
@@ -1589,12 +1594,12 @@
                             const from = lastGray || lastWhite;
                             if (!from) continue;
                             lastGray = addChildNode(from);
-                            setNodeTexts(lastGray, 'Шаг', m.text);
+                            setNodeTexts(lastGray, 'Step', m.text);
                             setNodeScope(lastGray, 'system');
                             setNodeType(lastGray, 'system');
                         } else {
                             lastWhite = lastWhite ? addChildNodeRight(lastWhite) : ensureRootNode(flow);
-                            setNodeTexts(lastWhite, m.role === 'user' ? 'Вопрос' : 'Ответ', m.text);
+                            setNodeTexts(lastWhite, m.role === 'user' ? 'Question' : 'Answer', m.text);
                             setNodeScope(lastWhite, 'system');
                             setNodeType(lastWhite, 'system');
                             lastGray = null;
@@ -1668,6 +1673,13 @@
                 });
             })();
 
+            // buildFromSession могли дёрнуть, пока грузилось состояние (см. pendingBuild
+            // в начале файла) — достраиваем граф теперь, когда buildSessionFlow готов
+            if (pendingBuild) {
+                buildSessionFlow(pendingBuild.flow, pendingBuild.messages);
+                pendingBuild = null;
+            }
+
             // window.MissionFlow.center() уже могли дёрнуть, пока грузилось состояние
             // выше (см. pendingCenter в начале файла) — обрабатываем этот случай сразу
             // после того, как canvas собран и centerFlowNode получил реальное значение
@@ -1676,5 +1688,10 @@
                 centerFlowNode();
                 centerFlowNode = null;
             }
+
+            // сигнал «вкладка Flow готова»: состояние доехало, меню и канвас собраны,
+            // активный flow восстановлен. Слушает flow-session-sync.js — до этого
+            // момента строить граф из сессии рано (активный flow ещё неизвестен)
+            document.dispatchEvent(new CustomEvent('flow-ready'));
             }
 })();

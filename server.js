@@ -4,21 +4,12 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
-// серверная половина кнопки Karandash — вся кнопка живёт в PROJECTS/Karandash
-const { captureScreenshot, listScreens } = require('./PROJECTS/Karandash/screenshot.js');
 const graph = require('./PROJECTS/Graph/graph-server.js');
-// шаблоны серверных фрагментов для htmx: экранирование по умолчанию, поэтому
-// данные сессий попадают в разметку без ручного escapeHtml
-const { Eta } = require('eta');
 const { readJson, escapeHtml, sendJson, sendHtml } = require('./SYSTEM/core/http.js');
 const scan = require('./SYSTEM/core/scan.js');
 const { reloadEvents } = require('./SYSTEM/core/reload.js');
-const hermesSetup = require('./SYSTEM/Hermes/hermes-setup.js');
 
 const ROOT = __dirname;
-
-// cache:false — правка .eta подхватывается без перезапуска, как и остальные файлы
-const eta = new Eta({ views: path.join(__dirname, 'SYSTEM/templates'), cache: false });
 
 // ---------- .env: единственное место для порта и секретов ----------
 // файла нет — создаём его с портом 3001 и на нём же поднимаемся. значения из .env
@@ -26,22 +17,22 @@ const eta = new Eta({ views: path.join(__dirname, 'SYSTEM/templates'), cache: fa
 // (смоук поднимает сервер на свободном порту) продолжает работать
 const ENV_FILE = path.join(ROOT, '.env');
 
-const ENV_TEMPLATE = `# Настройки и секреты проекта. В git не попадает — правьте прямо здесь.
+const ENV_TEMPLATE = `# Project settings and secrets. Not tracked by git — edit it right here.
 PORT=3001
-# Экран, с которого кнопка Karandash снимает скриншот (индекс в списке мониторов,
-# считая с нуля) — меняется также из Settings в интерфейсе
+# The screen the Karandash button captures (index in the monitor list, starting
+# from zero) — can also be changed from Settings in the interface
 SCREENSHOT_SCREEN=0
 
-# Путь к CLI Claude, если его нет в PATH
+# Path to the Claude CLI, if it is not in PATH
 # CLAUDE_BIN=
-# Внешний Obsidian-vault вместо папки DATA/vault/ внутри проекта
+# External Obsidian vault instead of the DATA/vault/ folder inside the project
 # OBSIDIAN_VAULT=
 `;
 
 function loadEnv() {
     if (!fs.existsSync(ENV_FILE)) {
         fs.writeFileSync(ENV_FILE, ENV_TEMPLATE, 'utf8');
-        console.log('Создан .env с портом 3001 — порт и секреты правьте в нём');
+        console.log('Created .env with port 3001 — edit the port and secrets there');
     }
     for (const line of fs.readFileSync(ENV_FILE, 'utf8').split(/\r?\n/)) {
         const pair = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/); // комментарии и пустые строки не подходят
@@ -96,13 +87,24 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
     let busy = false;          // дочерний процесс сейчас ведёт запрос к Claude
     let waiting = false;       // файл изменился, но перезапуск отложен до конца запроса
 
-    // server.js подключает через require и серверные модули вне себя самого
-    // (например PROJECTS/Karandash/screenshot.js) — их правки тоже должны рестартовать
-    // сервер, иначе Node продолжает работать со старой версией из памяти
+    // server.js подключает через require и серверные модули вне себя самого — их
+    // правки тоже должны рестартовать сервер, иначе Node продолжает работать со
+    // старой версией из памяти. Список собираем по правилам раскладки, а не руками:
+    // перечисленный руками отставал от кода (PROJECTS/Chat/pages-server.js и
+    // SYSTEM/core/* в нём не было, и правка страниц молча не доезжала до сервера).
+    // Новый файл сторож увидит после ручного перезапуска — список читается один раз
+    const serverModules = (dir) => {
+        try {
+            return fs.readdirSync(dir).filter((f) => f.endsWith('-server.js')).map((f) => path.join(dir, f));
+        } catch {
+            return []; // не папка или её нет — просто нечего смотреть
+        }
+    };
     const WATCHED_FILES = [
         __filename,
-        path.join(ROOT, 'PROJECTS/Karandash/screenshot.js'),
-        path.join(ROOT, 'PROJECTS/Graph/graph-server.js'),
+        ...fs.readdirSync(path.join(ROOT, 'PROJECTS')).flatMap((name) => serverModules(path.join(ROOT, 'PROJECTS', name))),
+        ...serverModules(path.join(ROOT, 'SYSTEM')),
+        ...fs.readdirSync(path.join(ROOT, 'SYSTEM/core')).map((f) => path.join(ROOT, 'SYSTEM/core', f)),
     ];
 
     // сломанная правка не должна ронять сторожа вместе с сервером:
@@ -112,7 +114,7 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
             for (const file of WATCHED_FILES) execFileSync(process.execPath, ['--check', file], { stdio: 'ignore' });
             return true;
         } catch {
-            console.error('один из файлов сервера не парсится — оставляю работать прежнюю версию');
+            console.error('one of the server files does not parse — keeping the previous version running');
             return false;
         }
     };
@@ -120,7 +122,7 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
     const restart = () => {
         waiting = false;
         if (!isValid()) return; // починят файл — mtime изменится, и мы придём сюда снова
-        console.log('файл сервера изменён — перезапускаю сервер...');
+        console.log('server file changed — restarting the server...');
         if (!child) return start(); // прошлый процесс упал сам — просто поднимаем заново
         restarting = true;
         child.kill();
@@ -154,26 +156,31 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
             if (code === EXIT_PORT_BUSY) process.exit(EXIT_PORT_BUSY);
             // упал сам (например, ошибка в коде): сторож остаётся жив и поднимет
             // сервер, как только server.js поправят — иначе чинить было бы нечем
-            console.error(`сервер упал (код ${code}) — жду исправления server.js`);
+            console.error(`server crashed (code ${code}) — waiting for server.js to be fixed`);
         });
     };
 
-    const latestMtime = () => Math.max(...WATCHED_FILES.map((file) => fs.statSync(file).mtimeMs));
+    // непрочитанный файл пропускаем, а не бросаем весь замер: раньше на любую
+    // ошибку statSync замер падал целиком и опрос молча выходил из строя навсегда.
+    // Достаточно было переименовать любой из watched-файлов (screenshot.js →
+    // karandash-server.js) — и сервер до конца дня продолжал крутить старый код
+    const latestMtime = () => WATCHED_FILES.reduce((max, file) => {
+        try {
+            return Math.max(max, fs.statSync(file).mtimeMs);
+        } catch {
+            return max; // файла нет — его правку всё равно поймает соседний
+        }
+    }, 0);
     let mtime = latestMtime();
 
     setInterval(() => {
-        let current;
-        try {
-            current = latestMtime();
-        } catch {
-            return;
-        }
+        const current = latestMtime();
         if (current === mtime) return;
 
         mtime = current;
 
         if (busy) {
-            if (!waiting) console.log('файл сервера изменён — перезапущу после текущего запроса');
+            if (!waiting) console.log('server file changed — will restart after the current request');
             waiting = true;
             return;
         }
@@ -285,6 +292,13 @@ const RELOAD_SNIPPET = `
             // hold здесь не смотрим — в отличие от перезагрузки, поток ответа они не рвут
             if (data.startsWith('fragment:')) { swapFragment(data.slice(9)); return; }
             if (data.startsWith('css:')) { swapStyles(data.slice(4)); return; }
+            // правка модуля страницы кнопки «+»: пересобираем только её саму.
+            // false — такой страницы в интерфейсе нет (переименовали, удалили,
+            // список ещё не пришёл), и тогда обычная полная перезагрузка
+            if (data.startsWith('page:')) {
+                if (!window.MissionPages || !window.MissionPages.rebuildPage(data.slice(5))) reload();
+                return;
+            }
             reload();
         };
         // связь восстановилась после перезапуска сервера — берём свежую страницу
@@ -309,7 +323,7 @@ function notifyClients(event = 'reload') {
 const { DATA_DIR } = graph; // 'DATA': папку заводит модуль графа при загрузке
 // DATA целиком: vault переписывается при каждой пересборке, и сторож гонял бы
 // страницу по кругу — правка → пересборка → правка
-const SKIP = new Set(['node_modules', '.git', DATA_DIR]);
+const SKIP = new Set([...scan.SKIP_NAMES, DATA_DIR]);
 
 function snapshot(dir, acc = new Map()) {
     let entries;
@@ -324,9 +338,6 @@ function snapshot(dir, acc = new Map()) {
 
         const full = path.join(dir, entry.name);
         if (full === __filename) continue; // за server.js следит надзорный процесс
-        // установка Hermes сюда не входит: там чужой код и symlink'и WSL-окружения,
-        // которые с Windows не читаются (EACCES) — см. SYSTEM/core/scan.js
-        if (scan.isSkipped(ROOT, full, entry.name)) continue;
 
         if (entry.isDirectory()) {
             snapshot(full, acc);
@@ -482,7 +493,7 @@ function runClaude(target, cliArgs, { input = '', timeoutMs, onLine, onSpawn } =
         const timer = setTimeout(() => {
             finished = true;
             killProcessTree(child, target);
-            reject(new Error(`Превышено время ожидания (${Math.round(timeoutMs / 1000)} с)`));
+            reject(new Error(`Timed out (${Math.round(timeoutMs / 1000)}s)`));
         }, timeoutMs);
 
         const done = (err, value) => {
@@ -493,7 +504,7 @@ function runClaude(target, cliArgs, { input = '', timeoutMs, onLine, onSpawn } =
         };
 
         child.on('error', (err) => {
-            done(new Error(err.code === 'ENOENT' ? `${target.cmd} не найден` : err.message));
+            done(new Error(err.code === 'ENOENT' ? `${target.cmd} not found` : err.message));
         });
 
         let tail = '';
@@ -514,7 +525,7 @@ function runClaude(target, cliArgs, { input = '', timeoutMs, onLine, onSpawn } =
 
         child.on('close', (code) => {
             if (code === 0) done(null, stdout);
-            else done(new Error(child.__stoppedByUser ? 'Остановлено пользователем' : (stderr.trim() || `CLI завершился с кодом ${code}`)));
+            else done(new Error(child.__stoppedByUser ? 'Stopped by the user' : (stderr.trim() || `CLI exited with code ${code}`)));
         });
 
         child.stdin.on('error', () => {}); // процесс мог закрыться раньше, чем мы дописали
@@ -667,6 +678,13 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
     setMessageMode.run(mode || null, ctx.session, ctx.userPosition);
     runs.set(ctx.session, new Set());
     ctx.emit({ type: 'session', id: ctx.session });
+    // без этого push сессия появлялась в списке только у вкладки, которая её
+    // завела (там 'sessions-changed' шлёт сам app.js), — у остальных открытых
+    // вкладок только через опрос раз в 5с. Тот же канал, что и у live reload
+    if (clients.size) {
+        notifyClients('fragment:chat-sessions');
+        notifyClients('fragment:home-observation');
+    }
 
     activeRuns.set(runId, run);
     setBusy(1);
@@ -772,22 +790,23 @@ const HANDLED_TOP_LEVEL_TYPES = new Set(['system', 'assistant', 'user', 'result'
 
 // преамбула идёт вместе с промптом через stdin, а не флагом: аргументы для WSL
 // склеиваются в одну строку, и текст с пробелами там развалился бы
-const CHAT_PREAMBLE = `Режим обсуждения. Отвечай текстом: объясняй, предлагай варианты, задавай уточняющие вопросы.
-Ничего не меняй и не запускай — инструменты правки файлов и запуска команд отключены.
-Если для ответа нужен код, прочитай его (Read/Grep/Glob) и расскажи словами, что бы ты сделал.
+const CHAT_PREAMBLE = `Discussion mode. Answer in prose: explain, offer options, ask clarifying questions.
+Do not change or run anything — the file-editing and command-running tools are disabled.
+If you need the code to answer, read it (Read/Grep/Glob) and describe in words what you would do.
+Reply in the same language the person writes to you in.
 
 `;
 
 async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
-    if (!activeTarget) return send({ type: 'error', error: 'Claude не подключён' });
+    if (!activeTarget) return send({ type: 'error', error: 'Claude is not connected' });
     // цель фиксируем на весь запуск: пока идёт работа, в настройках могли переключить CLI
     const target = activeTarget;
-    if (!prompt) return send({ type: 'error', error: 'Пустой запрос' });
+    if (!prompt) return send({ type: 'error', error: 'Empty request' });
     if (model && !CLAUDE_MODELS.includes(model)) {
-        return send({ type: 'error', error: `Неизвестная модель: ${model}` });
+        return send({ type: 'error', error: `Unknown model: ${model}` });
     }
     if (effort && !EFFORT_LEVELS.includes(effort)) {
-        return send({ type: 'error', error: `Неизвестный уровень effort: ${effort}` });
+        return send({ type: 'error', error: `Unknown effort level: ${effort}` });
     }
 
     const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id);
@@ -941,7 +960,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
                         // API само решило скрыть рассуждение (data — непрозрачный
                         // зашифрованный блок для контекста, а не текст)
                         if (ctx.session) {
-                            recordThinking(ctx.session, '[рассуждение скрыто Anthropic API (redacted_thinking) — содержимого нет, только непрозрачный блок для контекста модели]');
+                            recordThinking(ctx.session, '[reasoning redacted by the Anthropic API (redacted_thinking) — no content, just an opaque block for the model context]');
                         }
                     }
                     else {
@@ -964,7 +983,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
             }
 
             if (event.type === 'result') {
-                if (event.is_error) ctx.fail(event.result || 'CLI вернул ошибку');
+                if (event.is_error) ctx.fail(event.result || 'CLI returned an error');
                 else ctx.answer = event.result || ctx.answer;
 
                 // usage.*_tokens в result — сумма по всем вызовам модели за ход, а не
@@ -1079,7 +1098,7 @@ function runOpenCode(target, cliArgs, { timeoutMs, onLine, onSpawn } = {}) {
         const timer = setTimeout(() => {
             finished = true;
             killProcessTree(child, target);
-            reject(new Error(`Превышено время ожидания (${Math.round(timeoutMs / 1000)} с)`));
+            reject(new Error(`Timed out (${Math.round(timeoutMs / 1000)}s)`));
         }, timeoutMs);
 
         const done = (err, value) => {
@@ -1090,7 +1109,7 @@ function runOpenCode(target, cliArgs, { timeoutMs, onLine, onSpawn } = {}) {
         };
 
         child.on('error', (err) => {
-            done(new Error(err.code === 'ENOENT' ? `${target.cmd} не найден` : err.message));
+            done(new Error(err.code === 'ENOENT' ? `${target.cmd} not found` : err.message));
         });
 
         let tail = '';
@@ -1113,7 +1132,7 @@ function runOpenCode(target, cliArgs, { timeoutMs, onLine, onSpawn } = {}) {
             // ненулевым кодом выхода (проверено вживую) — код нужен только для
             // случаев, когда сам процесс не смог стартовать/упал вне протокола
             if (code === 0) done(null, stdout);
-            else done(new Error(child.__stoppedByUser ? 'Остановлено пользователем' : (stderr.trim() || `CLI завершился с кодом ${code}`)));
+            else done(new Error(child.__stoppedByUser ? 'Stopped by the user' : (stderr.trim() || `CLI exited with code ${code}`)));
         });
 
         child.stdin.on('error', () => {});
@@ -1142,9 +1161,9 @@ async function fetchOpenCodeModels(target) {
 }
 
 async function askOpenCode({ prompt, model, sessionId, mode }, send) {
-    if (!activeOpenCodeTarget) return send({ type: 'error', error: 'OpenCode не подключён' });
+    if (!activeOpenCodeTarget) return send({ type: 'error', error: 'OpenCode is not connected' });
     const target = activeOpenCodeTarget;
-    if (!prompt) return send({ type: 'error', error: 'Пустой запрос' });
+    if (!prompt) return send({ type: 'error', error: 'Empty request' });
 
     const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id);
     const args = ['run', handoff + prompt, '--format', 'json'];
@@ -1215,7 +1234,7 @@ async function askOpenCode({ prompt, model, sessionId, mode }, send) {
             if (event.type === 'error') {
                 // ошибка хода приходит внутри потока, а не кодом возврата процесса
                 // (проверено вживую — запуск с несуществующей моделью завершился кодом 0)
-                ctx.fail(event.error?.data?.message || event.error?.name || 'OpenCode вернул ошибку');
+                ctx.fail(event.error?.data?.message || event.error?.name || 'OpenCode returned an error');
                 return;
             }
 
@@ -1230,152 +1249,101 @@ async function askOpenCode({ prompt, model, sessionId, mode }, send) {
     });
 }
 
-// ---------- коннектор Hermes ----------
-// Отличия от Claude и OpenCode собраны в SYSTEM/Hermes/hermes-agent-connector.js;
-// здесь — только общая для всех коннекторов часть: очередь по файлам, запись
-// хода в базу и поток событий наружу.
+// ---------- коннектор Codex CLI ----------
+//
+// пока только detect/connect — тот же поток «найти в Windows и WSL, дать выбрать»,
+// что и у Claude/OpenCode (см. AGENTS ниже). Реальный ход диалога (ask) ещё не
+// реализован — намеренно, задача сейчас только про порядок подключения кнопки Connect.
 
-const hermesConnector = require('./SYSTEM/Hermes/hermes-agent-connector.js');
+const CODEX_BIN = process.env.CODEX_BIN;
+const CODEX_TARGETS = CODEX_BIN
+    ? [{ id: 'codex-custom', label: 'CODEX_BIN', cmd: CODEX_BIN, args: [] }]
+    : process.platform === 'win32'
+        ? [
+            { id: 'codex-windows', label: 'Windows', cmd: 'codex', args: [] },
+            { id: 'codex-wsl', label: 'WSL', cmd: 'wsl.exe', args: ['bash', '-lc'], viaShell: true },
+          ]
+        : [
+            { id: 'codex-wsl', label: 'WSL', cmd: 'codex', args: [] },
+            { id: 'codex-windows', label: 'Windows', cmd: 'codex.exe', args: [] },
+          ];
 
-let activeHermesTarget = null; // своя переменная: подключения провайдеров не затирают друг друга
+let activeCodexTarget = null;
 
-const HERMES_ASK_TIMEOUT_MS = Number(process.env.HERMES_ASK_TIMEOUT_MS) || 3_600_000;
+// та же схема, что у runClaude: shellLaunch/killProcessTree/takeRemotePid общие
+// для всех целей через wsl.exe, они не завязаны на конкретный CLI
+function runCodex(target, cliArgs, { input = '', timeoutMs, onLine, onSpawn } = {}) {
+    return new Promise((resolve, reject) => {
+        const args = target.viaShell
+            ? [...target.args, shellLaunch(['codex', ...cliArgs].join(' '))]
+            : [...target.args, ...cliArgs];
 
-async function askHermes({ prompt, model, sessionId, mode, skipHandoff }, send) {
-    if (!activeHermesTarget) return send({ type: 'error', error: 'Hermes не подключён' });
-    const target = activeHermesTarget;
-    if (!prompt) return send({ type: 'error', error: 'Пустой запрос' });
+        const child = spawn(target.cmd, args, { windowsHide: true });
+        onSpawn?.(child);
 
-    // своего id сессии Hermes не отдаёт (режим -z печатает только текст ответа) —
-    // и не нужно: id новой сессии заводит runTurn, одинаково для всех коннекторов
-    const usageFile = hermesConnector.usagePath();
-    // Hermes каждый раз стартует свою сессию (-z не умеет продолжать чужую), поэтому
-    // контекст переписки, если он есть, идёт пересказом впереди задания
-    const handoff = sessionId && !skipHandoff ? handoffPreamble(sessionId) : '';
-    const { cmd, args, env } = hermesConnector.command(target, handoff + prompt, { model, usageFile });
+        let stdout = '';
+        let stderr = '';
+        let finished = false;
 
-    return runTurn({ target, prompt, sessionId, model, mode }, send, async (ctx) => {
-        await new Promise((resolve, reject) => {
-            const child = spawn(cmd, args, { cwd: ROOT, env: { ...process.env, ...env }, windowsHide: true });
-            ctx.run.child = child;
+        const timer = setTimeout(() => {
+            finished = true;
+            killProcessTree(child, target);
+            reject(new Error(`Timed out (${Math.round(timeoutMs / 1000)}s)`));
+        }, timeoutMs);
 
-            const timer = setTimeout(() => {
-                child.kill();
-                reject(new Error('Hermes не ответил за отведённое время'));
-            }, HERMES_ASK_TIMEOUT_MS);
+        const done = (err, value) => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            err ? reject(err) : resolve(value);
+        };
 
-            // -z печатает только итоговый текст, поэтому stdout копим целиком,
-            // а наружу отдаём кусками — чтобы в чате было видно, что работа идёт
-            child.stdout.on('data', (chunk) => {
-                const text = String(chunk);
-                ctx.answer += text;
-                if (text.trim()) ctx.emit({ type: 'text', text });
-            });
-            // stderr у Hermes — служебные сообщения и текст ошибки; в ответ он не идёт,
-            // но последнюю строку сохраняем: без неё падение выглядит пустым ответом
-            child.stderr.on('data', (chunk) => {
-                const text = String(chunk).trim();
-                if (text) ctx.errorText = text.split(/\r?\n/).pop();
-            });
+        child.on('error', (err) => {
+            done(new Error(err.code === 'ENOENT' ? `${target.cmd} not found` : err.message));
+        });
 
-            child.on('error', (err) => { clearTimeout(timer); reject(err); });
-            child.on('exit', (code) => {
-                clearTimeout(timer);
-                if (code === 0) resolve();
-                else reject(new Error(ctx.errorText || `Hermes завершился с кодом ${code}`));
-            });
-        }).finally(() => {
-            ctx.answer = ctx.answer.trim();
-            // отчёт о расходе пишет сам Hermes — из него в историю попадает то, чем
-            // именно был выполнен запрос: модель, число вызовов, стоимость
-            const usage = hermesConnector.readUsage(usageFile);
-            ctx.meta.model = usage?.model || model || null;
-            ctx.meta.costUsd = usage?.estimated_cost_usd ?? null;
-            ctx.meta.usage = {
-                inputTokens: usage?.input_tokens || 0,
-                outputTokens: usage?.output_tokens || 0,
-                cacheReadTokens: usage?.cache_read_tokens || 0,
-                cacheCreationTokens: usage?.cache_write_tokens || 0,
-            };
-            // по этой записи потом видно, кто именно выполнял: цель (windows/wsl),
-            // провайдер и модель, которые выбрал Hermes, и его собственный id сессии —
-            // по нему запуск находится в состоянии самого Hermes (DATA/hermes)
-            ctx.meta.resultMeta = {
-                executor: 'hermes',
-                target: target.id,
-                provider: usage?.provider || null,
-                model: usage?.model || null,
-                hermesSessionId: usage?.session_id || null,
-                apiCalls: usage?.api_calls ?? null,
-                failed: usage?.failed ?? null,
-                error: ctx.errorText || null,
-            };
-            // текст ответа Hermes отдаёт разом, а не событиями — своей строки в базе
-            // у него ещё нет, заводим её здесь, чтобы finishExchange дописал на неё
-            // метаданные хода, а не вставил вторую
-            if (ctx.answer) {
-                ctx.assistantPosition = recordAssistantText(ctx.session, ctx.answer, ctx.meta.model, null, null);
+        let tail = '';
+        child.stdout.on('data', (chunk) => {
+            if (!onLine) {
+                stdout += chunk;
+                return;
+            }
+            tail += chunk;
+            const lines = tail.split('\n');
+            tail = lines.pop();
+            for (const line of lines) {
+                if (line.trim()) onLine(line);
             }
         });
+        child.stderr.on('data', (chunk) => { stderr += takeRemotePid(child, String(chunk)); });
+
+        child.on('close', (code) => {
+            if (code === 0) done(null, stdout);
+            else done(new Error(child.__stoppedByUser ? 'Stopped by the user' : (stderr.trim() || `CLI exited with code ${code}`)));
+        });
+
+        child.stdin.on('error', () => {});
+        child.stdin.end(input);
     });
 }
 
-// ---------- связка: Claude планирует, Hermes выполняет ----------
-// Смысл разделения: у Claude большое контекстное окно и он идёт по подписке CLI —
-// пусть он превращает текст человека в точное задание. Дальше работает Hermes:
-// он дробит задание на подзадачи и раздаёт их своим подагентам на дешёвых
-// (вплоть до бесплатных) моделях — delegation.model в его конфиге.
-//
-// Оба хода ложатся в одну сессию по порядку: текст человека, задание от Claude,
-// результат Hermes. Кто именно выполнял ход, видно в result_meta сообщения.
-
-const PLANNER_PREAMBLE = `Ты составляешь задание для исполнителя-оркестратора, а не выполняешь его.
-
-Исполнитель не видит этой переписки и не может задать вопрос. Он работает моделями
-попроще, поэтому задание должно быть точным и самодостаточным.
-
-Разберись в проекте столько, сколько нужно, и напиши:
-- что требуется сделать, по пунктам, в порядке выполнения;
-- какие файлы затронуты (точные пути), что в них менять;
-- чем проверить результат;
-- чего делать НЕ нужно, если есть соблазн.
-
-Не пиши вступлений и рассуждений — только само задание. Ничего не меняй в файлах.
-
-Запрос человека: `;
-
-async function askPlannedByClaude(body, send) {
-    const { prompt, model, effort, sessionId } = body;
-    if (!prompt) return send({ type: 'error', error: 'Пустой запрос' });
-    if (!activeTarget) return send({ type: 'error', error: 'Claude не подключён — он здесь планировщик' });
-    if (!activeHermesTarget) return send({ type: 'error', error: 'Hermes не подключён — он здесь исполнитель' });
-
-    // ---- ход первый: Claude превращает текст в задание ----
-    let plan = '';
-    let planSession = sessionId || null;
-    let planFailed = null;
-
-    send({ type: 'text', text: '⟶ Claude составляет задание…\n' });
-    await askClaude(
-        { prompt: PLANNER_PREAMBLE + prompt, model, effort, sessionId, mode: 'Chat' },
-        (event) => {
-            if (event.type === 'session') planSession = event.id;
-            else if (event.type === 'done') plan = event.text || plan;
-            else if (event.type === 'error') planFailed = event.error;
-            // ход планировщика показываем целиком: человек должен видеть, что уходит
-            // исполнителю, и успеть остановить работу до правок в файлах
-            send(event.type === 'done' ? { type: 'text', text: event.text || '' } : event);
-        },
+async function detectCodexInstalls() {
+    const checks = await Promise.allSettled(
+        CODEX_TARGETS.map(async (target) => ({
+            id: target.id,
+            label: target.label,
+            version: parseVersion(await runCodex(target, ['--version'], { timeoutMs: 15000 })),
+        }))
     );
 
-    if (planFailed) return send({ type: 'error', error: `Планирование не удалось: ${planFailed}` });
-    if (!plan.trim()) return send({ type: 'error', error: 'Claude не вернул задание' });
+    return checks.filter((c) => c.status === 'fulfilled').map((c) => c.value);
+}
 
-    // ---- ход второй: Hermes выполняет ----
-    send({ type: 'text', text: '\n⟶ Hermes выполняет задание…\n' });
-    // пересказ переписки здесь лишний: задание от Claude и есть весь нужный контекст,
-    // а пересказ повторил бы его вторым экземпляром
-    await askHermes({ prompt: plan.trim(), sessionId: planSession, mode: 'Action', skipHandoff: true }, send);
+// ход диалога ещё не реализован — Connect уже настоящий, но сообщения пока
+// возвращают понятную ошибку вместо падения сервера на неизвестном методе
+async function askCodex(_body, send) {
+    if (!activeCodexTarget) return send({ type: 'error', error: 'Codex is not connected' });
+    send({ type: 'error', error: 'Codex chat is not implemented yet' });
 }
 
 // ---------- хранилище сессий (SQLite) ----------
@@ -1516,7 +1484,6 @@ const AGENTS = {
         // список моделей у Claude фиксированный и лежит на клиенте
         models: null,
         activate: (target) => { activeTarget = target; },
-        // подключён ли CLI прямо сейчас — Hermes раздаёт шаги только тем, кто готов
         connected: () => Boolean(activeTarget),
         ask: askClaude,
     },
@@ -1531,49 +1498,23 @@ const AGENTS = {
         connected: () => Boolean(activeOpenCodeTarget),
         ask: askOpenCode,
     },
-    // Hermes отличается тем, что сам себе оркестратор: он планирует, помнит и
-    // выбирает модель. Для сервера это всё равно обычный исполнитель — строка здесь
-    hermes: {
-        targets: () => hermesConnector.targets(),
-        detect: async () => hermesConnector.detect(),
-        // версии у Hermes нет отдельной командой без запуска Python — метка цели
-        // говорит достаточно, а готовность установки видно в /api/hermes/setup/status
-        version: async () => 'установлен',
-        // модель выбирается в настройках Hermes, а не списком на клиенте
+    codex: {
+        targets: () => CODEX_TARGETS,
+        detect: () => detectCodexInstalls(),
+        version: (target) => runCodex(target, ['--version'], { timeoutMs: 15000 }).then(parseVersion),
+        // список моделей у Codex пока фиксированный и лежит на клиенте, как у Claude
         models: null,
-        activate: (target) => { activeHermesTarget = target; },
-        connected: () => Boolean(activeHermesTarget),
-        ask: askHermes,
-    },
-    // не отдельный CLI, а связка двух: планирует Claude, выполняет Hermes.
-    // Подключать нечего — она доступна ровно тогда, когда подключены оба
-    'hermes-plan': {
-        targets: () => [],
-        detect: async () => [],
-        version: async () => 'связка',
-        models: null,
-        activate: () => {},
-        connected: () => Boolean(activeTarget && activeHermesTarget),
-        ask: askPlannedByClaude,
+        activate: (target) => { activeCodexTarget = target; },
+        connected: () => Boolean(activeCodexTarget),
+        ask: askCodex,
     },
 };
 
 function agentByName(name) {
     const agent = AGENTS[name];
-    if (!agent) throw new Error(`Неизвестный агент: ${name}`);
+    if (!agent) throw new Error(`Unknown agent: ${name}`);
     return agent;
 }
-
-// серверные половины фич: каждая заводит свои таблицы сама и отдаёт готовую
-// таблицу маршрутов. server.js их только собирает и не знает, что внутри
-const featureRoutes = {
-    ...require('./PROJECTS/Flow/flow-server.js').createRoutes({ db }),
-    // Hermes ходит к CLI через ту же таблицу AGENTS, что и маршруты /api/agent/*,
-    // и поэтому не знает, какой именно исполнитель за ней стоит
-    ...require('./SYSTEM/Hermes/hermes-server.js').createRoutes({ db, agents: AGENTS, eta }),
-    ...require('./PROJECTS/Chat/pages-server.js').createRoutes({ db, root: ROOT }),
-    ...require('./SYSTEM/toolbar-icons-server.js').createRoutes({ db }),
-};
 
 const upsertSession = db.prepare(`
     INSERT INTO sessions (id, title, updated_at, target)
@@ -1601,14 +1542,15 @@ function handoffPreamble(sessionId) {
         .slice(-RESUME_MESSAGES);
     if (!history.length) return '';
 
-    const lines = history.map((m) => `${m.role === 'user' ? 'Человек' : 'Ассистент'}: ${clip(m.text.trim())}`);
+    const lines = history.map((m) => `${m.role === 'user' ? 'Human' : 'Assistant'}: ${clip(m.text.trim())}`);
     return [
-        'Это продолжение начатой переписки — её вёл другой CLI, поэтому своей истории у тебя нет.',
-        'Ниже последние ходы, чтобы ты понимал контекст. Отвечай на последнее сообщение человека.',
+        'This continues a conversation that was held by a different CLI, so you have no history of your own.',
+        'Below are the latest turns so you have the context. Answer the last message from the human,',
+        'in the same language they used.',
         '',
         ...lines,
         '',
-        '--- продолжение ---',
+        '--- continuation ---',
         '',
     ].join('\n');
 }
@@ -1647,6 +1589,7 @@ const getSessionMeta = db.prepare('SELECT context_percent AS contextPercent, con
 
 const listSessions = db.prepare(`
     SELECT s.id, s.title, s.updated_at AS updatedAt, s.thumb AS thumb,
+           s.rowid AS createdOrder,
            (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.role NOT IN ('tool', 'thinking', 'hook', 'system', 'unknown', 'top_level')) AS messageCount
     FROM sessions s
     ORDER BY s.updated_at DESC
@@ -1746,9 +1689,9 @@ function startExchange(sessionId, question, target, model, effort) {
 // и настоящее намерение — именно текст комментария
 function extractTitle(raw, maxLen) {
     const text = String(raw || '').trim();
-    const comment = text.match(/Комментарий:\s*([\s\S]+)/);
+    const comment = text.match(/(?:Comment|Комментарий):\s*([\s\S]+)/);
     const line = (comment ? comment[1] : text).split(/\r?\n/)[0].trim();
-    return line.slice(0, maxLen) || 'Без темы';
+    return line.slice(0, maxLen) || 'No subject';
 }
 
 function sessionTitle(session) {
@@ -1884,10 +1827,9 @@ function finishExchange(sessionId, answer, meta = {}) {
 
 // ---------- граф Obsidian ----------
 
-// вся вкладка Graph живёт в PROJECTS/Graph; здесь остаются её точки входа
-const {
-    prepareVault, buildVaultGraph, searchProject, readProjectFile, writeProjectFile, projectFiles, MAX_EDIT_BYTES,
-} = graph.init({
+// вся вкладка Graph живёт в PROJECTS/Graph; здесь остаётся только её запуск —
+// маршруты вкладка отдаёт сама (graph.createRoutes в featureRoutes ниже)
+const { prepareVault, projectFiles } = graph.init({
     listSessions,
     listMessages,
     sessionTitle,
@@ -1895,27 +1837,42 @@ const {
     onMapReady: () => { if (clients.size) notifyClients('map'); },
 });
 
-// ---------- API коннектора ----------
-
-// «5 мин назад» для серверных фрагментов. Раньше это считал браузер в app.js;
-// после переезда панели на htmx время форматирует тот, кто рисует разметку
-function formatWhen(iso) {
-    const date = new Date(iso);
-    if (Number.isNaN(date.getTime())) return '';
-
-    const minutes = Math.round((Date.now() - date.getTime()) / 60000);
-    if (minutes < 1) return 'только что';
-    if (minutes < 60) return `${minutes} мин назад`;
-    if (minutes < 24 * 60) return `${Math.round(minutes / 60)} ч назад`;
-    return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+// сводка по сессиям для списков и панелей: заголовок уже почищен, а running
+// посчитан по реестру запусков. Тему чистим на выдаче, а не только при записи:
+// так короткий заголовок получают и сессии, заведённые до этого правила, —
+// миграция базы не нужна
+function sessionSummaries() {
+    return listSessions.all().map((session) => ({
+        ...session,
+        title: sessionTitle(session),
+        running: runs.has(session.id),
+    }));
 }
+
+// серверные половины фич: каждая заводит свои таблицы сама и отдаёт готовую
+// таблицу маршрутов. server.js их только собирает и не знает, что внутри.
+// Список ниже — единственное место, где ядро знает про фичи вообще
+const featureRoutes = {
+    ...graph.createRoutes(),
+    ...require('./PROJECTS/Flow/flow-server.js').createRoutes({ db }),
+    ...require('./PROJECTS/Chat/pages-server.js').createRoutes({ db, root: ROOT }),
+    ...require('./PROJECTS/Chat/chat-server.js').createRoutes({ sessions: sessionSummaries }),
+    ...require('./PROJECTS/Home/home-server.js').createRoutes({
+        sessions: sessionSummaries,
+        activeCount: () => activeRuns.size,
+    }),
+    ...require('./PROJECTS/Karandash/karandash-server.js').createRoutes({ setEnvValue }),
+    ...require('./SYSTEM/toolbar-icons-server.js').createRoutes({ db }),
+};
+
+// ---------- API коннектора ----------
 
 async function handleApi(req, res, urlPath) {
     // фрагменты только читают состояние, и htmx тянет их обычным hx-get —
     // остальному API по-прежнему нужен POST
     const readOnly = urlPath.startsWith('/api/fragment/');
     if (req.method !== 'POST' && !(readOnly && req.method === 'GET')) {
-        sendJson(res, { ok: false, error: readOnly ? 'Ожидается GET или POST' : 'Ожидается POST' }, 405);
+        sendJson(res, { ok: false, error: readOnly ? 'Expected GET or POST' : 'Expected POST' }, 405);
         return;
     }
 
@@ -1943,7 +1900,7 @@ async function handleApi(req, res, urlPath) {
             const adapter = agentByName(agent);
             const target = adapter.targets().find((t) => t.id === id);
             if (!target) {
-                sendJson(res, { ok: false, error: `Неизвестное окружение: ${id}` });
+                sendJson(res, { ok: false, error: `Unknown environment: ${id}` });
                 return;
             }
 
@@ -1980,87 +1937,8 @@ async function handleApi(req, res, urlPath) {
             return;
         }
 
-        if (urlPath === '/api/obsidian/graph') {
-            sendJson(res, buildVaultGraph());
-            return;
-        }
-
-        if (urlPath === '/api/file/read') {
-            const { path: target } = await readJson(req);
-            sendJson(res, readProjectFile(target));
-            return;
-        }
-
-        if (urlPath === '/api/file/write') {
-            // в теле идёт весь файл целиком: index.html один весит больше
-            // стандартного лимита readJson, поэтому лимит здесь свой
-            const { path: target, text } = await readJson(req, MAX_EDIT_BYTES + 100_000);
-            sendJson(res, writeProjectFile(target, text));
-            return;
-        }
-
-        if (urlPath === '/api/search') {
-            const { q, limit } = await readJson(req);
-            sendJson(res, searchProject(q, limit));
-            return;
-        }
-
         if (urlPath === '/api/sessions') {
-            // тему чистим на выдаче, а не только при записи: так короткий заголовок
-            // получают и сессии, заведённые до этого правила — миграция базы не нужна
-            const sessions = listSessions.all().map((session) => ({
-                ...session,
-                title: sessionTitle(session),
-                running: runs.has(session.id),
-            }));
-            sendJson(res, { ok: true, sessions, active: activeRuns.size });
-            return;
-        }
-
-        // готовый HTML панели наблюдения на Home вместо JSON: разметку собирает
-        // сервер, htmx подменяет только этот кусок страницы. Карточка Providers
-        // сюда не входит — её состояние есть только в браузере
-        if (urlPath === '/api/fragment/home-observation') {
-            const sessions = listSessions.all().map((session) => ({
-                id: session.id,
-                title: sessionTitle(session),
-                updatedAt: session.updatedAt,
-                messageCount: session.messageCount,
-                running: runs.has(session.id),
-            }));
-
-            const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
-            const html = eta.render('home-observation', {
-                total: sessions.length,
-                active: activeRuns.size,
-                messages: sessions.reduce((sum, s) => sum + s.messageCount, 0),
-                today: sessions.filter((s) => new Date(s.updatedAt).getTime() >= dayAgo).length,
-                lastActive: sessions[0] ? formatWhen(sessions[0].updatedAt) : '—',
-                running: sessions.filter((s) => s.running),
-                recent: sessions.slice(0, 6).map((s) => ({
-                    ...s,
-                    meta: s.running ? 'выполняется…' : `${formatWhen(s.updatedAt)} · ${s.messageCount} сообщ.`,
-                })),
-            });
-            sendHtml(res, html);
-            return;
-        }
-
-        // список сессий панели Chat тем же приёмом, что и home-observation: разметку
-        // строит сервер, htmx подменяет #sessionList целиком по hx-swap-oob. Кто сейчас
-        // выбран (aria-current) серверу не известно — это чинит app.js после подмены
-        if (urlPath === '/api/fragment/chat-sessions') {
-            const sessions = listSessions.all().map((session) => {
-                const running = runs.has(session.id);
-                return {
-                    id: session.id,
-                    title: sessionTitle(session),
-                    thumb: session.thumb,
-                    running,
-                    meta: running ? 'выполняется…' : `${formatWhen(session.updatedAt)} · ${session.messageCount} сообщ.`,
-                };
-            });
-            sendHtml(res, eta.render('chat-sessions', { sessions }));
+            sendJson(res, { ok: true, sessions: sessionSummaries(), active: activeRuns.size });
             return;
         }
 
@@ -2076,11 +1954,11 @@ async function handleApi(req, res, urlPath) {
         if (urlPath === '/api/sessions/delete') {
             const { id } = await readJson(req);
             if (!id) {
-                sendJson(res, { ok: false, error: 'Не указана сессия' });
+                sendJson(res, { ok: false, error: 'No session specified' });
                 return;
             }
             if (runs.has(id)) {
-                sendJson(res, { ok: false, error: 'Сессия ещё выполняется' });
+                sendJson(res, { ok: false, error: 'The session is still running' });
                 return;
             }
             deleteSession(id);
@@ -2106,35 +1984,6 @@ async function handleApi(req, res, urlPath) {
             return; // ответ закроется, когда закончится работа
         }
 
-        // снимок экрана из режима Karandash: клиент попросил его сразу после отправки
-        // комментария, пока выбранный элемент ещё обведён рамкой
-        if (urlPath === '/api/screenshot') {
-            const thumb = await captureScreenshot(Number(process.env.SCREENSHOT_SCREEN) || 0);
-            if (!thumb) {
-                sendJson(res, { ok: false, error: 'Не удалось сделать скриншот' });
-                return;
-            }
-            sendJson(res, { ok: true, thumb });
-            return;
-        }
-
-        // список мониторов и текущий выбор — для настройки в Settings
-        if (urlPath === '/api/screenshot/screens') {
-            sendJson(res, { screens: await listScreens(), current: Number(process.env.SCREENSHOT_SCREEN) || 0 });
-            return;
-        }
-
-        if (urlPath === '/api/screenshot/screen') {
-            const { index } = await readJson(req);
-            if (!Number.isInteger(index) || index < 0) {
-                sendJson(res, { ok: false, error: 'Некорректный индекс экрана' });
-                return;
-            }
-            setEnvValue('SCREENSHOT_SCREEN', String(index));
-            sendJson(res, { ok: true });
-            return;
-        }
-
         // превью элемента, к которому был оставлен комментарий из режима Karandash —
         // приходит уже готовой data URL (скриншот системы либо клиентский снимок)
         if (urlPath === '/api/sessions/thumb') {
@@ -2144,7 +1993,7 @@ async function handleApi(req, res, urlPath) {
             // это то, что реально отдаёт canvas.toDataURL, и ничего сверх этого
             const THUMB_RE = /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/]+=*$/;
             if (!id || typeof thumb !== 'string' || thumb.length > MAX_THUMB_BYTES || !THUMB_RE.test(thumb)) {
-                sendJson(res, { ok: false, error: 'Некорректное превью' });
+                sendJson(res, { ok: false, error: 'Invalid preview' });
                 return;
             }
             setSessionThumb.run(thumb, id);
@@ -2173,9 +2022,7 @@ async function handleApi(req, res, urlPath) {
             return;
         }
 
-        // хранилище вкладки Flow целиком: список пунктов меню, позиции/тексты
-        // нод, граф связей, зум/пан каждого канваса — см. flow_state выше
-        sendJson(res, { ok: false, error: 'Неизвестный эндпоинт' }, 404);
+        sendJson(res, { ok: false, error: 'Unknown endpoint' }, 404);
     } catch (err) {
         // сюда попадают только неожиданные падения: там, где ошибка предусмотрена,
         // обработчик сам отвечает 200 с { ok: false }. Поэтому здесь код 500 и
@@ -2186,7 +2033,7 @@ async function handleApi(req, res, urlPath) {
         // htmx на 200 попробовал бы разложить тело по oob-целям, ничего не нашёл
         // и тихо оставил панель замороженной
         if (urlPath.startsWith('/api/fragment/')) {
-            sendHtml(res, `<!-- ошибка фрагмента: ${escapeHtml(err.message)} -->`, 500);
+            sendHtml(res, `<!-- fragment error: ${escapeHtml(err.message)} -->`, 500);
             return;
         }
         // тело прежнее: App.api() читает JSON независимо от кода ответа
@@ -2208,7 +2055,7 @@ function isLocalRequest(req) {
 const server = http.createServer((req, res) => {
     if (!isLocalRequest(req)) {
         res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('403 Forbidden: сервер отвечает только на локальные запросы');
+        res.end('403 Forbidden: the server only answers local requests');
         return;
     }
 
@@ -2274,8 +2121,8 @@ const server = http.createServer((req, res) => {
 // и вслепую перезаписывает vault/
 server.on('error', (err) => {
     if (err.code !== 'EADDRINUSE') throw err;
-    console.error(`Порт ${PORT} занят — скорее всего, сервер уже запущен: http://localhost:${PORT}`);
-    console.error('Другой порт задаётся строкой PORT= в .env');
+    console.error(`Port ${PORT} is busy — the server is most likely already running: http://localhost:${PORT}`);
+    console.error('A different port is set with the PORT= line in .env');
     process.exit(EXIT_PORT_BUSY); // отдельный код: по нему сторож понимает, что ждать правок бессмысленно
 });
 
@@ -2284,21 +2131,12 @@ server.listen(PORT, () => {
     // event loop занят и сокет никому не отвечает. Поэтому «Сервер запущен»
     // печатается после неё — иначе и человек, и смоук идут на порт, который
     // молчит, и получают таймаут вместо страницы
-    console.log('Собираю карту проекта — это занимает несколько секунд...');
+    console.log('Building the project map — this takes a few seconds...');
     prepareVault();
-    console.log(`Сервер запущен: http://localhost:${PORT} (среда: ${detectRuntimePlatform()})`);
+    console.log(`Server started: http://localhost:${PORT} (runtime: ${detectRuntimePlatform()})`);
 
-    // первый запуск проекта доводит себя до рабочего состояния сам: скачивает
-    // Hermes, ставит ему окружение и пишет конфиг. Идёт в фоне — интерфейс
-    // открывается сразу и показывает ход установки. Отключается HERMES_AUTOINSTALL=0
-    if (process.env.HERMES_AUTOINSTALL !== '0' && !hermesSetup.isReady()) {
-        console.log('Hermes ещё не установлен — ставлю в фоне, ход виден на вкладке Hermes.');
-        hermesSetup.installOnce({ onLog: (line) => console.log(`[hermes-setup] ${line}`) })
-            .then(() => console.log('Hermes готов — выберите провайдера в настройках.'))
-            .catch((err) => console.error(`Установка Hermes не удалась: ${err.message}`));
-    }
     if (LIVE_RELOAD) {
         watchFiles();
-        console.log('Автообновление включено — страница перезагрузится после сохранения файла.');
+        console.log('Auto-reload is on — the page will reload after a file is saved.');
     }
 });

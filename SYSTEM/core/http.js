@@ -9,7 +9,7 @@ function readJson(req, limit = 100_000) {
         req.on('data', (chunk) => {
             body += chunk;
             if (body.length > limit) {
-                reject(new Error('Слишком большой запрос'));
+                reject(new Error('Request too large'));
                 req.destroy();
             }
         });
@@ -17,7 +17,7 @@ function readJson(req, limit = 100_000) {
             try {
                 resolve(body ? JSON.parse(body) : {});
             } catch {
-                reject(new Error('Некорректный JSON'));
+                reject(new Error('Invalid JSON'));
             }
         });
         req.on('error', reject);

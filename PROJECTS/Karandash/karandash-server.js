@@ -1,11 +1,13 @@
-// Кнопка Karandash, серверная половина: снимок экрана для миниатюры сессии.
-// Модуль лежит рядом с karandash.js — вся кнопка Karandash собрана в одной папке.
-// server.js только подключает его и вешает на роут POST /api/screenshot.
+// Кнопка Karandash, серверная половина: снимок экрана для миниатюры сессии
+// и выбор монитора, с которого его делать. Здесь же её маршруты (createRoutes
+// внизу файла) — вся кнопка Karandash собрана в одной папке, server.js только
+// раскладывает готовую таблицу путей.
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
 
 // снимок экрана для миниатюры сессии: canvas на фронтенде не видит ничего
 // за пределами вкладки браузера, поэтому реальный скриншот системы делает
@@ -130,4 +132,38 @@ function captureScreenshot(screenIndex) {
     });
 }
 
-module.exports = { captureScreenshot, listScreens };
+// какой монитор снимать, хранится в .env (SCREENSHOT_SCREEN) — записать туда
+// умеет только server.js, поэтому setEnvValue приходит снаружи
+function createRoutes({ setEnvValue }) {
+    const currentScreen = () => Number(process.env.SCREENSHOT_SCREEN) || 0;
+
+    return {
+        // снимок экрана из режима Karandash: клиент просит его сразу после отправки
+        // комментария, пока выбранный элемент ещё обведён рамкой
+        '/api/screenshot': async (req, res) => {
+            const thumb = await captureScreenshot(currentScreen());
+            if (!thumb) {
+                sendJson(res, { ok: false, error: 'Failed to take a screenshot' });
+                return;
+            }
+            sendJson(res, { ok: true, thumb });
+        },
+
+        // список мониторов и текущий выбор — для настройки в Settings
+        '/api/screenshot/screens': async (req, res) => {
+            sendJson(res, { screens: await listScreens(), current: currentScreen() });
+        },
+
+        '/api/screenshot/screen': async (req, res) => {
+            const { index } = await readJson(req);
+            if (!Number.isInteger(index) || index < 0) {
+                sendJson(res, { ok: false, error: 'Invalid screen index' });
+                return;
+            }
+            setEnvValue('SCREENSHOT_SCREEN', String(index));
+            sendJson(res, { ok: true });
+        },
+    };
+}
+
+module.exports = { createRoutes, captureScreenshot, listScreens };

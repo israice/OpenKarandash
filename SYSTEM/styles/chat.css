@@ -61,7 +61,9 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    padding: calc(var(--topbar-height) + 4px) 16px 16px;
+    /* правый отступ учитывает значок версии (position: fixed, .app-version в base.css),
+       чтобы панель ввода заканчивалась левее него, а не пряталась под ним */
+    padding: calc(var(--topbar-height) + 4px) 90px 16px 16px;
 }
 
 .chat__session-bar {
@@ -153,8 +155,11 @@
 
 .chat__input {
     flex: 1;
+    /* пол = высота соседних контролов, иначе однострочное поле проседает при flex-end */
+    min-height: var(--composer-control-height);
     max-height: 160px;
     padding: 8px 10px;
+    line-height: 22px;
     border: 0;
     background: none;
     font: inherit;

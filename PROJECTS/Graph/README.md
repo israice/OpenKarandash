@@ -1,97 +1,97 @@
 # 🕸 Graph
 
-Живая карта проекта: файлы, секции, функции, роуты и память о сессиях — в одном облаке узлов, которое собирается само.
+A living map of the project: files, sections, functions, routes and memory of past sessions — in one cloud of nodes that builds itself.
 
-## 🧭 Что это
+## 🧭 What this is
 
-Вкладка **Graph** — это граф всего, что физически лежит в папке проекта. Настраивать нечего: сервер при запуске создаёт рядом с кодом Obsidian-vault (`DATA/vault/`), раскладывает по нему заметки — на каждый файл, на каждую секцию крупного файла, на каждую функцию верхнего уровня, на каждый API-роут — и держит их в актуальном состоянии. Вкладка просто забирает готовую карту одним запросом.
+The **Graph** tab is a graph of everything that physically sits in the project folder. There is nothing to configure: on startup the server creates an Obsidian vault next to the code (`DATA/vault/`), fills it with notes — one per file, one per section of a large file, one per top-level function, one per API route — and keeps them up to date. The tab simply fetches the finished map in a single request.
 
-Связи здесь не выдуманы по совпадению имён. Ребро появляется только там, где в коде есть настоящая привязка: строковый литерал `/api/...`, атрибут `src`/`href`, `require`/`import`, вызов функции внутри файла, ссылка `[[…]]` в заметке. Отдельным слоем ложится история git — файлы, которые из коммита в коммит меняются вместе.
+The links here are not invented from matching names. An edge appears only where the code has a real binding: a `/api/...` string literal, a `src`/`href` attribute, a `require`/`import`, a function call inside a file, a `[[…]]` link in a note. Git history forms a separate layer — files that change together from commit to commit.
 
-Граф не только смотрят. Клик по узлу открывает содержимое файла прямо в окне — с правкой и сохранением. Поле поиска сверху ищет полнотекстово по коду, заметкам и прошлым сессиям и подсвечивает попадания прямо в облаке узлов.
+The graph is not only for looking at. Clicking a node opens the file's contents right in a window — editable and saveable. The search field at the top does a full-text search across code, notes and past sessions, and highlights the hits directly in the node cloud.
 
-## ✨ Возможности
+## ✨ Features
 
-- **Живая раскладка.** Силовая симуляция считается каждый кадр: узлы расталкиваются, связи стягивают, лёгкая гравитация держит облако в центре. Движение затухает и останавливается само — фоном батарею не жжёт.
-- **Узлы можно тянуть.** Схватили узел мышью — соседи потянулись следом; отпустили — граф доукладывается сам.
-- **Семь видов узлов.** Файлы, API, секции, функции, сессии, заметки, история — каждый со своим цветом. Чипы слева включают и выключают виды; функции, сессии и история выключены по умолчанию, иначе картинка не читается.
-- **Подсветка соседства.** Наведение выводит узел и его связи на первый план, приглушая остальное. Размер кружка растёт вместе с числом связей — хабы видно сразу.
-- **Поиск по всему проекту.** Полнотекстовый (FTS5 с ранжированием BM25) по коду, заметкам vault и переписке прошлых сессий. Найденные узлы пульсируют, подсказка показывает, сколько нашлось всего и сколько из этого видно в графе.
-- **Панель связей.** Выбранный узел раскрывается сбоку: вид, файл и строка, дата, список соседей — по любому из них можно перейти одним кликом.
-- **Редактор в окне.** Текстовые файлы правятся и сохраняются кнопкой или `Ctrl+S`. Для узла-секции и узла-функции текст сразу прокручен к нужной строке. Заметки vault открываются только на чтение — они пересобираются сервером, и правка не пережила бы следующую пересборку. Двоичные файлы показывают только размер.
-- **Метка устаревшего.** Если после сессии затронутые ею файлы менялись, её заметка помечена `stale` и рисуется приглушённой: прошлое решение не должно читаться как актуальное.
-- **Обновление без перезагрузки.** Правки в проекте пересобирают карту, и открытая вкладка перерисовывается сама.
-- **Уважение к настройкам доступности.** При системной настройке «уменьшить движение» появление, переходы и пульсация отключаются.
+- **A live layout.** The force simulation runs every frame: nodes push each other apart, links pull them together, and light gravity keeps the cloud centred. The motion decays and stops on its own — no battery burned in the background.
+- **Nodes can be dragged.** Grab a node with the mouse and its neighbours follow; let go and the graph settles by itself.
+- **Seven node kinds.** Files, API, sections, functions, sessions, notes, history — each with its own colour. The chips on the left turn kinds on and off; functions, sessions and history are off by default, otherwise the picture becomes unreadable.
+- **Neighbourhood highlighting.** Hovering brings a node and its links to the front and dims the rest. The circle grows with the number of links — hubs are visible at a glance.
+- **Project-wide search.** Full-text (FTS5 with BM25 ranking) across code, vault notes and the conversations of past sessions. Matching nodes pulse, and the hint shows how many were found in total and how many of those are visible in the graph.
+- **The links panel.** The selected node expands to the side: kind, file and line, date, and the list of neighbours — any of which can be opened with one click.
+- **An editor in the window.** Text files can be edited and saved with a button or `Ctrl+S`. For a section node and a function node the text is already scrolled to the right line. Vault notes open read-only — they are rebuilt by the server, and an edit would not survive the next rebuild. Binary files show only their size.
+- **A stale marker.** If the files a session touched have changed since, its note is marked `stale` and drawn dimmed: a past decision should not read as the current one.
+- **Updates without a reload.** Edits in the project rebuild the map, and an open tab redraws itself.
+- **Respect for accessibility settings.** With the system "reduce motion" setting, the appearance animation, transitions and pulsing are turned off.
 
-## 🎛 Управление
+## 🎛 Controls
 
-| Действие | Что происходит |
+| Action | What happens |
 | --- | --- |
-| Колесо мыши | Масштаб к точке под курсором |
-| Перетаскивание пустого места | Панорама полотна |
-| Перетаскивание узла | Узел следует за курсором, соседи подтягиваются |
-| Наведение на узел | Подсветка узла и его связей, остальное гаснет |
-| Клик по узлу | Панель связей справа + окно с содержимым |
-| Клик по чипу вида | Включить или выключить этот вид узлов |
-| Ввод в поле поиска | Через 200 мс паузы — подсветка найденного в графе |
-| Пустое поле поиска | Подсветка снимается |
-| Клик по имени связи | Переход к соседнему узлу |
-| `Ctrl+S` / `Cmd+S` в окне | Сохранить правку |
-| `×` в панели справа | Закрыть панель и снять выделение |
+| Mouse wheel | Zoom towards the point under the cursor |
+| Dragging empty space | Pan the canvas |
+| Dragging a node | The node follows the cursor, neighbours are pulled along |
+| Hovering a node | The node and its links are highlighted, the rest fades |
+| Clicking a node | The links panel on the right plus a window with the contents |
+| Clicking a kind chip | Turn that node kind on or off |
+| Typing in the search field | After a 200 ms pause — the matches are highlighted in the graph |
+| An empty search field | The highlighting is cleared |
+| Clicking a link name | Jump to the neighbouring node |
+| `Ctrl+S` / `Cmd+S` in the window | Save the edit |
+| `×` in the right-hand panel | Close the panel and clear the selection |
 
-Подписи узлов появляются при приближении: на общем плане они слились бы в кашу, поэтому при широком кадре видны только подписи узла под курсором и выбранного.
+Node labels appear as you zoom in: at a wide view they would blur into mush, so at that distance only the labels of the hovered and the selected node are shown.
 
-## 🔬 Как это устроено
+## 🔬 How it works
 
-**Откуда берутся узлы.** Сервер обходит папку проекта целиком — включая скрытые файлы и то, что игнорирует git (`.env`, `.sessions.db`, локальные настройки). Исключений ровно три и все вынужденные: `.git`, `node_modules` и `DATA/` — всё, что сервер произвёл сам, включая сам vault.
+**Where the nodes come from.** The server walks the entire project folder — including hidden files and things git ignores (`.env`, `.sessions.db`, local settings). There are exactly three exceptions, all unavoidable: `.git`, `node_modules` and `DATA/` — everything the server produced itself, the vault included.
 
-| Вид | Что становится узлом | Виден сразу |
+| Kind | What becomes a node | Visible immediately |
 | --- | --- | --- |
-| `file` | Любой файл папки проекта | да |
-| `route` | Объявление `urlPath === '/api/…'` в серверном коде | да |
-| `section` | Комментарий-разделитель `// ---------- … ----------` в файле от 200 строк | да |
-| `function` | Функция верхнего уровня в таком же крупном файле | нет |
-| `session` | Заметка о прошлой сессии из `vault/Сессии/` | нет |
-| `note` | Заметка, написанная руками в корне vault | да |
-| `history` | Сводка «файлы, которые меняются вместе» из истории git | нет |
+| `file` | Any file in the project folder | yes |
+| `route` | A `urlPath === '/api/…'` declaration in server code | yes |
+| `section` | A `// ---------- … ----------` separator comment in a file of 200 lines or more | yes |
+| `function` | A top-level function in such a large file | no |
+| `session` | A note about a past session from `vault/Sessions/` | no |
+| `note` | A note written by hand in the vault root | yes |
+| `history` | The "files that change together" summary from git history | no |
 
-**Откуда берутся связи.** Перед поиском вызовов из кода вычищаются строки и комментарии — имя функции, упомянутое в тексте, вызовом не считается. Функция привязывается к секции, внутри которой объявлена, секция — к своему файлу: получается дерево, а не плоский веер. Пары «менялись вместе» берутся из коммитов, где файлы встретились минимум дважды, а файл, который правится больше чем в 60 % коммитов, из пар исключается, чтобы не стать ложным хабом.
+**Where the links come from.** Before looking for calls, strings and comments are stripped from the code — a function name mentioned in prose does not count as a call. A function is attached to the section it is declared in, and a section to its file: the result is a tree rather than a flat fan. The "changed together" pairs come from commits where the files met at least twice, and a file edited in more than 60 % of commits is excluded from the pairs so it does not become a false hub.
 
-**Какие роуты дёргает вкладка.** Все `POST`, все только для локальных запросов:
+**Which routes the tab calls.** All `POST`, all local-only:
 
-| Роут | Зачем |
+| Route | Why |
 | --- | --- |
-| `/api/obsidian/graph` | Узлы и связи vault — из них строится всё полотно |
-| `/api/search` | Поиск: `{ q, limit }` → список попаданий с фрагментами |
-| `/api/file/read` | Содержимое узла для окна: текст, размер, признаки `binary` и `editable` |
-| `/api/file/write` | Сохранение правки; заметки vault и двоичные файлы отклоняются |
+| `/api/obsidian/graph` | The vault's nodes and links — the whole canvas is built from them |
+| `/api/search` | Search: `{ q, limit }` → a list of hits with snippets |
+| `/api/file/read` | A node's contents for the window: text, size, the `binary` and `editable` flags |
+| `/api/file/write` | Saving an edit; vault notes and binary files are rejected |
 
-**Где хранится состояние.** Набор включённых видов узлов переживает перезагрузку — он лежит в `localStorage` под ключом `graph.visibleKinds` (если хранилище недоступно, вкладка тихо берёт умолчания). Всё остальное — положение камеры, координаты узлов, выделение — живёт только в памяти страницы и пересчитывается при каждом открытии вкладки: облако каждый раз оживает заново.
+**Where state is kept.** The set of enabled node kinds survives a reload — it lives in `localStorage` under the key `graph.visibleKinds` (if storage is unavailable, the tab quietly falls back to the defaults). Everything else — the camera position, the node coordinates, the selection — lives only in the page's memory and is recomputed every time the tab is opened: the cloud comes alive from scratch each time.
 
-**Как приходит обновление.** Сервер опрашивает файлы проекта каждые 400 мс. Через 3 секунды тишины после последней правки он заново собирает vault и поисковый индекс (`DATA/.index.db`), а затем шлёт странице SSE-событие `map`. Вкладка перерисовывает граф — но только если она сейчас открыта: считать раскладку для скрытого полотна незачем. Пока идёт запрос к Claude, пересборка откладывается до его окончания.
+**How updates arrive.** The server polls the project files every 400 ms. Three seconds after the last edit it rebuilds the vault and the search index (`DATA/.index.db`), then sends the page a `map` SSE event. The tab redraws the graph — but only if it is currently open: there is no point computing a layout for a hidden canvas. While a request to Claude is in flight, the rebuild is deferred until it finishes.
 
-## 📁 Файлы
+## 📁 Files
 
-| Файл | За что отвечает |
+| File | What it is responsible for |
 | --- | --- |
-| `PROJECTS/Graph/graph.js` | Клиент: раскладка, симуляция, поиск, панель связей, окно с содержимым (`window.MissionGraph`) |
-| `PROJECTS/Graph/graph.css` | Стили вкладки: полотно, чипы видов, панель связей, окно и панель правки файла |
-| `PROJECTS/Graph/graph-server.js` | Сервер: сборка vault, разбор кода на секции и функции, заметки сессий, поисковый индекс, чтение и запись файла |
-| `PROJECTS/Graph/search.js` | Тот же поиск из терминала: `node PROJECTS/Graph/search.js "запрос"`, читает готовый индекс |
-| `DATA/vault/` | Сами заметки: карта в `Проект/`, память о сессиях в `Сессии/`, ваши записи рядом (в git не попадает) |
+| `PROJECTS/Graph/graph.js` | The client: layout, simulation, search, links panel, contents window (`window.MissionGraph`) |
+| `PROJECTS/Graph/graph.css` | The tab's styles: canvas, kind chips, links panel, the window and the file editing panel |
+| `PROJECTS/Graph/graph-server.js` | The server half: building the vault, parsing code into sections and functions, session notes, the search index, reading and writing files — plus the tab's own routes (`createRoutes`): `/api/obsidian/graph`, `/api/search`, `/api/file/read`, `/api/file/write` |
+| `PROJECTS/Graph/search.js` | The same search from the terminal: `node PROJECTS/Graph/search.js "query"`, reads the prebuilt index |
+| `DATA/vault/` | The notes themselves: the map in `Project/`, session memory in `Sessions/`, your own notes alongside (not tracked by git) |
 
-Снаружи остаётся только проводка — то, что нельзя унести из общих файлов:
+Only the wiring stays outside — the parts that cannot be moved out of the shared files:
 
-| Файл | Что в нём про Graph |
+| File | What it contains about Graph |
 | --- | --- |
-| `SYSTEM/index.html` | `<link>` на `graph.css`, `<script defer>` на `graph.js`, разметка `#graphView` и кнопка тулбара `graphButton` |
-| `server.js` | `require('./PROJECTS/Graph/graph-server.js')` + `graph.init(...)` и четыре роута: `/api/obsidian/graph`, `/api/search`, `/api/file/read`, `/api/file/write` |
-| `SYSTEM/tabs.js` | `MissionGraph.show()` при переключении на вкладку |
+| `SYSTEM/index.html` | A `<link>` to `graph.css`, a `<script defer>` for `graph.js`, the `#graphView` markup and the `graphButton` toolbar button |
+| `server.js` | Only wires the folder in: `graph.init(...)` at startup and `graph.createRoutes()` in the route table. None of the tab's routes live there any more |
+| `SYSTEM/tabs.js` | `MissionGraph.show()` when switching to the tab |
 
-Модуль `graph-server.js` ничего не знает про http и хранилище сессий: всё внешнее — список сессий, их сообщения, тема сессии и уведомление страниц о пересборке — приходит один раз через `init()`.
+The `graph-server.js` module knows nothing about the session store: everything external — the session list, their messages, a session's subject and notifying pages about a rebuild — arrives once through `init()`.
 
-Свои заметки кладите в корень vault: `DATA/vault/Проект/` перезаписывается целиком при каждой пересборке, а всё остальное не трогается и попадает и в граф, и в поиск.
+Put your own notes in the vault root: `DATA/vault/Project/` is overwritten in full on every rebuild, while everything else is left alone and shows up both in the graph and in the search.
 
 ---
 
-Лицензия MIT.
+MIT license.

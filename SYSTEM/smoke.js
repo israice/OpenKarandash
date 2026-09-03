@@ -86,13 +86,11 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
 
 function startServer(port) {
     return new Promise((resolve, reject) => {
-        // HERMES_AUTOINSTALL=0 — смоук не должен тянуть из сети окружение Hermes:
-        // проверка обязана проходить одинаково быстро и без интернета.
         // NO_RELOAD=1 — без слежения за файлами и без процесса-сторожа: смоуку нужен
         // обычный сервер, а не самоперезапускающийся
         const child = spawn(process.execPath, ['server.js'], {
             cwd: ROOT,
-            env: { ...process.env, PORT: String(port), NO_RELOAD: '1', HERMES_AUTOINSTALL: '0', DATA_DIR: SMOKE_DATA_DIR },
+            env: { ...process.env, PORT: String(port), NO_RELOAD: '1', DATA_DIR: SMOKE_DATA_DIR },
             stdio: ['ignore', 'pipe', 'pipe'],
         });
         server = child;
@@ -108,7 +106,7 @@ function startServer(port) {
 
         const onData = (chunk) => {
             out += chunk;
-            if (out.includes('Сервер запущен')) {
+            if (out.includes('Server started')) {
                 clearTimeout(timer);
                 resolve(child);
             }
@@ -129,40 +127,26 @@ const equal = (actual, expected, what) => {
 
 // ---------- проверки, которым сервер не нужен ----------
 
-// Сторож файлов под NO_RELOAD=1 не поднимается, и его падение смоук не увидит.
-// Поэтому проверяем то, из-за чего он падал: обход дерева обязан обходить
-// установку Hermes стороной — там symlink'и WSL-окружения, которые с Windows
-// не читаются (EACCES), и 250 МБ чужого кода
-check('обход дерева не заходит в установку Hermes', async () => {
-    const scan = require(path.join(ROOT, 'SYSTEM/core/scan.js'));
-    const cases = [
-        ['SYSTEM/Hermes/agent/cli.py', true],
-        ['SYSTEM/Hermes/runtime/wsl/venv/bin/python', true],
-        ['SYSTEM/Hermes/hermes-agent-connector.js', false],
-        // «runtime» само по себе не запрещено: так вполне может называться раздел
-        ['PROJECTS/Runtime/README.md', false],
-    ];
-    for (const [relative, expected] of cases) {
-        const full = path.join(ROOT, relative.split('/').join(path.sep));
-        const actual = scan.isSkipped(ROOT, full, path.basename(full));
-        if (actual !== expected) throw new Error(`${relative}: ожидалось ${expected}, получено ${actual}`);
-    }
-});
-
-// Живая перезагрузка под NO_RELOAD=1 тоже не работает, а ошибиться в ней дорого:
+// Живая перезагрузка под NO_RELOAD=1 не работает, а ошибиться в ней дорого:
 // точечное событие вместо перезагрузки на неподходящей правке = страница со старым
 // кодом, о которой никто не узнает. Проверяем само правило, без HTTP
 check('правка выбирает верное событие живой перезагрузки', async () => {
     const { reloadEvents } = require(path.join(ROOT, 'SYSTEM/core/reload.js'));
     const at = (...parts) => path.join(ROOT, ...parts);
     const cases = [
-        [[at('SYSTEM', 'templates', 'home-observation.eta')], ['fragment:home-observation']],
+        [[at('PROJECTS', 'Home', 'home-observation.eta')], ['fragment:home-observation']],
         [[at('PROJECTS', 'Flow', 'flow.css')], ['css:PROJECTS/Flow/flow.css']],
         [[at('SYSTEM', 'app.js')], ['reload']],
+        // страница кнопки «+» пересобирается одна, соседние вкладки не трогаются
+        [[at('PROJECTS', 'Feed', 'page.js')], ['page:Feed']],
+        [[at('PROJECTS', 'Feed', 'page.css')], ['css:PROJECTS/Feed/page.css']],
+        // page.js бывает только у этих страниц, но правило не должно ловить
+        // файл глубже в папке раздела — там границы уже неизвестны
+        [[at('PROJECTS', 'Graph', 'vendor', 'page.js')], ['reload']],
         // пачка правок: точечные события покрывают её, только если в ней нет ничего лишнего
-        [[at('SYSTEM', 'templates', 'chat-sessions.eta'), at('PROJECTS', 'Flow', 'flow.css')],
+        [[at('PROJECTS', 'Chat', 'chat-sessions.eta'), at('PROJECTS', 'Flow', 'flow.css')],
             ['fragment:chat-sessions', 'css:PROJECTS/Flow/flow.css']],
-        [[at('SYSTEM', 'templates', 'chat-sessions.eta'), at('SYSTEM', 'app.js')], ['reload']],
+        [[at('PROJECTS', 'Chat', 'chat-sessions.eta'), at('SYSTEM', 'app.js')], ['reload']],
         [null, ['reload']], // файл удалили — границы правки неизвестны
     ];
     for (const [files, expected] of cases) {
@@ -212,8 +196,7 @@ check('выход за пределы каталога — 403', async (port) =>
 check('GET фрагмента работает — htmx тянет его именно так', async (port) => {
     // панели стоят с hx-get; если фрагменты снова начнут требовать POST,
     // в браузере они молча превратятся в 405, а смоук с POST этого не заметит
-    for (const urlPath of ['/api/fragment/home-observation',
-        '/api/fragment/hermes-setup', '/api/fragment/hermes-provider']) {
+    for (const urlPath of ['/api/fragment/home-observation', '/api/fragment/chat-sessions']) {
         const res = await request(port, urlPath);
         equal(res.status, 200, `код ответа ${urlPath}`);
         equal(res.headers['content-type'], 'text/html; charset=utf-8', `Content-Type ${urlPath}`);
@@ -285,18 +268,20 @@ check('чтение за пределами проекта отклоняетс�
 
 // заметки vault пересобираются сервером — правка в них потерялась бы
 check('запись в заметку vault отклоняется', async (port) => {
-    const res = await request(port, '/api/file/write', { method: 'POST', json: { path: `${SMOKE_DATA_DIR}/vault/Проект/server.js.md`, text: 'нельзя' } });
+    const res = await request(port, '/api/file/write', { method: 'POST', json: { path: `${SMOKE_DATA_DIR}/vault/Project/server.js.md`, text: 'нельзя' } });
     equal(res.status, 200, 'код ответа');
     const parsed = JSON.parse(res.body);
     if (parsed.ok) throw new Error('заметка vault оказалась перезаписываемой');
     // отказ должен быть по делу: внутренняя ошибка тоже приходит как ok:false и раньше проходила проверку
-    if (!parsed.error.includes('vault')) throw new Error(`отказ не по делу: ${parsed.error}`);
+    if (!/vault/i.test(parsed.error)) throw new Error(`отказ не по делу: ${parsed.error}`);
 });
 
 // кнопка «+» тулбара (SYSTEM/new-button.js) должна заводить настоящую папку
 // в PROJECTS/, а не только запись в базе — иначе раздел не попадёт в общий
-// список карточек (PROJECTS/Book/book-tab.js); удаление страницы должно
-// убирать эту папку целиком, а не оставлять мусор на диске
+// список карточек (PROJECTS/Book/book-tab.js). В папке два файла: README.md
+// для карточки и page.js с содержимым страницы — без него открытая страница
+// останется пустой, грузить нечего (SYSTEM/new-button.js). Удаление страницы
+// должно убирать эту папку целиком, а не оставлять мусор на диске
 check('POST /api/pages/create заводит папку в PROJECTS/, delete её убирает', async (port) => {
     const title = `Смоук ${Date.now()}`;
     const res = await request(port, '/api/pages/create', { method: 'POST', json: { title } });
@@ -306,6 +291,14 @@ check('POST /api/pages/create заводит папку в PROJECTS/, delete е�
     const dir = path.join(ROOT, 'PROJECTS', parsed.folder);
     try {
         if (!fs.existsSync(path.join(dir, 'README.md'))) throw new Error(`README.md не создан в ${dir}`);
+        const pageJs = path.join(dir, 'page.js');
+        if (!fs.existsSync(pageJs)) throw new Error(`page.js не создан в ${dir}`);
+        if (!/export default function build\(/.test(fs.readFileSync(pageJs, 'utf8'))) {
+            throw new Error('page.js не отдаёт модуль с build(page) — new-button.js его не откроет');
+        }
+        // page.css заводится всегда, даже пустым: <link> на него ставится сразу,
+        // и правка стилей подменяется на лету вместо перезагрузки интерфейса
+        if (!fs.existsSync(path.join(dir, 'page.css'))) throw new Error(`page.css не создан в ${dir}`);
         await request(port, '/api/pages/delete', { method: 'POST', json: { id: parsed.id } });
         if (fs.existsSync(dir)) throw new Error(`папка ${dir} пережила удаление страницы`);
     } finally {
@@ -313,23 +306,32 @@ check('POST /api/pages/create заводит папку в PROJECTS/, delete е�
     }
 });
 
-// переименование строки меню (SYSTEM/toolbar-menu.js) должно обновлять и запись
-// в базе, и первую строку README.md — иначе открытая карточка покажет старое имя
-check('POST /api/pages/rename обновляет title и README.md', async (port) => {
+// переименование строки меню (SYSTEM/toolbar-menu.js) должно обновлять запись
+// в базе, первую строку README.md (иначе открытая карточка покажет старое имя)
+// и саму папку: папка — дом страницы целиком, и страница «Feed» в папке
+// «Page 6» — ровно то, из-за чего её содержимое разъезжалось по проекту
+check('POST /api/pages/rename обновляет title, README.md и имя папки', async (port) => {
     const title = `Смоук ${Date.now()}`;
     const created = JSON.parse((await request(port, '/api/pages/create', { method: 'POST', json: { title } })).body);
-    const dir = path.join(ROOT, 'PROJECTS', created.folder);
+    let dir = path.join(ROOT, 'PROJECTS', created.folder);
     try {
         const newTitle = `${title} переименован`;
         const res = await request(port, '/api/pages/rename', { method: 'POST', json: { id: created.id, title: newTitle } });
         equal(res.status, 200, 'код ответа');
         const parsed = JSON.parse(res.body);
         if (!parsed.ok) throw new Error(`неожиданный ответ: ${res.body.slice(0, 200)}`);
+        equal(parsed.folder, newTitle, 'папка в ответе');
+        if (fs.existsSync(dir)) throw new Error(`старая папка ${dir} осталась на диске`);
+        dir = path.join(ROOT, 'PROJECTS', parsed.folder);
+        for (const file of ['page.js', 'page.css']) {
+            if (!fs.existsSync(path.join(dir, file))) throw new Error(`${file} не переехал в ${dir}`);
+        }
         const readme = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
         if (!readme.startsWith(`# ${newTitle}`)) throw new Error(`README.md не обновлён: ${readme.slice(0, 80)}`);
         const list = JSON.parse((await request(port, '/api/pages', { method: 'POST' })).body);
         const page = list.pages.find((p) => p.id === created.id);
         if (!page || page.title !== newTitle) throw new Error(`title в базе не обновлён: ${JSON.stringify(page)}`);
+        if (page.folder !== parsed.folder) throw new Error(`folder в базе не обновлён: ${JSON.stringify(page)}`);
     } finally {
         await request(port, '/api/pages/delete', { method: 'POST', json: { id: created.id } });
         fs.rmSync(dir, { recursive: true, force: true });
@@ -340,6 +342,16 @@ check('POST /api/pages/rename обновляет title и README.md', async (por
 // он лишь пробует запустить CLI и молча отфильтровывает неудачные попытки
 // (Promise.allSettled). connect/ask здесь не проверяем: они требуют настоящего
 // бинарника opencode, которого может не быть на машине, где гоняется смоук
+// маршруты Karandash живут в его же папке (PROJECTS/Karandash/karandash-server.js).
+// Сам снимок экрана в смоуке не делаем — он лезет к железу; проверяем, что маршрут
+// вообще подключён и проверяет вход, а не молчит 404-м
+check('POST /api/screenshot/screen отклоняет неверный номер монитора', async (port) => {
+    const res = await request(port, '/api/screenshot/screen', { method: 'POST', json: { index: -1 } });
+    equal(res.status, 200, 'код ответа');
+    const parsed = JSON.parse(res.body);
+    if (parsed.ok || !/screen index/i.test(parsed.error)) throw new Error(`неожиданный ответ: ${res.body.slice(0, 200)}`);
+});
+
 check('POST /api/flow/state/set сохраняет, /api/flow/state отдаёт', async (port) => {
     const key = `smoke-${Date.now()}`;
     const saved = await request(port, '/api/flow/state/set', { method: 'POST', json: { key, value: { n: 7 } } });
@@ -372,6 +384,22 @@ check('POST /api/toolbar/icons/set без buttonId отвечает ошибко
     if (JSON.parse(res.body).ok) throw new Error(`пустой buttonId приняли: ${res.body}`);
 });
 
+check('POST /api/toolbar/names/set сохраняет, /api/toolbar/names отдаёт', async (port) => {
+    const buttonId = `smoke-${Date.now()}`;
+    const saved = await request(port, '/api/toolbar/names/set', { method: 'POST', json: { buttonId, name: 'Моя кнопка' } });
+    equal(saved.status, 200, 'код ответа set');
+    if (!JSON.parse(saved.body).ok) throw new Error(`не сохранилось: ${saved.body}`);
+
+    const res = await request(port, '/api/toolbar/names', { method: 'POST' });
+    const parsed = JSON.parse(res.body);
+    if (parsed.names?.[buttonId] !== 'Моя кнопка') throw new Error(`название не вернулось: ${res.body.slice(0, 200)}`);
+});
+
+check('POST /api/toolbar/names/set без name отвечает ошибкой', async (port) => {
+    const res = await request(port, '/api/toolbar/names/set', { method: 'POST', json: { buttonId: 'x' } });
+    if (JSON.parse(res.body).ok) throw new Error(`пустое name приняли: ${res.body}`);
+});
+
 check('POST /api/agent/detect не падает без бинарника', async (port) => {
     const res = await request(port, '/api/agent/detect', { method: 'POST', json: { agent: 'opencode' } });
     equal(res.status, 200, 'код ответа');
@@ -382,7 +410,7 @@ check('POST /api/agent/detect не падает без бинарника', asyn
 check('POST /api/agent/detect с чужим именем — понятная ошибка', async (port) => {
     const res = await request(port, '/api/agent/detect', { method: 'POST', json: { agent: 'нет-такого' } });
     const parsed = JSON.parse(res.body);
-    if (parsed.ok !== false || !/Неизвестный агент/.test(parsed.error || '')) {
+    if (parsed.ok !== false || !/Unknown agent/.test(parsed.error || '')) {
         throw new Error(`ожидалась ошибка про агента: ${res.body}`);
     }
 });
@@ -392,55 +420,6 @@ check('падение обработчика отдаётся кодом 500, а
     const res = await request(port, '/api/agent/detect', { method: 'POST', raw: 'не json' });
     equal(res.status, 500, 'код ответа');
     if (JSON.parse(res.body).ok !== false) throw new Error(`ожидался ok:false: ${res.body}`);
-});
-
-check('POST /api/hermes/setup/status отвечает состоянием установки', async (port) => {
-    const res = await request(port, '/api/hermes/setup/status', { method: 'POST' });
-    equal(res.status, 200, 'код ответа');
-    const parsed = JSON.parse(res.body);
-    if (!parsed.ok || typeof parsed.ready !== 'boolean' || !Array.isArray(parsed.providers)) {
-        throw new Error(`неожиданный ответ: ${res.body.slice(0, 200)}`);
-    }
-});
-
-check('GET /api/fragment/hermes-setup отдаёт HTML', async (port) => {
-    const res = await request(port, '/api/fragment/hermes-setup');
-    equal(res.status, 200, 'код ответа');
-    equal(res.headers['content-type'], 'text/html; charset=utf-8', 'Content-Type');
-});
-
-check('POST /api/hermes/provider/set с чужим провайдером — ошибка', async (port) => {
-    const res = await request(port, '/api/hermes/provider/set', { method: 'POST', json: { provider: 'нет-такого' } });
-    const parsed = JSON.parse(res.body);
-    if (parsed.ok !== false || !/Неизвестный провайдер/.test(parsed.error || '')) {
-        throw new Error(`ожидалась ошибка про провайдера: ${res.body}`);
-    }
-});
-
-check('POST /api/agent/detect для hermes перечисляет системы запуска', async (port) => {
-    const res = await request(port, '/api/agent/detect', { method: 'POST', json: { agent: 'hermes' } });
-    equal(res.status, 200, 'код ответа');
-    const { installs } = JSON.parse(res.body);
-    if (!Array.isArray(installs)) throw new Error(`ожидался список установок: ${res.body.slice(0, 200)}`);
-    // на любой системе доступна хотя бы одна цель либо ни одной (Hermes ещё не поставлен),
-    // но у каждой обязаны быть id и метка — по ним человек выбирает в настройках
-    for (const install of installs) {
-        if (!install.id || !install.label) throw new Error(`цель без id/label: ${JSON.stringify(install)}`);
-    }
-});
-
-check('POST /api/agent/ask через hermes без подключения — понятная ошибка', async (port) => {
-    const res = await request(port, '/api/agent/ask', { method: 'POST', json: { agent: 'hermes', prompt: 'привет' } });
-    equal(res.status, 200, 'код ответа');
-    if (!/Hermes не подключён/.test(res.body)) throw new Error(`ожидалось «не подключён»: ${res.body.slice(0, 200)}`);
-});
-
-check('связка Claude → Hermes требует обоих', async (port) => {
-    // ни один CLI в смоуке не подключён, поэтому связка обязана сказать, чего не хватает,
-    // а не молча начать планировать
-    const res = await request(port, '/api/agent/ask', { method: 'POST', json: { agent: 'hermes-plan', prompt: 'сделай что-нибудь' } });
-    equal(res.status, 200, 'код ответа');
-    if (!/не подключён/.test(res.body)) throw new Error(`ожидалось «не подключён»: ${res.body.slice(0, 200)}`);
 });
 
 check('неизвестный /api — 404', async (port) => {

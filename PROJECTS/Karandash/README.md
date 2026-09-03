@@ -1,87 +1,87 @@
-# ✏️ Karandash — интерфейс, который правит сам себя
+# ✏️ Karandash — an interface that edits itself
 
-Ткните в любой элемент страницы, напишите, что с ним не так, — и ассистент пойдёт чинить исходники. Без DevTools, без поиска по коду, без «а где вообще эта кнопка живёт».
+Point at any element on the page, write what is wrong with it, and the assistant goes and fixes the sources. No DevTools, no grepping through the code, no "where does this button even live".
 
-## 🎯 Что это
+## 🎯 What this is
 
-Karandash — режим комментариев к элементам интерфейса. Кнопка-карандаш `karandashButton` в тулбаре включает прицел: наведение подсвечивает элемент красной рамкой, клик открывает поле для комментария, «Сохранить» отправляет ассистенту готовую задачу — CSS-селектор элемента плюс ваш текст — в новой сессии чата, которой сразу разрешено править файлы.
+Karandash is a commenting mode for interface elements. The pencil button `karandashButton` in the toolbar turns on a crosshair: hovering highlights an element with a red frame, a click opens a comment field, and "Save" sends the assistant a ready-made task — the element's CSS selector plus your text — in a new chat session that is allowed to edit files right away.
 
-Получается короткая петля: увидел проблему в интерфейсе → сказал о ней прямо на месте → интерфейс переписал сам себя.
+The result is a short loop: you see a problem in the interface → you point at it and say so → the interface rewrites itself.
 
-## ⚡ Возможности
+## ⚡ Features
 
-- **Рамка следит за курсором в реальном времени.** Каждый кадр (`requestAnimationFrame`) режим смотрит, что находится под последней известной позицией курсора. Поэтому подсвечиваются и элементы, появившиеся после загрузки, и те, что возникли под неподвижным курсором, а рамка едет за движущимся элементом.
-- **Колесо поднимает выбор к родителю.** `elementFromPoint` отдаёт только верхний элемент, и контейнер, целиком закрытый детьми (колонка канбана, форма композера, сам view), иначе недостижим. Колесо вверх — на уровень выше, вниз — обратно к элементу под курсором; выше `body` подъём не идёт, прокрутка страницы в режиме Karandash отключена.
-- **Иконки кликаются целиком.** Клик по `<path>` внутри `<svg>` поднимается до ближайших `button` или `a`. Самостоятельные SVG-фигуры (стрелки во Flow) остаются как есть — иначе по ним не по чему было бы кликнуть.
-- **Комментируется вообще всё.** Из выбора исключён только собственный слой режима — рамка `.hover-frame` и окно `.comment-popover`. Меню настроек, модалки, тулбары — всё остальное доступно.
-- **Даже нативный скроллбар.** Браузер не превращает клик по скроллбару в событие `click`, поэтому такой элемент ловится через `pointerup` — выбор достраивается, если `click` так и не пришёл.
-- **Скриншот в миниатюру сессии.** Перед отправкой окно комментария прячется, а рамка остаётся — так в снимок попадает именно выбранный элемент, но не попап.
-- **Одна клавиша на выход.** `Esc` выключает режим и закрывает открытое окно комментария.
+- **The frame follows the cursor in real time.** Every frame (`requestAnimationFrame`) the mode checks what sits under the last known cursor position. That is why elements that appeared after load are highlighted too, as are ones that popped up under a motionless cursor, and the frame travels along with a moving element.
+- **The wheel raises the selection to the parent.** `elementFromPoint` returns only the topmost element, so a container fully covered by its children (a kanban column, the composer form, the view itself) would otherwise be unreachable. Wheel up — one level higher, wheel down — back to the element under the cursor; it does not go above `body`, and page scrolling is disabled in Karandash mode.
+- **Icons are clickable as a whole.** A click on a `<path>` inside an `<svg>` bubbles up to the nearest `button` or `a`. Standalone SVG shapes (the arrows in Flow) are left as they are — otherwise there would be nothing to click on them.
+- **Everything can be commented on.** Only the mode's own layer is excluded from selection — the `.hover-frame` frame and the `.comment-popover` window. The settings menu, modals, toolbars — everything else is available.
+- **Even the native scrollbar.** The browser does not turn a click on the scrollbar into a `click` event, so such an element is caught through `pointerup` — the selection is completed if `click` never arrived.
+- **A screenshot for the session thumbnail.** Before sending, the comment window is hidden while the frame stays — so the shot captures exactly the selected element, but not the popup.
+- **One key to leave.** `Esc` turns off the mode and closes an open comment window.
 
-## 🚀 Как пользоваться
+## 🚀 How to use it
 
-1. Нажмите карандаш `karandashButton` в тулбаре — курсор по всей странице станет прицелом (`body.karandash-mode`).
-2. Наведитесь на нужный элемент: он обведётся красной рамкой.
-3. Если нужен не он, а его контейнер — крутаните колесо вверх. Вниз — вернуться обратно.
-4. Кликните. Откроется окно комментария; сверху моноширинным шрифтом показан селектор выбранного элемента, ниже — поле ввода.
-5. Опишите, что поменять: «сделай кнопку шире», «этот заголовок должен быть слева», «убрать эту рамку».
-6. Нажмите **Сохранить** (или `Ctrl` + `Enter`). Режим выключится, откроется вкладка Chat с новой сессией, где ассистент уже получил задачу.
+1. Click the pencil `karandashButton` in the toolbar — the cursor becomes a crosshair across the whole page (`body.karandash-mode`).
+2. Hover over the element you need: it gets outlined with a red frame.
+3. If you need its container rather than the element itself, scroll the wheel up. Down goes back.
+4. Click. A comment window opens; the selector of the chosen element is shown at the top in a monospace font, with the input field below.
+5. Describe what to change: "make the button wider", "this heading should be on the left", "remove this frame".
+6. Press **Save** (or `Ctrl` + `Enter`). The mode turns off and the Chat tab opens with a new session in which the assistant has already received the task.
 
-| Действие | Что происходит |
+| Action | What happens |
 |---|---|
-| Клик по `karandashButton` | Включить/выключить режим Karandash |
-| Наведение | Подсветка элемента рамкой |
-| Колесо вверх / вниз | Поднять выбор к родителю / вернуть обратно |
-| Клик по элементу | Открыть окно комментария (обычный обработчик страницы не сработает) |
-| `Enter` в поле | Новая строка |
-| `Ctrl` + `Enter` / `Cmd` + `Enter` | Отправить комментарий |
-| `Esc` | Выйти из режима и закрыть окно |
-| Кнопка «Отмена» | То же, что `Esc` |
+| Click on `karandashButton` | Turn Karandash mode on/off |
+| Hover | Highlight the element with a frame |
+| Wheel up / down | Raise the selection to the parent / go back |
+| Click on an element | Open the comment window (the page's own handler does not fire) |
+| `Enter` in the field | New line |
+| `Ctrl` + `Enter` / `Cmd` + `Enter` | Send the comment |
+| `Esc` | Leave the mode and close the window |
+| The "Cancel" button | Same as `Esc` |
 
-## 🔧 Как это устроено
+## 🔧 How it works
 
-**Селектор.** Функция `describe(el)` собирает строку из имени тега, `#id` (если есть) и всех классов через точку — например `button.icon-button.toolbar__item`. Она же показывается в шапке окна комментария и уходит в промпт.
+**The selector.** The `describe(el)` function builds a string from the tag name, the `#id` (if there is one) and every class joined by dots — for example `button.icon-button.toolbar__item`. The same string is shown in the comment window header and goes into the prompt.
 
-**Промпт.** `buildCommentPrompt` собирает до трёх строк:
+**The prompt.** `buildCommentPrompt` assembles up to three lines:
 
 ```
-Элемент интерфейса: <селектор>
-Текст элемента: <текст, если он не длиннее 120 символов>
-Комментарий: <то, что вы написали>
+UI element: <selector>
+Element text: <text, if it is no longer than 120 characters>
+Comment: <what you wrote>
 ```
 
-Текст берётся только у коротких элементов: у контейнеров в `textContent` лежит всё их содержимое, и такой «текст элемента» только зашумлял бы задачу.
+The text is taken only from short elements: for containers, `textContent` holds all of their content, and such an "element text" would only add noise to the task.
 
-**Скриншот.** `POST /api/screenshot` — снимок делает сервер: `canvas` в браузере видит только вкладку, а не экран целиком. На стороне `server.js` это PowerShell + `System.Drawing`: снимок всего виртуального экрана, уменьшение до `SCREENSHOT_WIDTH` и JPEG в виде `data:`-URL. Не получилось — вернётся `null`, и сессия просто останется с плейсхолдером. Кнопка «Сохранить» на время захвата блокируется, чтобы второй клик не обогнал первый снимок.
+**The screenshot.** `POST /api/screenshot` — the shot is taken by the server: a `canvas` in the browser sees only the tab, not the whole screen. On the `server.js` side this is PowerShell plus `System.Drawing`: a shot of the entire virtual screen, downscaled to `SCREENSHOT_WIDTH` and turned into a JPEG `data:` URL. If it fails, `null` is returned and the session simply keeps a placeholder. The "Save" button is disabled during the capture so a second click cannot overtake the first shot.
 
-**Новая сессия — всегда.** `App.startCommentSession(prompt, thumb)` сбрасывает `chatSessionId` в `null`, очищает ленту, снимает выделение со списка сессий и ставит режим `Action`. Комментарий никогда не подмешивается к текущему разговору — это отдельная задача с чистого листа. Вкладка при этом не переключается: если пользователь не сидит в Chat, он сам туда перейдёт и выберет сессию, когда захочет.
+**Always a new session.** `App.startCommentSession(prompt, thumb)` resets `chatSessionId` to `null`, clears the feed, deselects the session list and sets `Action` mode. A comment is never mixed into the current conversation — it is a separate task from a clean slate. The tab is not switched: if you are not sitting in Chat, you can go there and pick the session whenever you want.
 
-**Правки применяются сразу.** Запрос уходит в `POST /api/claude/ask`, где режим `Action` запускает Claude CLI с `--permission-mode bypassPermissions` (в отличие от `Chat`, который идёт через `plan` и ничего не меняет). Ответ приходит потоком NDJSON.
+**Edits are applied immediately.** The request goes to `POST /api/claude/ask`, where `Action` mode runs the Claude CLI with `--permission-mode bypassPermissions` (unlike `Chat`, which goes through `plan` and changes nothing). The answer arrives as an NDJSON stream.
 
-**Миниатюра.** Id сессии известен только из первого события потока, поэтому снимок ждёт в `pendingThumb` и уходит в `POST /api/sessions/thumb`, как только id появился. Сервер проверяет формат data-URL и размер (до 300 КБ), после чего миниатюра видна в панели Sessions.
+**The thumbnail.** The session id is only known from the first stream event, so the shot waits in `pendingThumb` and goes to `POST /api/sessions/thumb` as soon as the id appears. The server checks the data-URL format and the size (up to 300 KB), after which the thumbnail is visible in the Sessions panel.
 
-**Слои.** Рамка рисуется отдельным фиксированным элементом с `pointer-events: none` — стили самой страницы режим не трогает. `z-index`: рамка 1510, окно комментария 1520 — выше `.topbar` и лайтбокса скриншотов (1500), иначе подсветка пряталась бы под ними. Окно встаёт под элементом, а если снизу не хватает места — над ним, с отступом 10 px от элемента и 8 px от края экрана; каждый кадр рамка и окно пересчитывают позицию вслед за элементом.
+**Layers.** The frame is drawn as a separate fixed element with `pointer-events: none` — the mode does not touch the page's own styles. `z-index`: the frame is 1510, the comment window 1520 — above `.topbar` and the screenshot lightbox (1500), otherwise the highlight would hide underneath them. The window sits below the element, or above it when there is not enough room below, with a 10 px gap from the element and 8 px from the screen edge; every frame the frame and the window recompute their position to follow the element.
 
-## 📁 Файлы
+## 📁 Files
 
-Вся кнопка Karandash лежит в этой папке — и клиент, и стили, и серверная половина:
+The whole Karandash button lives in this folder — client, styles and the server half alike:
 
-| Файл | Что в нём |
+| File | What is in it |
 |---|---|
-| `PROJECTS/Karandash/karandash.js` | Весь режим целиком: своя разметка (кнопка, рамка, окно комментария), отслеживание курсора, подъём колесом, сборка промпта, захват скриншота |
-| `PROJECTS/Karandash/karandash.css` | Стили `body.karandash-mode`, `.hover-frame`, `.comment-popover` и её элементов |
-| `PROJECTS/Karandash/screenshot.js` | Серверный модуль `captureScreenshot()`: PowerShell + `System.Drawing`, `SCREENSHOT_WIDTH`, JPEG в виде `data:`-URL |
+| `PROJECTS/Karandash/karandash.js` | The entire mode: its own markup (button, frame, comment window), cursor tracking, wheel-based raising, prompt assembly, screenshot capture |
+| `PROJECTS/Karandash/karandash.css` | Styles for `body.karandash-mode`, `.hover-frame`, `.comment-popover` and its parts |
+| `PROJECTS/Karandash/karandash-server.js` | The server half: its routes (`createRoutes`) plus `captureScreenshot()`: PowerShell plus `System.Drawing`, `SCREENSHOT_WIDTH`, a JPEG `data:` URL |
 
-Снаружи остаётся только проводка — три строки, которые нельзя унести из общих файлов:
+Only the wiring stays outside — three lines that cannot be moved out of the shared files:
 
-| Файл | Что в нём про Karandash |
+| File | What it contains about Karandash |
 |---|---|
-| `SYSTEM/index.html` | `<link>` на `karandash.css` и `<script defer>` на `karandash.js` |
-| `server.js` | `require('./PROJECTS/Karandash/screenshot.js')` и роут `POST /api/screenshot` |
-| `SYSTEM/app.js` | `App.startCommentSession` — общее ядро, им пользуется ещё и кнопка `+` на доске Kanban (`PROJECTS/Kanban/kanban.js`) |
+| `SYSTEM/index.html` | A `<link>` to `karandash.css` and a `<script defer>` for `karandash.js` |
+| `server.js` | Only wires the folder in: `require('./PROJECTS/Karandash/karandash-server.js').createRoutes(...)`. The `/api/screenshot*` routes themselves live in the folder |
+| `SYSTEM/app.js` | `App.startCommentSession` — shared core, also used by the `+` button on the Kanban board (`PROJECTS/Kanban/kanban.js`) |
 
-Файл `karandash.js` самодостаточен: он сам создаёт свой тулбар и вставляет его перед `#settings`, поэтому в разметке `index.html` нет ни кнопки, ни рамки, ни попапа.
+The `karandash.js` file is self-contained: it creates its own toolbar and inserts it before `#settings`, which is why `index.html` contains neither the button, nor the frame, nor the popup.
 
 ---
 
-Лицензия — MIT.
+License — MIT.

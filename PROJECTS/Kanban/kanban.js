@@ -13,10 +13,10 @@
                 <h2 class="board__title">${title}</h2>
                 <span class="board__header-right">
                     <span class="board__count">0</span>
-                    ${title === 'New' ? '<button type="button" class="board__add" title="Новая сессия с заданием">+</button>' : ''}
+                    ${title === 'New' ? '<button type="button" class="board__add" title="New session with a task">+</button>' : ''}
                 </span>
             </div>
-            <div class="board__body">Пока пусто</div>
+            <div class="board__body">Empty for now</div>
         `;
         board.append(column);
     }
@@ -24,7 +24,7 @@
     // «+» в колонке New — задание запускает отдельную сессию,
     // как и комментарий из режима Karandash
     document.querySelector('.board__add')?.addEventListener('click', () => {
-        const task = prompt('Задание для новой сессии:');
+        const task = prompt('Task for the new session:');
         if (task && task.trim()) App.startCommentSession(task.trim());
     });
 

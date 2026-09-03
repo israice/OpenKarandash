@@ -25,13 +25,13 @@
     // виды узлов: подпись, цвет чипа и показывать ли по умолчанию.
     // функции и сессии включаются вручную — иначе граф не читается
     const GRAPH_KINDS = [
-        { kind: 'file', label: 'файлы', color: '#6ea8fe', on: true },
+        { kind: 'file', label: 'files', color: '#6ea8fe', on: true },
         { kind: 'route', label: 'API', color: '#f0a868', on: true },
-        { kind: 'section', label: 'секции', color: '#a78bfa', on: true },
-        { kind: 'function', label: 'функции', color: '#7dd3a0', on: false },
-        { kind: 'session', label: 'сессии', color: '#d97ba0', on: false },
-        { kind: 'note', label: 'заметки', color: '#8a8f98', on: true },
-        { kind: 'history', label: 'история', color: '#8a8f98', on: false },
+        { kind: 'section', label: 'sections', color: '#a78bfa', on: true },
+        { kind: 'function', label: 'functions', color: '#7dd3a0', on: false },
+        { kind: 'session', label: 'sessions', color: '#d97ba0', on: false },
+        { kind: 'note', label: 'notes', color: '#8a8f98', on: true },
+        { kind: 'history', label: 'history', color: '#8a8f98', on: false },
     ];
 
     let graphBox = null;          // текущий viewBox: он же «уместить всё», он же зум
@@ -90,14 +90,14 @@
             const res = await fetch('/api/obsidian/graph', { method: 'POST' });
             data = await res.json();
         } catch {
-            data = { ok: false, error: 'Сервер не ответил' };
+            data = { ok: false, error: 'The server did not respond' };
         }
         if (!data.ok) {
-            showGraphEmpty('Граф не собрался', data.error);
+            showGraphEmpty('The graph could not be built', data.error);
             return;
         }
         if (!data.notes.length) {
-            showGraphEmpty('В vault нет заметок', 'Vault «' + data.vault + '» пуст: ни одного файла проекта и ни одной заметки.');
+            showGraphEmpty('The vault has no notes', 'Vault "' + data.vault + '" is empty: no project files and no notes.');
             return;
         }
         graphData = data;
@@ -304,7 +304,7 @@
 
         if (!visible.length) {
             graphSurface.textContent = '';
-            graphHint.textContent = 'Ни один вид не выбран';
+            graphHint.textContent = 'No view selected';
             return;
         }
 
@@ -354,7 +354,7 @@
             graphNeighbours.get(nodes[link.b].path).add(nodes[link.a].path);
         }
 
-        graphHint.textContent = `${nodes.length} узлов, ${links.length} связей`;
+        graphHint.textContent = `${nodes.length} nodes, ${links.length} links`;
         paintFrame();
         fitGraph(nodes);
         runSimulation();
@@ -405,7 +405,7 @@
             node.file && node.line ? `${node.file}:${node.line}` : node.file,
             node.route,
             node.date,
-            node.stale ? 'после сессии файлы менялись' : '',
+            node.stale ? 'files changed after the session' : '',
         ].filter(Boolean).join(' · ');
 
         const neighbours = [...(graphNeighbours.get(node.path) || [])].sort();
@@ -413,7 +413,7 @@
         if (neighbours.length) {
             const head = document.createElement('p');
             head.className = 'graph-details__section';
-            head.textContent = `Связи (${neighbours.length})`;
+            head.textContent = `Links (${neighbours.length})`;
             const list = document.createElement('ul');
             list.className = 'graph-details__list';
             for (const item of neighbours) {
@@ -527,7 +527,7 @@
             const source = nodeSource(node);
             path = null;
             titleEl.textContent = source.path;
-            metaEl.textContent = 'Загружаю…';
+            metaEl.textContent = 'Loading…';
             textEl.value = '';
             textEl.readOnly = true;
             if (saveEl) saveEl.disabled = true;
@@ -545,7 +545,7 @@
                 });
                 data = await res.json();
             } catch {
-                data = { ok: false, error: 'Сервер не ответил' };
+                data = { ok: false, error: 'The server did not respond' };
             }
 
             if (!data.ok) {
@@ -553,7 +553,7 @@
                 return;
             }
             if (data.binary) {
-                metaEl.textContent = `Двоичный файл, ${Math.round(data.size / 1024)} КБ${data.note ? ' · ' + data.note : ''}`;
+                metaEl.textContent = `Binary file, ${Math.round(data.size / 1024)} KB${data.note ? ' · ' + data.note : ''}`;
                 return;
             }
 
@@ -563,8 +563,8 @@
             textEl.readOnly = !data.editable;
             if (saveEl) saveEl.disabled = true;
             metaEl.textContent = [
-                `${data.text.split('\n').length} строк`,
-                `${Math.round(data.size / 1024)} КБ`,
+                `${data.text.split('\n').length} lines`,
+                `${Math.round(data.size / 1024)} KB`,
                 node.kind === 'section' || node.kind === 'function' ? `${node.kind} «${node.label}»` : node.kind,
                 data.note,
             ].filter(Boolean).join(' · ');
@@ -576,7 +576,7 @@
             if (!path) return;
             clearTimeout(autosaveTimer);
             if (saveEl) saveEl.disabled = true;
-            statusEl.textContent = 'Сохраняю…';
+            statusEl.textContent = 'Saving…';
             const text = textEl.value;
 
             let data;
@@ -588,7 +588,7 @@
                 });
                 data = await res.json();
             } catch {
-                data = { ok: false, error: 'Сервер не ответил' };
+                data = { ok: false, error: 'The server did not respond' };
             }
 
             if (!data.ok) {
@@ -597,7 +597,7 @@
                 return;
             }
             saved = text;
-            statusEl.textContent = 'Сохранено';
+            statusEl.textContent = 'Saved';
         }
 
         textEl.addEventListener('input', () => {
@@ -606,13 +606,13 @@
                 // сохраняем без кнопки — но не на каждое нажатие, а после паузы в наборе
                 clearTimeout(autosaveTimer);
                 if (dirty) {
-                    statusEl.textContent = 'есть несохранённые правки';
+                    statusEl.textContent = 'unsaved changes';
                     autosaveTimer = setTimeout(save, 800);
                 }
                 return;
             }
             saveEl.disabled = !dirty;
-            statusEl.textContent = dirty ? 'есть несохранённые правки' : '';
+            statusEl.textContent = dirty ? 'unsaved changes' : '';
         });
 
         if (saveEl) saveEl.addEventListener('click', save);
@@ -678,33 +678,6 @@
         document.querySelector('.project-card--selected')?.classList.remove('project-card--selected');
     }
 
-    // панель справа во вкладке Book: тот же приём, что и в чате — карточка раздела
-    // слева заменяет содержимое панели справа, а не открывает окно посередине
-    const bookFileEditor = document.getElementById('bookFileEditor');
-    const bookEmpty = document.getElementById('bookEmpty');
-    const bookFilePanelEditor = makeFileEditor({
-        titleEl: document.getElementById('bookFileEditorTitle'),
-        metaEl: document.getElementById('bookFileEditorMeta'),
-        linksEl: document.getElementById('bookFileEditorLinks'),
-        textEl: document.getElementById('bookFileEditorText'),
-        statusEl: document.getElementById('bookFileEditorStatus'),
-        autosave: true,
-        onOpen: () => {
-            bookEmpty.hidden = true;
-            bookFileEditor.hidden = false;
-        },
-        onLinkClick: (item) => {
-            const target = nodeByPath(item);
-            if (target) bookFilePanelEditor.open(target);
-        },
-    });
-
-    function closeBookPanel() {
-        bookFileEditor.hidden = true;
-        bookEmpty.hidden = false;
-        document.querySelector('#bookList .project-card--selected')?.classList.remove('project-card--selected');
-    }
-
     // ---------- поиск ----------
 
     let graphSearchTimer = null;
@@ -721,7 +694,7 @@
             for (const node of graphNodes) {
                 node.element.classList.remove('graph-node--hit');
             }
-            graphHint.textContent = `${graphNodes.length} узлов, ${graphLinks.length} связей`;
+            graphHint.textContent = `${graphNodes.length} nodes, ${graphLinks.length} links`;
             return;
         }
 
@@ -734,7 +707,7 @@
             });
             data = await res.json();
         } catch {
-            data = { ok: false, error: 'Сервер не ответил' };
+            data = { ok: false, error: 'The server did not respond' };
         }
         if (!data.ok) {
             graphHint.textContent = data.error;
@@ -751,8 +724,8 @@
         }
         graphSurface.classList.add('graph--search');
         graphHint.textContent = data.hits.length
-            ? `Найдено ${data.hits.length}, видно в графе ${shown}`
-            : 'Ничего не найдено';
+            ? `Found ${data.hits.length}, ${shown} visible in the graph`
+            : 'Nothing found';
     }
 
     // зум колесом — к точке под курсором, как в виде Flow
@@ -855,8 +828,9 @@
         // открыть панель редактирования произвольного файла по пути, в обход узла графа
         openFile(path) { chatFilePanelEditor.open({ file: path, kind: 'file', label: path }); },
         closeFilePanel,
-        // то же самое, но в панели справа во вкладке Book
-        openBook(path) { bookFilePanelEditor.open({ file: path, kind: 'file', label: path }); },
-        closeBookPanel,
+        // тот же редактор файла, но для чужой панели: вкладка Book собирает свою
+        // сама (PROJECTS/Book/book-tab.js), а разметку узлов графа знает только этот файл
+        createFileEditor: makeFileEditor,
+        nodeByPath,
     };
 })();

@@ -34,7 +34,7 @@ function createRoutes({ db }) {
         '/api/flow/state/set': async (req, res) => {
             const { key, value } = await readJson(req);
             if (typeof key !== 'string' || !key) {
-                sendJson(res, { ok: false, error: 'Нужен key' });
+                sendJson(res, { ok: false, error: 'key is required' });
                 return;
             }
             setFlowStateRow.run(key, JSON.stringify(value ?? null));

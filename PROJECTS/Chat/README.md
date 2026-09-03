@@ -1,91 +1,94 @@
 # 💬 PROJECTS
 
-**Чат с ИИ-ассистентом прямо в браузере: видно каждый шаг, ничего не теряется при перезагрузке.**
+**Chat with an AI assistant right in the browser: every step is visible and nothing is lost on reload.**
 
-Раздел интерфейса Mission Control. Кнопка тулбара — `chatButton` (aria-label «PROJECTS»), сам экран — `#chatView`, логика — `SYSTEM/app.js` (`window.App`). Внутренние имена остались от прежнего названия раздела — `chat`, поэтому в коде ищите именно их.
+A Mission Control interface section. The toolbar button is `chatButton` (aria-label "PROJECTS"), the screen itself is `#chatView`, the logic is in `SYSTEM/app.js` (`window.App`). The internal names are left over from the section's former name — `chat` — so that is what to look for in the code.
 
-## 🧭 Что это
+## 🧭 What this is
 
-Вкладка, из которой вы разговариваете с локально установленным **Claude Code CLI**. Вы пишете вопрос — сервер запускает `claude -p --output-format stream-json --verbose`, и ответ приходит не одним куском в конце, а **потоком событий**: сначала id сессии, потом каждый вызов инструмента (`Read app.js`, `Bash node smoke.js`), потом текст. Переписка целиком ложится в SQLite, так что к ней можно вернуться в любой момент.
+The tab where you talk to the locally installed **Claude Code CLI**. You write a question — the server runs `claude -p --output-format stream-json --verbose`, and the answer does not arrive as one lump at the end but as a **stream of events**: first the session id, then every tool call (`Read app.js`, `Bash node smoke.js`), then the text. The whole conversation goes into SQLite, so you can come back to it at any time.
 
-Слева — панель **Tasks** со всеми диалогами, начатыми из этого интерфейса. Пока ни одна сессия не выбрана, лента показывает демонстрационную раскладку карточек задач («Чат Пользователя») — это макет будущего многоагентного вида, а не живые данные. Карточки разделов интерфейса (README каждого раздела) переехали в отдельную вкладку верхнего меню — **Book** (`PROJECTS/Book/book-tab.js`).
+On the left is the **Tasks** panel with every conversation started from this interface. While no session is selected, the feed shows a demo layout of task cards ("User Chat") — that is a mock-up of a future multi-agent view, not live data. The interface section cards (the README of each section) have moved to a separate top-menu tab — **Book** (`PROJECTS/Book/book-tab.js`).
 
-## ✨ Возможности
+## ✨ Features
 
-- **Живой поток шагов.** Каждый вызов инструмента — отдельная строка в ленте. Видно, что ассистент читает, что правит, что запускает, ещё до того, как он сформулирует ответ. Шаги пишутся в базу и остаются видны при повторном открытии сессии.
-- **Продолжение диалога.** Клик по сессии в панели открывает её переписку и продолжает именно её: следующий вопрос уходит в CLI с флагом `--resume <id>`, поэтому модель помнит контекст.
-- **Переподключение к идущей работе.** Закрыли или обновили вкладку посреди запроса — CLI не останавливается. `/api/sessions` помечает такие сессии полем `running`, а `POST /api/sessions/attach` отдаёт поток оставшихся событий: лента продолжает наполняться с того места, где вы её оставили.
-- **Параллельные запуски с блокировкой по файлам.** Несколько сессий работают одновременно, если не пересекаются файлами. Пересеклись — новая ждёт **именно те** сессии, что держат файл, и показывает «В очереди: впереди N».
-- **Два режима отправки.** `Action` запускает CLI с `--permission-mode bypassPermissions` — ассистент реально правит файлы. `Chat` — обсуждение без последствий: `--permission-mode plan`, отключённые `Edit`/`Write`/`Bash`/`Task` и `--strict-mcp-config`, плюс преамбула «ничего не меняй».
-- **Markdown в ответах.** Заголовки, списки, ссылки, инлайн-код и блоки ``` рендерятся в HTML — ответ читается как документ, а не как простыня `pre-wrap`.
-- **Модель и effort на лету.** В шапке открытой сессии — селекты провайдера, модели и `effort` (`low` … `max`). Смена применится к следующему сообщению в этой же сессии. Выбор провайдера пока информационный: работа идёт через Claude CLI.
-- **Лимиты подписки.** CLI присылает `rate_limit_event` на каждый запрос — окна 5 часов и 7 дней с процентом и временем сброса видны в Settings у провайдера Claude.
-- **Stop без последствий.** Кнопка `Send` превращается в `Stop`, пока сессия выполняется, и гасит именно её процесс — переключились на другую сессию, и состояние пересчитывается.
-- **Панель под себя.** Панель Tasks тянется за правую грань (минимум 210 px, максимум половина окна); ширина запоминается в `localStorage`.
+- **A live stream of steps.** Every tool call is its own row in the feed. You can see what the assistant reads, edits and runs before it even formulates an answer. Steps are written to the database and stay visible when the session is reopened.
+- **Continuing a conversation.** Clicking a session in the panel opens its history and continues that exact one: the next question goes to the CLI with the `--resume <id>` flag, so the model remembers the context.
+- **Reattaching to work in progress.** If you closed or refreshed the tab in the middle of a request, the CLI does not stop. `/api/sessions` marks such sessions with a `running` field, and `POST /api/sessions/attach` returns the stream of remaining events: the feed keeps filling from where you left it.
+- **Parallel runs with file-based locking.** Several sessions run at once as long as their files do not overlap. If they do, the new one waits for **exactly those** sessions that hold the file, and shows "Queued: N ahead".
+- **Two send modes.** `Action` runs the CLI with `--permission-mode bypassPermissions` — the assistant really edits files. `Chat` is discussion without consequences: `--permission-mode plan`, `Edit`/`Write`/`Bash`/`Task` disabled, `--strict-mcp-config`, plus a "change nothing" preamble.
+- **Markdown in answers.** Headings, lists, links, inline code and ``` blocks are rendered as HTML — an answer reads like a document rather than a wall of `pre-wrap`.
+- **Model and effort on the fly.** The header of an open session has selects for the provider, the model and `effort` (`low` … `max`). A change applies to the next message in the same session. The provider selection is informational for now: the work goes through the Claude CLI.
+- **Subscription limits.** The CLI sends a `rate_limit_event` with every request — the 5-hour and 7-day windows with their percentage and reset time are visible in Settings under the Claude provider.
+- **Stop without side effects.** The `Send` button turns into `Stop` while a session is running and kills that session's process specifically — switch to another session and the state is recomputed.
+- **A panel sized to taste.** The Tasks panel can be dragged by its right edge (minimum 210 px, maximum half the window); the width is remembered in `localStorage`.
 
-## 🚀 Как пользоваться
+## 🚀 How to use it
 
-1. **Подключите Claude.** Settings → провайдер Claude → «Подключить». Сервер ищет CLI и в Windows, и в WSL; если нашлись оба — выберите окружение.
-2. **Откройте вкладку PROJECTS** и напишите вопрос в поле внизу. Поле растёт под текст; отправка — **Ctrl+Enter** (на Mac Cmd+Enter) или кнопка `Send`.
-3. **Выберите режим:** `Action` — делать, `Chat` — обсуждать. По умолчанию включён `Action`.
-4. **Следите за ходом работы** — шаги появляются в ленте по мере вызовов, ответ дописывается сразу.
-5. **Переключайтесь между сессиями** кликом в панели слева. Повторный клик по выбранной снимает выбор. `+ New` начинает отдельную историю (в списке сразу появляется черновик), 🗑 удаляет одну сессию, `Reset All` — все.
-6. **Скопируйте id сессии** кнопкой `Copy ID` в шапке — рядом показывается человекочитаемое название, а копируется настоящий `session_id` CLI.
+1. **Connect Claude.** Settings → the Claude provider → "Connect". The server looks for the CLI both in Windows and in WSL; if both are found, pick an environment.
+2. **Open the PROJECTS tab** and write a question in the field at the bottom. The field grows with the text; send with **Ctrl+Enter** (Cmd+Enter on a Mac) or the `Send` button.
+3. **Pick a mode:** `Action` to act, `Chat` to discuss. `Action` is on by default.
+4. **Watch the work unfold** — steps appear in the feed as calls happen, and the answer is appended right away.
+5. **Switch between sessions** by clicking in the panel on the left. Clicking the selected one again deselects it. `+ New` starts a separate history (a draft appears in the list immediately), 🗑 deletes one session, `Reset All` deletes them all.
+6. **Copy the session id** with the `Copy ID` button in the header — a human-readable name is shown next to it, but what gets copied is the CLI's real `session_id`.
 
-## ⚠️ Прежде чем начать
+## ⚠️ Before you start
 
-> **Каждый запрос из чата тратит лимит вашего аккаунта Claude.** Простой запрос к `claude-haiku-4-5` обходился примерно в $0.05. Режим `Action` идёт с `bypassPermissions` — ассистент меняет файлы проекта без подтверждения.
+> **Every request from the chat consumes your Claude account's limit.** A simple request to `claude-haiku-4-5` cost roughly $0.05. `Action` mode runs with `bypassPermissions` — the assistant changes project files without asking.
 >
-> **Сервер отвечает только на запросы с этой же машины**: обращения с других адресов получают `403`. Раз он умеет запускать локальный CLI, наружу его отдавать нельзя.
+> **The server only answers requests from this same machine**: requests from other addresses get a `403`. Since it can launch a local CLI, it must not be exposed to the outside.
 
-## 🔧 Как это устроено
+## 🔧 How it works
 
-Ответ `/api/claude/ask` — не один JSON, а поток **NDJSON**: по событию в строке, каждое приходит сразу, как случилось.
+The `/api/agent/ask` response is not a single JSON document but an **NDJSON** stream: one event per line, each arriving the moment it happens.
 
-| Событие | Когда | Что даёт |
+| Event | When | What it gives |
 | --- | --- | --- |
-| `{"type":"queued","ahead":N}` | перед стартом, если файлы заняты | впереди N работ, показывается «В очереди» |
-| `{"type":"session","id":…}` | первая же строка, до ответа | id сессии — строка появляется в панели сразу |
-| `{"type":"tool","name":…,"detail":…}` | ассистент вызвал инструмент | `Read app.js`, `Bash node smoke.js`; шаг пишется в базу |
-| `{"type":"text","text":…}` | по мере генерации | кусок ответа, сразу в ленту |
-| `{"type":"rate_limit","info":…}` | вместе с ответом CLI | окна лимитов 5 часов / 7 дней |
-| `{"type":"done","text":…}` | в конце | итоговый ответ; тогда же обмен пишется в базу |
-| `{"type":"error","error":…}` | при ошибке | текст ошибки |
+| `{"type":"queued","ahead":N}` | before the start, if the files are busy | N jobs ahead; "Queued" is shown |
+| `{"type":"session","id":…}` | the very first line, before the answer | the session id — the row appears in the panel immediately |
+| `{"type":"tool","name":…,"detail":…}` | the assistant called a tool | `Read app.js`, `Bash node smoke.js`; the step is written to the database |
+| `{"type":"text","text":…}` | as it is generated | a chunk of the answer, straight into the feed |
+| `{"type":"rate_limit","info":…}` | together with the CLI's answer | the 5-hour / 7-day limit windows |
+| `{"type":"done","text":…}` | at the end | the final answer; the exchange is written to the database at the same time |
+| `{"type":"error","error":…}` | on failure | the error text |
 
-Эндпоинты (все `POST`, только с localhost):
+Endpoints (all `POST`, localhost only):
 
-| Путь | Назначение |
+| Path | Purpose |
 | --- | --- |
-| `/api/claude/detect` | ищет CLI в Windows и WSL, возвращает найденные окружения |
-| `/api/claude/connect` | фиксирует выбранное окружение и отдаёт версию CLI |
-| `/api/claude/ask` | отправляет запрос в CLI и отдаёт ход работы потоком NDJSON |
-| `/api/claude/stop` | останавливает процесс указанной сессии |
-| `/api/sessions` | список сессий с `running`, числом сообщений и числом ждущих |
-| `/api/sessions/messages` | переписка одной сессии (вопросы, ответы, шаги) |
-| `/api/sessions/attach` | поток оставшихся событий идущей работы |
-| `/api/sessions/thumb` | превью элемента для сессии, начатой из режима Karandash |
-| `/api/sessions/delete` | удаляет одну сессию (выполняющуюся — отказ) |
-| `/api/sessions/reset` | очищает базу целиком |
+| `/api/agent/detect` | looks for the CLI in Windows and WSL, returns the environments found |
+| `/api/agent/connect` | fixes the chosen environment and returns the CLI version |
+| `/api/agent/ask` | sends a request to the CLI and streams the work as NDJSON |
+| `/api/agent/stop` | stops the process of the given session |
+| `/api/fragment/chat-sessions` | the session list of the side panel, rendered as HTML by `chat-server.js` |
+| `/api/sessions` | the session list with `running`, the message count and the number waiting |
+| `/api/sessions/messages` | the conversation of one session (questions, answers, steps) |
+| `/api/sessions/attach` | the stream of remaining events of work in progress |
+| `/api/sessions/thumb` | the element preview for a session started from Karandash mode |
+| `/api/sessions/delete` | deletes one session (refused while it is running) |
+| `/api/sessions/reset` | clears the whole database |
 
-**Очередь.** Задания всех CLI выполняются строго по очереди: параллельно работает не больше одного хода (`activeRuns`/`waitForTurn` в `server.js`). Новый запуск ждёт, пока не завершатся уже идущие — файловых блокировок и отдельного PreToolUse-хука под это не требуется.
+**The queue.** Jobs from all CLIs run strictly one at a time: no more than one turn runs in parallel (`activeRuns`/`waitForTurn` in `server.js`). A new run waits until the ones already going have finished — no file locks and no separate PreToolUse hook are needed for this.
 
-**Хранилище.** SQLite в файле `DATA/.sessions.db` (`node:sqlite`, без зависимостей, `journal_mode = WAL`). Таблицы `sessions` и `messages`; роль `tool` — это шаги работы. Папку `DATA/` слежение за файлами не обходит, поэтому запись в базу не перезагружает вкладку. Историю самого Claude CLI (`~/.claude/projects/*/*.jsonl`) сервер не читает — интерактивные сессии из терминала в список не попадают.
+**Storage.** SQLite in the file `DATA/.sessions.db` (`node:sqlite`, no dependencies, `journal_mode = WAL`). The tables are `sessions` and `messages`; the `tool` role holds the work steps. File watching skips the `DATA/` folder, so writing to the database does not reload the tab. The server does not read the Claude CLI's own history (`~/.claude/projects/*/*.jsonl`) — interactive sessions from the terminal do not appear in the list.
 
-**Состояние вкладки.** Окружение CLI, модель, `effort` и id текущей сессии лежат в `localStorage` под ключом `noname.claude`. После перезагрузки страница восстанавливает подключение на сервере, а если та же сессия ещё выполняется — сама открывает её и досматривает поток. Список сессий обновляется каждые 8 секунд.
+**Tab state.** The CLI environment, the model, the `effort` and the current session id live in `localStorage` under the key `noname.claude`. After a reload the page restores the connection on the server, and if the same session is still running it opens it by itself and watches the rest of the stream. The session list refreshes every 8 seconds.
 
-**Комментарии из режима Karandash.** Комментарий к элементу интерфейса начинает отдельную сессию: вопросом становятся селектор и текст комментария, а снимок элемента прикрепляется превью через `/api/sessions/thumb`.
+**Comments from Karandash mode.** A comment on an interface element starts a separate session: the selector and the comment text become the question, and a shot of the element is attached as a preview through `/api/sessions/thumb`.
 
-## 📁 Файлы
+## 📁 Files
 
-| Файл | Что в нём |
+| File | What is in it |
 | --- | --- |
-| `SYSTEM/app.js` | ядро вкладки: лента сообщений, поток NDJSON, панель Tasks, провайдеры и лимиты |
-| `SYSTEM/sidebar-resize.js` | ручка на правой грани панели: перетаскивание ширины с сохранением |
-| `PROJECTS/Book/book-tab.js` | вкладка Book верхнего меню: карточки разделов интерфейса, открывают README (раньше жила здесь как вкладка `Projects`) |
-| `SYSTEM/index.html` | разметка `#chatView` и стили: панель, шапка сессии, лента, композер |
-| `server.js` | коннектор Claude CLI, потоковые роуты, очередь и блокировки, база сессий |
-| `DATA/.sessions.db` | SQLite с сессиями, сообщениями и превью (в git не попадает) |
+| `SYSTEM/app.js` | the tab's core: the message feed, the NDJSON stream, the Tasks panel, providers and limits |
+| `SYSTEM/sidebar-resize.js` | the handle on the panel's right edge: dragging the width, with persistence |
+| `PROJECTS/Book/book-tab.js` | the Book top-menu tab: cards for the interface sections that open their README (it used to live here as the `Projects` tab) |
+| `SYSTEM/index.html` | the `#chatView` markup and styles: panel, session header, feed, composer |
+| `PROJECTS/Chat/chat-server.js` | the server half of the side panel: the `/api/fragment/chat-sessions` route and the `chat-sessions.eta` template next to it |
+| `PROJECTS/Chat/pages-server.js` | the server half of the pages made by the toolbar's «+» button |
+| `server.js` | what belongs to no single tab: the CLI connectors, the `/api/agent/*` and `/api/sessions/*` routes, the session database |
+| `DATA/.sessions.db` | SQLite with sessions, messages and previews (not tracked by git) |
 
 ---
 
-Проект распространяется по лицензии MIT.
+This project is distributed under the MIT license.

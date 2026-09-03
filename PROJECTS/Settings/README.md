@@ -1,105 +1,105 @@
 # ⚙️ Settings
 
-**Одна шестерёнка, за которой живой Claude CLI: нашли, подключили, выбрали модель — и разговор продолжается даже после перезагрузки страницы.**
+**One gear, and behind it a live Claude CLI: found, connected, model picked — and the conversation continues even after a page reload.**
 
-## 🧭 Что это
+## 🧭 What this is
 
-Settings — не отдельная вкладка, а кнопка-шестерёнка `settingsButton` в правом углу шапки (`.topbar > .settings`) и модальное окно `#settingsModal`, которое она открывает. Всё вместе живёт в `PROJECTS/Settings/`: `settings.js` сам создаёт разметку (шестерёнку, меню, оба модальных окна) и ведёт логику провайдеров, стили — в `settings.css`. Общее состояние (`PROVIDERS`, `connections`, сохранение в localStorage) остаётся в `app.js` и доступно через `window.App`.
+Settings is not a separate tab but the `settingsButton` gear in the right corner of the header (`.topbar > .settings`) and the `#settingsModal` dialog it opens. All of it lives in `PROJECTS/Settings/`: `settings.js` creates the markup itself (the gear, the menu, both dialogs) and drives the provider logic, while the styles are in `settings.css`. The shared state (`PROVIDERS`, `connections`, persistence to localStorage) stays in `app.js` and is available through `window.App`.
 
-Задача раздела ровно одна и очень конкретная: **связать интерфейс с реальным Claude Code CLI на вашей машине**. Сервер ищет CLI в Windows и в WSL, показывает найденные окружения, запоминает выбранное — и после этого вкладка Chat начинает отправлять сообщения настоящей модели, а не в пустоту.
+The section has exactly one, very concrete job: **connect the interface to the real Claude Code CLI on your machine**. The server looks for the CLI in Windows and in WSL, shows the environments it found, remembers the chosen one — and after that the Chat tab starts sending messages to a real model rather than into the void.
 
-Настроек в проекте два уровня, и их важно не путать:
+There are two levels of settings in the project, and it matters not to confuse them:
 
-- **Интерфейс** — всё, что вы кликаете в браузере: подключение, модель, effort, порядок кнопок, ширина панелей. Живёт в `localStorage` того браузера, где вы работаете. Сервер об этом не знает.
-- **Сервер** — порт, путь к CLI, путь к vault. Живёт в файле `.env` в корне проекта. Меняется только руками, из интерфейса недоступно.
+- **Interface** — everything you click in the browser: the connection, the model, the effort, the button order, the panel widths. It lives in the `localStorage` of the browser you work in. The server knows nothing about it.
+- **Server** — the port, the path to the CLI, the path to the vault. It lives in the `.env` file at the project root. It is edited by hand only and is not reachable from the interface.
 
-## 🎛 Что можно настроить
+## 🎛 What can be configured
 
-- **Провайдера.** В окне три карточки: **Claude** (Anthropic), **Codex** (OpenAI), **OpenCode** (локальные и сторонние модели). У каждой кнопка «Подключить» / «Отключить».
-- **Модель.** У подключённого провайдера появляется строка выбора: список моделей, вариант по умолчанию помечен `(default)`. Для Claude это `claude-opus-5`, `claude-sonnet-5` (default), `claude-fable-5`, `claude-haiku-4-5`.
-- **Effort.** Только у Claude — `low`, `medium` (default), `high`, `xhigh`, `max`. Уходит в CLI флагом `--effort`; у остальных провайдеров селект просто не показывается.
-- **Лимиты подписки.** У подключённого Claude прямо над выбором модели видно расход окон **5 часов** и **7 дней** — процент и время сброса. Данные приходят с каждым ответом CLI, поэтому до первого запроса там честная надпись «Данные появятся после первого запроса».
-- **Порядок кнопок тулбара.** Долгое нажатие (2 секунды) на любой кнопке `.toolbar` включает режим «тряски» — кнопки перетаскиваются мышью, `Esc` выходит, порядок сохраняется. Шестерёнка в этом не участвует: она лежит вне `.toolbar`.
-- **Ширину панели сессий** и **набор видимых типов узлов в Graph** — тоже настройки внешнего вида, тоже переживают перезагрузку (см. таблицу хранения).
+- **The provider.** The dialog has three cards: **Claude** (Anthropic), **Codex** (OpenAI), **OpenCode** (local and third-party models). Each has a "Connect" / "Disconnect" button.
+- **The model.** A connected provider gets a selection row: the list of models, with the default one marked `(default)`. For Claude these are `claude-opus-5`, `claude-sonnet-5` (default), `claude-fable-5`, `claude-haiku-4-5`.
+- **The effort.** Claude only — `low`, `medium` (default), `high`, `xhigh`, `max`. It goes to the CLI as the `--effort` flag; for the other providers the select is simply not shown.
+- **Subscription limits.** For a connected Claude, the usage of the **5-hour** and **7-day** windows is shown right above the model selection — the percentage and the reset time. The data arrives with every CLI answer, so before the first request it honestly says "Data will appear after the first request".
+- **The toolbar button order.** A long press (2 seconds) on any `.toolbar` button enables "wobble" mode — the buttons can be dragged with the mouse, `Esc` exits, and the order is saved. The gear does not take part in this: it sits outside `.toolbar`.
+- **The session panel width** and **the set of visible node kinds in Graph** — also appearance settings, and they also survive a reload (see the storage table).
 
-Модель и effort дублируются в шапке активной сессии во вкладке Chat — это те же самые значения, они пишутся в то же хранилище, и следующее сообщение в текущей сессии уйдёт уже с новыми параметрами.
+The model and the effort are duplicated in the header of the active session on the Chat tab — those are the very same values, they are written to the same storage, and the next message in the current session will go out with the new parameters.
 
-## 🔌 Подключение Claude CLI
+## 🔌 Connecting the Claude CLI
 
-Нажатие «Подключить» у Claude запускает настоящую разведку, а не переключает флажок:
+Pressing "Connect" on Claude starts a real reconnaissance rather than flipping a switch:
 
-1. Страница зовёт `POST /api/claude/detect`, кнопка на это время показывает «Ищу Claude...».
-2. Сервер параллельно выполняет `claude --version` во всех подходящих окружениях (таймаут 15 секунд на каждое) и возвращает те, что ответили, вместе с версией.
-3. Дальше по числу находок: **одно** окружение — подключаемся сразу; **несколько** — открывается окно `#pickerModal` «Где запускать Claude CLI?» со списком; **ни одного** — то же окно с подсказкой, что CLI не найден и можно указать путь через `CLAUDE_BIN`.
-4. Выбор уходит в `POST /api/claude/connect`, сервер запоминает окружение в памяти и отвечает меткой и версией — они появляются в строке провайдера в виде `Windows · CLI 2.1.245`.
+1. The page calls `POST /api/claude/detect`, and the button shows "Looking for Claude..." in the meantime.
+2. The server runs `claude --version` in all suitable environments in parallel (a 15-second timeout each) and returns the ones that answered, together with their version.
+3. Then it depends on how many were found: **one** environment — connect immediately; **several** — the `#pickerModal` dialog "Where to run the Claude CLI?" opens with a list; **none** — the same dialog with a hint that the CLI was not found and that a path can be given through `CLAUDE_BIN`.
+4. The choice goes to `POST /api/claude/connect`, the server remembers the environment in memory and answers with a label and a version — which appear in the provider row as `Windows · CLI 2.1.245`.
 
-Где именно сервер ищет CLI — зависит от того, откуда он сам запущен:
+Where exactly the server looks for the CLI depends on where it is running itself:
 
-| Сервер запущен в | Windows-установка | WSL-установка |
+| Server runs in | Windows installation | WSL installation |
 | --- | --- | --- |
 | Windows | `claude` | `wsl.exe bash -lc "claude ..."` |
 | WSL | `claude.exe` | `claude` |
 
-Если задана переменная `CLAUDE_BIN`, поиск не выполняется вообще: остаётся ровно одно окружение с меткой `CLAUDE_BIN` и вашим путём. WSL вызывается именно через login-шелл (`bash -lc`) — без него в `PATH` нет `~/.local/bin`, и CLI «пропадает».
+If the `CLAUDE_BIN` variable is set, no search happens at all: exactly one environment remains, labelled `CLAUDE_BIN` with your path. WSL is invoked specifically through a login shell (`bash -lc`) — without it `~/.local/bin` is not in `PATH` and the CLI "disappears".
 
-**Подключение не слетает.** Окружение, модель, effort и id сессии CLI сохраняются в браузере. При открытии страницы состояние поднимается обратно, и, если сервер за это время перезапускался, страница молча возвращает ему выбранное окружение повторным `connect`. Кнопка «Отключить» удаляет запись и сбрасывает активную сессию.
+**The connection does not fall off.** The environment, the model, the effort and the CLI session id are saved in the browser. When the page opens, the state is restored, and if the server has restarted in the meantime the page quietly hands it the chosen environment again with a repeat `connect`. The "Disconnect" button removes the record and resets the active session.
 
-## 🖥 Настройки сервера (`.env`)
+## 🖥 Server settings (`.env`)
 
-`.env` создаётся автоматически при первом запуске (`PORT=3001`) и в git не попадает — это единственное место для порта и любых секретов. Значения из файла **не перетирают** уже заданные переменные окружения, поэтому `PORT=3999 node server.js` продолжает работать.
+`.env` is created automatically on the first run (`PORT=3001`) and is not tracked by git — it is the single place for the port and any secrets. Values from the file **do not overwrite** environment variables that are already set, which is why `PORT=3999 node server.js` keeps working.
 
-| Переменная | Значение по умолчанию | Зачем |
+| Variable | Default | Why |
 | --- | --- | --- |
-| `PORT` | `3001` | Порт сервера. Берётся строго отсюда, соседние не подбираются: вторая копия на той же папке дерётся за `DATA/.sessions.db`/`DATA/.index.db` и перезаписывает `DATA/vault/`. Порт занят — сервер честно завершится. |
-| `CLAUDE_BIN` | не задана | Путь к исполняемому файлу Claude CLI, если его нет в `PATH`. Задана — поиск по Windows/WSL отключается. |
-| `OBSIDIAN_VAULT` | папка `vault/` в проекте | Внешний Obsidian-vault вместо встроенного: сюда сервер пишет карту проекта для вкладки Graph. |
-| `NO_RELOAD` | не задана | `NO_RELOAD=1` выключает самоперезапуск сервера при правках `server.js`. В шаблон `.env` не входит, но читается оттуда наравне с остальными. |
-| `SERVER_CHILD` | — | Служебная: сервер ставит её сам дочернему процессу. Руками не трогать. |
+| `PORT` | `3001` | The server port. It is taken strictly from here, with no fallback to neighbouring ports: a second copy on the same folder would fight over `DATA/.sessions.db`/`DATA/.index.db` and overwrite `DATA/vault/`. If the port is busy, the server honestly exits. |
+| `CLAUDE_BIN` | not set | The path to the Claude CLI executable if it is not in `PATH`. If set, the Windows/WSL search is disabled. |
+| `OBSIDIAN_VAULT` | the `vault/` folder in the project | An external Obsidian vault instead of the built-in one: this is where the server writes the project map for the Graph tab. |
+| `NO_RELOAD` | not set | `NO_RELOAD=1` disables the server's self-restart on edits to `server.js`. It is not part of the `.env` template but is read from there like the rest. |
+| `SERVER_CHILD` | — | Internal: the server sets it on the child process itself. Do not touch by hand. |
 
-Формат простой: `КЛЮЧ=значение`, строки с `#` и пустые пропускаются, кавычки вокруг значения необязательны.
+The format is simple: `KEY=value`, lines starting with `#` and empty lines are skipped, and quotes around the value are optional.
 
-## 🗄 Где что хранится
+## 🗄 Where things are stored
 
-| Что | Где | Ключ / файл |
+| What | Where | Key / file |
 | --- | --- | --- |
-| Окружение CLI, модель, effort, id сессии | `localStorage` браузера | `noname.claude` |
-| Порядок кнопок в тулбарах | `localStorage` | `toolbarOrder` |
-| Ширина панели сессий | `localStorage` | `sessionsPanelWidth` |
-| Видимые типы узлов в Graph | `localStorage` | `graph.visibleKinds` |
-| Камера, узлы, рёбра и агент во Flow | `localStorage` | `flowCanvasViews`, `flowNodePositions2`, `flowNodeGraph3`, `flowNodeSecretaryAgent` |
-| Порт, путь к CLI, путь к vault | файл на диске | `.env` в корне проекта |
-| Выбранное окружение CLI | оперативная память сервера | теряется при перезапуске, восстанавливается страницей |
+| CLI environment, model, effort, session id | browser `localStorage` | `noname.claude` |
+| The button order in the toolbars | `localStorage` | `toolbarOrder` |
+| The session panel width | `localStorage` | `sessionsPanelWidth` |
+| The visible node kinds in Graph | `localStorage` | `graph.visibleKinds` |
+| The camera, nodes, edges and agent in Flow | `localStorage` | `flowCanvasViews`, `flowNodePositions2`, `flowNodeGraph3`, `flowNodeSecretaryAgent` |
+| The port, the CLI path, the vault path | a file on disk | `.env` at the project root |
+| The chosen CLI environment | the server's memory | lost on restart, restored by the page |
 
-Запись в `localStorage` обёрнута в `try/catch`: в приватном режиме или при запрете на хранилище интерфейс продолжает работать, просто без запоминания.
+Writes to `localStorage` are wrapped in `try/catch`: in private mode, or when storage is blocked, the interface keeps working — just without remembering anything.
 
-## ✅ Что уже работает / что в планах
+## ✅ What works / what is planned
 
-Работает по-настоящему:
+Genuinely working:
 
-- поиск, выбор и подключение Claude CLI в Windows и WSL;
-- выбор модели и effort с сохранением и восстановлением;
-- показ версии CLI, окружения и лимитов подписки;
-- перетаскивание кнопок тулбара и остальные сохраняемые настройки внешнего вида.
+- finding, choosing and connecting the Claude CLI in Windows and WSL;
+- choosing the model and the effort, with persistence and restoration;
+- showing the CLI version, the environment and the subscription limits;
+- dragging toolbar buttons and the other persisted appearance settings.
 
-Пока заглушки — честно, без прикрас:
+Still stubs — honestly, with no embellishment:
 
-- **Пункты выпадающего меню.** `settings.js` создаёт меню `#settingsMenu` с двумя пунктами «Заглушка_2», разделителем и пунктом «Settings». Стили и обработчики закрытия (клик мимо, `Esc`) на месте, но открыть его нечем: функция `open()` в `settings.js` ни разу не вызывается, а клик по шестерёнке сразу открывает окно настроек. Меню — задел на будущее.
-- **Провайдеры Codex и OpenCode.** Кнопка «Подключить» у них ничего не запрашивает у сервера: запись просто добавляется в память страницы, чтобы показать список моделей. Реальные запросы всегда идут в Claude CLI.
-- **Селект «Провайдер»** внутри строки подключённого провайдера и такой же селект в шапке сессии — витринные: они меняют показанный список моделей, но не маршрутизацию. Мультипровайдерного роутинга ещё нет.
+- **The dropdown menu entries.** `settings.js` creates the `#settingsMenu` menu with two "Placeholder_2" entries, a separator and a "Settings" entry. The styles and the closing handlers (click outside, `Esc`) are in place, but there is nothing to open it with: the `open()` function in `settings.js` is never called, and a click on the gear opens the settings dialog directly. The menu is groundwork for the future.
+- **The Codex provider's chat.** Its "Connect" button is real now — same detect (Windows/WSL) → pick → connect flow as Claude — but sending a message to it returns a stub error ("Codex chat is not implemented yet"): the actual CLI invocation isn't wired up.
+- **The "Provider" select** inside a connected provider's row, and the identical select in the session header, route real requests to Claude/OpenCode/Codex's `/api/agent/*` — Codex just has nothing to answer with yet (see above).
 
-## 📁 Файлы
+## 📁 Files
 
-| Файл | Что в нём по этой теме |
+| File | What it contains on this topic |
 | --- | --- |
-| `SYSTEM/index.html` | Кнопка `#settingsButton`, меню `#settingsMenu`, окна `#settingsModal` и `#pickerModal`, стили `.settings__*`, `.provider__*`, `.picker__*` |
-| `PROJECTS/Settings/settings.js` | Разметка шестерёнки и обоих окон, логика провайдеров, закрытие меню по клику мимо и по `Esc` |
-| `PROJECTS/Settings/settings.css` | Стили кнопки, меню и окна настроек |
-| `SYSTEM/app.js` | Список `PROVIDERS`, отрисовка карточек, подключение/отключение, выбор модели и effort, лимиты, сохранение в `localStorage`, восстановление при загрузке |
-| `server.js` | Загрузка `.env`, `TARGETS` для поиска CLI, `detectInstalls()`, роуты `/api/claude/detect` и `/api/claude/connect` |
-| `SYSTEM/toolbar-reorder.js` | Перетаскивание кнопок тулбара по долгому нажатию и сохранение порядка |
-| `SYSTEM/sidebar-resize.js` | Ширина панели сессий |
-| `.env` | Порт и секреты. Создаётся сервером, в git не попадает |
+| `SYSTEM/index.html` | The `#settingsButton` button, the `#settingsMenu` menu, the `#settingsModal` and `#pickerModal` dialogs, the `.settings__*`, `.provider__*`, `.picker__*` styles |
+| `PROJECTS/Settings/settings.js` | The markup for the gear and both dialogs, the provider logic, closing the menu on an outside click and on `Esc` |
+| `PROJECTS/Settings/settings.css` | Styles for the button, the menu and the settings dialog |
+| `SYSTEM/app.js` | The `PROVIDERS` list, rendering the cards, connect/disconnect, choosing the model and effort, the limits, persistence to `localStorage`, restoration on load |
+| `server.js` | Loading `.env`, `TARGETS` for the CLI search, `detectInstalls()`, the `/api/claude/detect` and `/api/claude/connect` routes |
+| `SYSTEM/toolbar-reorder.js` | Dragging toolbar buttons on a long press and saving the order |
+| `SYSTEM/sidebar-resize.js` | The session panel width |
+| `.env` | The port and secrets. Created by the server, not tracked by git |
 
 ---
 
-Часть проекта Mission Control. Лицензия — MIT.
+Part of the Mission Control project. License — MIT.

@@ -6,21 +6,21 @@
     от невидимого элемента. Так разметку index.html и сетку .observation трогать
     не нужно — обновляется ровно содержимое трёх списков и двух плиток. */ %>
 <ul class="obs-card__stats" id="obsStats" hx-swap-oob="true">
-    <li><span>Сообщений всего</span><strong><%= it.messages %></strong></li>
-    <li><span>Сессий за 24 часа</span><strong><%= it.today %></strong></li>
-    <li><span>Последняя активность</span><strong><%= it.lastActive %></strong></li>
+    <li><span>Messages total</span><strong><%= it.messages %></strong></li>
+    <li><span>Sessions in 24 hours</span><strong><%= it.today %></strong></li>
+    <li><span>Last activity</span><strong><%= it.lastActive %></strong></li>
 </ul>
 
 <ul class="obs-list" id="obsRunningList" hx-swap-oob="true">
     <% if (!it.running.length) { %>
-        <li class="obs-list__empty">Сейчас ничего не выполняется</li>
+        <li class="obs-list__empty">Nothing is running right now</li>
     <% } %>
     <% it.running.forEach((session) => { %>
         <li>
             <button type="button" class="obs-list__item" data-session-id="<%= session.id %>" data-running="1">
                 <span class="obs-list__dot obs-list__dot--running"></span>
                 <span class="obs-list__title"><%= session.title %></span>
-                <span class="obs-list__meta">выполняется…</span>
+                <span class="obs-list__meta">running…</span>
             </button>
         </li>
     <% }) %>
@@ -28,7 +28,7 @@
 
 <ul class="obs-list" id="obsRecentList" hx-swap-oob="true">
     <% if (!it.recent.length) { %>
-        <li class="obs-list__empty">Сессий пока нет</li>
+        <li class="obs-list__empty">No sessions yet</li>
     <% } %>
     <% it.recent.forEach((session) => { %>
         <li>

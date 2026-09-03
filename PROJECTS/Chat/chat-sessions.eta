@@ -4,7 +4,7 @@
     app.js в обработчике htmx:oobAfterSwap сразу после подмены. */ %>
 <ul class="session-list" id="sessionList" hx-swap-oob="true">
     <% if (!it.sessions.length) { %>
-        <li class="session-empty">Сессий пока нет</li>
+        <li class="session-empty">No sessions yet</li>
     <% } %>
     <% it.sessions.forEach((session) => { %>
         <li class="session-row">
@@ -22,13 +22,13 @@
                     <span class="session-item__meta"><%= session.meta %></span>
                 </span>
             </button>
-            <button type="button" class="session-copy" data-copy-id="<%= session.id %>" title="Скопировать id сессии" aria-label="Скопировать id сессии: <%= session.title %>">
+            <button type="button" class="session-copy" data-copy-id="<%= session.id %>" title="Copy session id" aria-label="Copy session id: <%= session.title %>">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                 </svg>
             </button>
-            <button type="button" class="session-delete" data-delete-id="<%= session.id %>" title="Удалить сессию" aria-label="Удалить сессию: <%= session.title %>">
+            <button type="button" class="session-delete" data-delete-id="<%= session.id %>" title="Delete session" aria-label="Delete session: <%= session.title %>">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <polyline points="3 6 5 6 21 6"></polyline>
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>

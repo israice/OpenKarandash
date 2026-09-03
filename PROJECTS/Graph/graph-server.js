@@ -1,14 +1,16 @@
 // Вкладка Graph, серверная половина: карта проекта в виде vault, память о сессиях,
-// поисковый индекс (FTS5) и чтение-правка файла из узла графа.
-// Вынесено из server.js — вся вкладка живёт в PROJECTS/Graph.
+// поисковый индекс (FTS5) и чтение-правка файла из узла графа. Здесь же её
+// маршруты (createRoutes внизу файла) — вся вкладка живёт в PROJECTS/Graph,
+// server.js только раскладывает готовую таблицу путей.
 //
-// Модуль ничего не знает про http и хранилище сессий: то, что ему нужно снаружи,
+// Модуль ничего не знает про хранилище сессий: то, что ему нужно снаружи,
 // приходит один раз через init().
 
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
+const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 
@@ -37,10 +39,10 @@ const VAULT = process.env.OBSIDIAN_VAULT || path.join(ROOT, VAULT_DIR);
 
 // подпапка vault под карту файлов проекта. её содержимое генерируем мы, поэтому
 // перезаписываем целиком; заметки, написанные руками, лежат вне её и не страдают
-const MAP_DIR = 'Проект';
+const MAP_DIR = 'Project';
 const UNIT_DIR = 'Секции';   // заметки секций и функций внутри крупных файлов
 const API_SUBDIR = 'API';    // заметки API-роутов: стык клиента и сервера
-const SESSION_DIR = 'Сессии'; // память о прошлых сессиях, эту папку не сносим
+const SESSION_DIR = 'Sessions'; // память о прошлых сессиях, эту папку не сносим
 
 // в этих файлах ищем упоминания других файлов проекта — из них и получаются рёбра
 const TEXT_FILES = /\.(js|mjs|cjs|ts|tsx|jsx|json|html|css|md|txt|yml|yaml|sh|py|sql)$/i;
@@ -65,10 +67,9 @@ function collectNotes(dir, base, acc = []) {
 //   .git — служебная база на тысячи объектов, содержимое проекта в ней дублируется
 //   DATA — то, что сервер произвёл сам: карта из vault уже в графе узлами,
 //   и заметки о заметках плодились бы с каждой пересборкой
-//   SYSTEM/Hermes/agent и runtime — чужой код и окружения Python: 250 МБ,
-//   которым нечего делать в карте проекта (список — SYSTEM/core/scan.js)
-const MAP_SKIP = new Set(['.git', 'node_modules', DATA_DIR]);
+// список общий со сторожем файлов в server.js — см. SYSTEM/core/scan.js
 const scan = require('../../SYSTEM/core/scan.js');
+const MAP_SKIP = new Set([...scan.SKIP_NAMES, DATA_DIR]);
 
 function projectFiles(dir = ROOT, acc = []) {
     let entries;
@@ -80,7 +81,6 @@ function projectFiles(dir = ROOT, acc = []) {
     for (const entry of entries) {
         if (MAP_SKIP.has(entry.name)) continue;
         const full = path.join(dir, entry.name);
-        if (scan.isSkipped(ROOT, full, entry.name)) continue;
         if (entry.isDirectory()) projectFiles(full, acc);
         else acc.push(path.relative(ROOT, full).split(path.sep).join('/'));
     }
@@ -352,12 +352,12 @@ function syncProjectMap() {
             first_seen: git ? git.first.date : undefined,
             last_commit: git ? `${git.last.date} ${git.last.subject}` : undefined,
         }, [
-            `Файл проекта: \`${file}\``,
+            `Project file: \`${file}\``,
             '',
-            ...section('Ссылается на', [...links].sort().map((target) => `- [[${target}]]`)),
-            ...section('Внутри', fileUnits
+            ...section('Links to', [...links].sort().map((target) => `- [[${target}]]`)),
+            ...section('Contains', fileUnits
                 .filter((unit) => !unit.parent) // функции внутри секций перечислит сама секция
-                .map((unit) => `- [[${unit.note}]] (строка ${unit.line})`)),
+                .map((unit) => `- [[${unit.note}]] (line ${unit.line})`)),
         ]);
     }
 
@@ -385,10 +385,10 @@ function syncProjectMap() {
             }, [
                 // ссылаемся только на прямого родителя: функция внутри секции —
                 // на секцию, иначе в графе появится второе ребро до файла
-                `${unit.kind === 'section' ? 'Секция' : 'Функция'} \`${unit.title}\` в [[${unit.parent || `${MAP_DIR}/${file}`}]], строка ${unit.line}.`,
+                `${unit.kind === 'section' ? 'Section' : 'Function'} \`${unit.title}\` in [[${unit.parent || `${MAP_DIR}/${file}`}]], line ${unit.line}.`,
                 '',
-                ...section('Внутри', own.map((other) => `- [[${other.note}]] (строка ${other.line})`)),
-                ...section('Вызывает', [...calls].sort().map((note) => `- [[${note}]]`)),
+                ...section('Contains', own.map((other) => `- [[${other.note}]] (line ${other.line})`)),
+                ...section('Calls', [...calls].sort().map((note) => `- [[${note}]]`)),
             ]);
         }
     }
@@ -400,20 +400,20 @@ function syncProjectMap() {
             kind: 'route',
             route,
         }, [
-            `API-роут \`${route}\`, реализован в [[${MAP_DIR}/${impl}]].`,
+            `API route \`${route}\`, implemented in [[${MAP_DIR}/${impl}]].`,
             '',
-            ...section('Вызывают', callers.map((file) => `- [[${MAP_DIR}/${file}]]`)),
+            ...section('Called by', callers.map((file) => `- [[${MAP_DIR}/${file}]]`)),
         ]);
     }
 
     // заметка «менялись вместе»: рёбра из истории git, вес = число общих коммитов
     const pairs = [...history.pairs].filter(([, weight]) => weight >= 2);
     if (pairs.length) {
-        writeNote(path.join(mapRoot, 'История git.md'), {
+        writeNote(path.join(mapRoot, 'Git history.md'), {
             kind: 'history',
             commits: history.commits,
         }, [
-            `Файлы, которые меняются вместе (из ${history.commits} коммитов).`,
+            `Files that change together (from ${history.commits} commits).`,
             '',
             ...pairs.sort((a, b) => b[1] - a[1]).flatMap(([key, weight]) => {
                 const [a, b] = JSON.parse(key);
@@ -447,7 +447,7 @@ function prepareVault() {
         dropStaleNotes(path.join(VAULT, MAP_DIR)); // карта: файл исчез — заметка тоже
         dropStaleNotes(path.join(VAULT, SESSION_DIR)); // сессию удалили из списка — и заметку
     } catch (error) {
-        console.error(`Не удалось собрать карту проекта в vault: ${error.message}`);
+        console.error(`Failed to build the project map in the vault: ${error.message}`);
     }
     rebuildSearchIndex(); // индекс строим и при частичной карте: поиск лучше устаревшего ничего
     deps.onMapReady(); // карта пересобралась — страница перерисует граф
@@ -467,7 +467,7 @@ function readFrontmatter(text) {
 }
 
 function buildVaultGraph() {
-    if (!fs.existsSync(VAULT)) return { ok: false, error: `Vault не найден: ${VAULT}` };
+    if (!fs.existsSync(VAULT)) return { ok: false, error: `Vault not found: ${VAULT}` };
 
     const paths = collectNotes(VAULT, VAULT);
 
@@ -576,12 +576,12 @@ function syncSessionNotes() {
             messages: session.messageCount,
             stale: changed.length ? 'true' : undefined,
         }, [
-            ...(changed.length ? [`⚠ После этой сессии менялись: ${changed.join(', ')}`, ''] : []),
-            `## Что просили`,
+            ...(changed.length ? [`⚠ Changed after this session: ${changed.join(', ')}`, ''] : []),
+            `## What was requested`,
             deps.sessionTitle(session),
             '',
-            ...section('Чем закончилось', answer ? [answer.text.split(/\r?\n\r?\n/)[0].slice(0, 400)] : []),
-            ...section('Файлы', [...touched].sort().map((file) => `- [[${MAP_DIR}/${file}]]`)),
+            ...section('How it ended', answer ? [answer.text.split(/\r?\n\r?\n/)[0].slice(0, 400)] : []),
+            ...section('Files', [...touched].sort().map((file) => `- [[${MAP_DIR}/${file}]]`)),
         ]);
     }
 }
@@ -665,7 +665,7 @@ function rebuildSearchIndex() {
         searchDb.exec('COMMIT');
     } catch (error) {
         searchDb.exec('ROLLBACK');
-        console.error(`Не удалось собрать поисковый индекс: ${error.message}`);
+        console.error(`Failed to build the search index: ${error.message}`);
     }
 }
 
@@ -688,7 +688,7 @@ function searchProject(query, limit = 20) {
         `).all(match, Math.min(Number(limit) || 20, 100));
         return { ok: true, hits };
     } catch (error) {
-        return { ok: false, error: `Не удалось выполнить поиск: ${error.message}` };
+        return { ok: false, error: `Search failed: ${error.message}` };
     }
 }
 
@@ -720,22 +720,22 @@ function resolveInsideRoot(relative) {
 
 function readProjectFile(relative) {
     const full = resolveInsideRoot(relative);
-    if (!full) return { ok: false, error: 'Путь за пределами проекта' };
+    if (!full) return { ok: false, error: 'Path outside the project' };
 
     let stat;
     try {
         stat = fs.statSync(full);
     } catch {
-        return { ok: false, error: `Файл не найден: ${relative}` };
+        return { ok: false, error: `File not found: ${relative}` };
     }
-    if (stat.isDirectory()) return { ok: false, error: 'Это папка, а не файл' };
+    if (stat.isDirectory()) return { ok: false, error: 'This is a folder, not a file' };
 
     const rel = path.relative(ROOT_REAL, full).split(path.sep).join('/');
     if (!TEXT_FILES.test(rel)) {
         return { ok: true, path: rel, binary: true, size: stat.size, editable: false };
     }
     if (stat.size > MAX_EDIT_BYTES) {
-        return { ok: true, path: rel, binary: true, size: stat.size, editable: false, note: 'Файл слишком велик для правки' };
+        return { ok: true, path: rel, binary: true, size: stat.size, editable: false, note: 'File is too large to edit' };
     }
 
     // заметки vault генерируются заново при каждой пересборке: править их бессмысленно,
@@ -747,37 +747,60 @@ function readProjectFile(relative) {
         text: fs.readFileSync(full, 'utf8'),
         size: stat.size,
         editable: !generated,
-        note: generated ? 'Заметка собирается сервером — правки затрутся при следующей пересборке' : undefined,
+        note: generated ? 'This note is generated by the server — edits will be overwritten on the next rebuild' : undefined,
     };
 }
 
 function writeProjectFile(relative, text) {
     const full = resolveInsideRoot(relative);
-    if (!full) return { ok: false, error: 'Путь за пределами проекта' };
+    if (!full) return { ok: false, error: 'Path outside the project' };
 
     const rel = path.relative(ROOT_REAL, full).split(path.sep).join('/');
-    if (rel.startsWith(`${VAULT_DIR}/`)) return { ok: false, error: 'Заметки vault пересобираются автоматически' };
-    if (!TEXT_FILES.test(rel)) return { ok: false, error: 'Двоичные файлы не редактируются' };
-    if (!fs.existsSync(full)) return { ok: false, error: `Файл не найден: ${rel}` };
-    if (typeof text !== 'string') return { ok: false, error: 'Нет текста для записи' };
+    if (rel.startsWith(`${VAULT_DIR}/`)) return { ok: false, error: 'Vault notes are rebuilt automatically' };
+    if (!TEXT_FILES.test(rel)) return { ok: false, error: 'Binary files cannot be edited' };
+    if (!fs.existsSync(full)) return { ok: false, error: `File not found: ${rel}` };
+    if (typeof text !== 'string') return { ok: false, error: 'No text to write' };
 
     try {
         fs.writeFileSync(full, text);
     } catch (error) {
-        return { ok: false, error: `Не удалось записать файл: ${error.message}` };
+        return { ok: false, error: `Failed to write the file: ${error.message}` };
     }
     return { ok: true, path: rel, size: Buffer.byteLength(text) };
+}
+
+// маршруты вкладки: карта графа, поиск и файловая панель узла. Данных снаружи
+// им не нужно — всё, чем они отвечают, живёт в этом же файле
+function createRoutes() {
+    return {
+        '/api/obsidian/graph': (req, res) => {
+            sendJson(res, buildVaultGraph());
+        },
+
+        '/api/file/read': async (req, res) => {
+            const { path: target } = await readJson(req);
+            sendJson(res, readProjectFile(target));
+        },
+
+        '/api/file/write': async (req, res) => {
+            // в теле идёт весь файл целиком: index.html один весит больше
+            // стандартного лимита readJson, поэтому лимит здесь свой
+            const { path: target, text } = await readJson(req, MAX_EDIT_BYTES + 100_000);
+            sendJson(res, writeProjectFile(target, text));
+        },
+
+        '/api/search': async (req, res) => {
+            const { q, limit } = await readJson(req);
+            sendJson(res, searchProject(q, limit));
+        },
+    };
 }
 
 module.exports = {
     DATA_DIR, // им пользуется server.js: и сторож файлов, и путь до базы сессий
     VAULT_DIR,
     init,
+    createRoutes,
     prepareVault,
-    buildVaultGraph,
-    searchProject,
-    readProjectFile,
-    writeProjectFile,
-    MAX_EDIT_BYTES, // лимит на тело запроса /api/file/write: в нём едет файл целиком
     projectFiles, // нужен сторожу файлов в server.js: состав папки проекта
 };

@@ -1,25 +1,31 @@
 # 📚 Book
 
-**Библиотека всех разделов интерфейса: карточка на каждую вкладку тулбара со ссылкой на её README.**
+**A library of every interface section: one card per toolbar tab, opening its README in the panel on the right.**
 
-## 🧭 Что это
+## 🧭 What this is
 
-Book — вкладка тулбара (`bookButton`, `data-view="book"`). Разметка живёт в `SYSTEM/index.html` в блоке `<main class="view view--book" id="bookView">`, а в `App.VIEWS` этот элемент записан под ключом `book`.
+Book is a toolbar tab (`bookButton`, `data-view="book"`). Everything the tab consists of lives in this folder: the script `book-tab.js` (markup included) and the styles `book.css`. `SYSTEM/index.html` only holds the toolbar button and the `<link>` to `book.css`; the `#bookView` element is built by the script itself and registered in `App.VIEWS` under the key `book`.
 
-Раньше этот список карточек был вкладкой «Projects» боковой панели Sessions (переключалась стрелками ←/→ рядом с Tasks). Теперь это отдельная страница верхнего меню, как Graph, Flow, Kanban и остальные.
+This card list used to be the "Projects" tab of the Sessions side panel (switched with the ←/→ arrows next to Tasks). Now it is a separate top-menu page, like Graph, Flow, Kanban and the rest.
 
-## 🗂️ Что на экране
+## 🗂️ What is on screen
 
-Сетка карточек (`#bookList`, класс `book-grid`) — по одной на каждую кнопку тулбара: Graph, Flow, Kanban, PROJECTS, Home, Book, Karandash, Settings, плюс разделы, добавленные кнопкой «+» (`SYSTEM/new-button.js`). Список пересобирается при каждом открытии вкладки — новая папка от кнопки «+» подхватывается сразу.
+On the left — a side panel (`#bookNav`, `#bookList`) with one card per toolbar button: Graph, Flow, Kanban, PROJECTS, Home, Book, Karandash, Settings, plus the sections added with the "+" button (`SYSTEM/new-button.js`). The list is rebuilt every time the tab is opened, so a new folder from the "+" button is picked up immediately.
 
-Клик по карточке открывает README её папки в общей модалке (`MissionGraph.openFileModal`, `PROJECTS/Graph/graph.js`) — она не привязана к конкретной вкладке, поэтому видна поверх Book.
+On the right — the README of the selected card in an editable panel (`#bookFileEditor`), saved automatically after a pause in typing. Clicking the selected card again closes the panel. With nothing selected the panel shows the hint `#bookEmpty`.
 
-## ⚙️ Как это устроено
+## ⚙️ How it works
 
-- **Список строит `PROJECTS/Book/book-tab.js`.** Три таблицы-константы (`SOURCE_IDS`, `DESCRIPTIONS`, `README`) связывают id кнопки тулбара с описанием и путём до README.
-- **Стили — в `PROJECTS/Book/book.css`** (сетка `.book-grid`), сами карточки используют классы `.project-card*` из `SYSTEM/styles/sessions.css`.
-- **Открытие вкладки** — `SYSTEM/tabs.js` вызывает `MissionBookTab.show()` при клике на `bookButton`.
+- **The whole tab is `PROJECTS/Book/book-tab.js`.** It inserts its own markup before `#chatView`, builds the cards from three constant tables (`SOURCE_IDS`, `DESCRIPTIONS`, `README`) and drives the panel on the right.
+- **Styles are in `PROJECTS/Book/book.css`;** the cards themselves reuse the `.project-card*` classes from `SYSTEM/styles/sessions.css`.
+- **What is borrowed from elsewhere** is called through windows, inside functions — never at file top level: `MissionGraph.createFileEditor` / `MissionGraph.nodeByPath` (the file editor of the Graph tab, `PROJECTS/Graph/graph.js`), `MdEditors.attach` (EasyMDE, `PROJECTS/Graph/md-editors.js`) and `SidebarResize.init` (the panel width handle, `SYSTEM/sidebar-resize.js`).
+- **Opening the tab** — `SYSTEM/tabs.js` calls `MissionBookTab.show()` when `bookButton` is clicked.
+- **Load order** — `book-tab.js` is connected before `SYSTEM/app.js`, because `app.js` looks up `#bookView` for `App.VIEWS` at startup.
+
+## 🔌 What is published
+
+`window.MissionBookTab` — `show()` (rebuild the cards and open the project README), `openFile(path)`, `closePanel()`.
 
 ---
 
-Проект распространяется по лицензии **MIT**.
+This project is distributed under the **MIT** license.

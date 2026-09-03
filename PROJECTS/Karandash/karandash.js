@@ -31,14 +31,14 @@
     popover.id = 'commentPopover';
     popover.setAttribute('role', 'dialog');
     popover.setAttribute('aria-modal', 'false');
-    popover.setAttribute('aria-label', 'Комментарий к элементу');
+    popover.setAttribute('aria-label', 'Comment on element');
     popover.hidden = true;
     popover.innerHTML = `
         <div class="comment-popover__target" id="commentTarget"></div>
-        <textarea class="comment-popover__field" id="commentField" placeholder="Комментарий к элементу..."></textarea>
+        <textarea class="comment-popover__field" id="commentField" placeholder="Comment on element..."></textarea>
         <div class="comment-popover__actions">
-            <button type="button" class="comment-popover__button" id="commentCancel">Отмена</button>
-            <button type="button" class="comment-popover__button comment-popover__button--primary" id="commentSave">Сохранить</button>
+            <button type="button" class="comment-popover__button" id="commentCancel">Cancel</button>
+            <button type="button" class="comment-popover__button comment-popover__button--primary" id="commentSave">Save</button>
         </div>
     `;
     document.body.appendChild(popover);
@@ -69,19 +69,18 @@
         graphView: 'Graph',
         flowView: 'Flow',
         kanbanView: 'Kanban',
-        hermesView: 'Hermes',
-        chatView: 'Projects',
+        chatView: 'Sessions',
     };
 
     // ориентиры на пути к элементу — тулбары, боковые панели, модалки:
     // по ним понятно, в каком блоке интерфейса элемент физически находится
     const LANDMARKS = [
-        { selector: '[role="dialog"], .modal, .comment-popover', kind: 'модальное окно' },
-        { selector: '[role="toolbar"], .toolbar', kind: 'тулбар' },
-        { selector: '[role="tablist"]', kind: 'список вкладок' },
-        { selector: 'nav, .side-nav, aside', kind: 'боковая панель' },
-        { selector: 'header', kind: 'шапка' },
-        { selector: 'footer', kind: 'подвал' },
+        { selector: '[role="dialog"], .modal, .comment-popover', kind: 'modal dialog' },
+        { selector: '[role="toolbar"], .toolbar', kind: 'toolbar' },
+        { selector: '[role="tablist"]', kind: 'tab list' },
+        { selector: 'nav, .side-nav, aside', kind: 'side panel' },
+        { selector: 'header', kind: 'header' },
+        { selector: 'footer', kind: 'footer' },
     ];
 
     function landmarkKind(el) {
@@ -140,7 +139,7 @@
         const parts = [];
         if (label) parts.push(`«${label}»`);
         parts.push(selector);
-        if (where) parts.push(`— раздел ${where}`);
+        if (where) parts.push(`— section ${where}`);
         return parts.join(' ');
     }
 
@@ -359,9 +358,9 @@
         // у контейнеров в textContent лежит всё их содержимое — такой «текст элемента»
         // только зашумляет вопрос, поэтому берём его лишь у коротких элементов
         const text = (el.textContent || '').trim().replace(/\s+/g, ' ');
-        const lines = [`Элемент интерфейса: ${describe(el)}`];
-        if (text && text.length <= 120) lines.push(`Текст элемента: ${text}`);
-        lines.push(`Комментарий: ${comment}`);
+        const lines = [`UI element: ${describe(el)}`];
+        if (text && text.length <= 120) lines.push(`Element text: ${text}`);
+        lines.push(`Comment: ${comment}`);
         return lines.join('\n');
     }
 

@@ -1,11 +1,11 @@
-// Ручка на правой грани боковой панели (Sessions, Book, ...): зажать и
-// тянуть, чтобы менять её ширину. Список панелей — в PANELS ниже.
+// Ручка на правой грани боковой панели: зажать и тянуть, чтобы менять её
+// ширину. Панели самой страницы — в PANELS ниже; панель, которую вкладка
+// строит сама (Book), подключает себя вызовом SidebarResize.init(...).
 (function () {
     const MIN_WIDTH = 210;
 
     const PANELS = [
         { panelId: 'sessionsPanel', handleId: 'sessionResize', storageKey: 'sessionsPanelWidth' },
-        { panelId: 'bookNav', handleId: 'bookResize', storageKey: 'bookPanelWidth' },
     ];
 
     function initPanel({ panelId, handleId, storageKey }) {
@@ -47,4 +47,6 @@
     document.addEventListener('DOMContentLoaded', () => {
         for (const config of PANELS) initPanel(config);
     });
+
+    window.SidebarResize = { init: initPanel };
 })();

@@ -29,34 +29,13 @@
                     defaultModel: 'gpt-5-codex',
                 },
                 {
-                    id: 'hermes',
-                    name: 'Hermes',
-                    note: 'оркестратор: сам планирует и помнит',
-                    paid: false,
-                    // модель Hermes выбирает сам по своему конфигу (Settings → провайдер
-                    // Hermes), поэтому списка моделей на клиенте нет
-                    models: [],
-                    defaultModel: undefined,
-                },
-                {
                     id: 'opencode',
                     name: 'OpenCode',
-                    note: 'локальные и сторонние модели',
+                    note: 'local and third-party models',
                     paid: false,
                     // список моделей заранее не хардкодим — CLI отдаёт его сам
                     // (`opencode models`) при подключении, см. connectOpenCode в settings.js,
                     // который наполняет этот массив по факту ответа сервера
-                    models: [],
-                    defaultModel: undefined,
-                },
-                // связка, а не CLI: подключать нечего, она доступна ровно тогда,
-                // когда подключены и Claude, и Hermes. Стоит последней, чтобы не
-                // выглядеть заменой кому-то из них
-                {
-                    id: 'hermes-plan',
-                    name: 'Связка: Claude → Hermes',
-                    note: 'Claude составляет задание, Hermes выполняет его дешёвыми моделями. Нужны оба подключения',
-                    paid: false,
                     models: [],
                     defaultModel: undefined,
                 },
@@ -66,7 +45,7 @@
             // сессию CLI держим в localStorage, само окружение восстанавливаем на сервере.
             // свой ключ и свой POST на восстановление — на провайдера, чтобы Claude и
             // OpenCode подключались независимо друг от друга
-            const STORE_KEYS = { claude: 'noname.claude', opencode: 'noname.opencode', hermes: 'noname.hermes', 'hermes-plan': 'noname.hermes-plan' };
+            const STORE_KEYS = { claude: 'noname.claude', codex: 'noname.codex', opencode: 'noname.opencode' };
             const STORE_KEY = STORE_KEYS.claude;
 
             // общий помощник для POST-запросов к серверу — им пользуются и остальные
@@ -114,6 +93,7 @@
             // обоих провайдеров, лишний вызов на неподключённого просто удалит его ключ
             function saveAllProviderStates() {
                 saveClaudeState();
+                saveProviderState('codex');
                 saveOpenCodeState();
             }
 
@@ -172,6 +152,7 @@
             function getActiveProviderId() {
                 if (!chatSessionBar.hidden && chatSessionProviderSelect.value) return chatSessionProviderSelect.value;
                 if (connections.has('claude')) return 'claude';
+                if (connections.has('codex')) return 'codex';
                 if (connections.has('opencode')) return 'opencode';
                 return 'claude';
             }
@@ -272,7 +253,7 @@
             function renderUsageInline(usage) {
                 const windows = usage?.unifiedWindows;
                 if (!windows) {
-                    return '<div class="provider__usage-empty">Данные появятся после первого запроса</div>';
+                    return '<div class="provider__usage-empty">Data will appear after the first request</div>';
                 }
 
                 const row = (label, win) => !win ? '' : `
@@ -280,9 +261,9 @@
                         <span class="provider__usage-label">${label}</span>
                         <span class="provider__usage-value">${Math.round(win.utilization * 100)}%</span>
                     </div>
-                    <div class="provider__usage-reset">сброс: ${formatResetTime(win.resetsAt)}</div>
+                    <div class="provider__usage-reset">resets: ${formatResetTime(win.resetsAt)}</div>
                 `;
-                return row('5 часов', windows.five_hour) + row('7 дней', windows.seven_day);
+                return row('5 hours', windows.five_hour) + row('7 days', windows.seven_day);
             }
 
             function openModal(el) {
@@ -320,10 +301,10 @@
                             </div>
                         </div>
                     `;
-                    el.querySelector('.modal__title').textContent = opts.title || 'Подтвердите действие';
+                    el.querySelector('.modal__title').textContent = opts.title || 'Confirm action';
                     el.querySelector('.modal__hint').textContent = message;
-                    el.querySelector('[data-confirm="cancel"]').textContent = opts.cancelText || 'Отмена';
-                    el.querySelector('[data-confirm="ok"]').textContent = opts.confirmText || 'Удалить';
+                    el.querySelector('[data-confirm="cancel"]').textContent = opts.cancelText || 'Cancel';
+                    el.querySelector('[data-confirm="ok"]').textContent = opts.confirmText || 'Delete';
                     document.body.append(el);
 
                     function cleanup(result) {
@@ -349,64 +330,64 @@
             // наводя курсор на иконку.
             const WORKER_INFO = {
                 secretary: {
-                    emoji: '🗂️', name: 'Секретарь', role: 'Приём и разбор задачи',
-                    competencies: ['Приоритизация', 'Формулировка ТЗ', 'Маршрутизация'],
+                    emoji: '🗂️', name: 'Secretary', role: 'Intake and task breakdown',
+                    competencies: ['Prioritization', 'Spec writing', 'Routing'],
                     mcp: ['Notion', 'Slack'],
-                    tools: ['Todo-лист', 'Шаблоны ТЗ'],
+                    tools: ['Todo list', 'Spec templates'],
                     skills: ['intake-triage'],
-                    used: ['Приоритизация', 'Маршрутизация', 'Todo-лист', 'intake-triage'],
+                    used: ['Prioritization', 'Routing', 'Todo list', 'intake-triage'],
                 },
                 researcher: {
-                    emoji: '🔎', name: 'Исследователь', role: 'Поиск первопричины',
-                    competencies: ['Анализ логов', 'Дебаг', 'Чтение чужого кода'],
+                    emoji: '🔎', name: 'Researcher', role: 'Root cause hunting',
+                    competencies: ['Log analysis', 'Debugging', 'Reading unfamiliar code'],
                     mcp: ['GitHub', 'Sentry'],
-                    tools: ['grep/rg', 'Профилировщик'],
+                    tools: ['grep/rg', 'Profiler'],
                     skills: ['root-cause-analysis'],
-                    used: ['Анализ логов', 'Дебаг', 'GitHub', 'grep/rg', 'root-cause-analysis'],
+                    used: ['Log analysis', 'Debugging', 'GitHub', 'grep/rg', 'root-cause-analysis'],
                 },
                 architect: {
-                    emoji: '🧭', name: 'Архитектор', role: 'Проектирование решения',
-                    competencies: ['Системный дизайн', 'Оценка рисков'],
+                    emoji: '🧭', name: 'Architect', role: 'Solution design',
+                    competencies: ['System design', 'Risk assessment'],
                     mcp: ['Notion'],
-                    tools: ['Диаграммы'],
+                    tools: ['Diagrams'],
                     skills: ['design-review'],
-                    used: ['Системный дизайн', 'design-review'],
+                    used: ['System design', 'design-review'],
                 },
                 designer: {
-                    emoji: '🎨', name: 'Дизайнер', role: 'UI/UX для правки',
-                    competencies: ['Интерфейсы', 'Доступность'],
+                    emoji: '🎨', name: 'Designer', role: 'UI/UX for the change',
+                    competencies: ['Interfaces', 'Accessibility'],
                     mcp: ['Figma'],
                     tools: ['Figma'],
                     skills: ['ui-review'],
                     used: [],
                 },
                 developer: {
-                    emoji: '🛠️', name: 'Разработчик', role: 'Реализация правки (сейчас в работе)',
-                    competencies: ['Node.js', 'Отладка гонок', 'Автотесты'],
+                    emoji: '🛠️', name: 'Developer', role: 'Implementing the change (in progress)',
+                    competencies: ['Node.js', 'Race debugging', 'Automated tests'],
                     mcp: ['GitHub', 'Context7'],
                     tools: ['VS Code', 'node:sqlite'],
                     skills: ['bugfix', 'test-writing'],
-                    used: ['Node.js', 'Отладка гонок', 'Автотесты', 'GitHub', 'node:sqlite', 'bugfix', 'test-writing'],
+                    used: ['Node.js', 'Race debugging', 'Automated tests', 'GitHub', 'node:sqlite', 'bugfix', 'test-writing'],
                 },
                 tester: {
-                    emoji: '🧪', name: 'Тестировщик', role: 'Следующий: прогон регрессии',
-                    competencies: ['Регрессионное тестирование', 'Граничные случаи'],
+                    emoji: '🧪', name: 'Tester', role: 'Next up: regression run',
+                    competencies: ['Regression testing', 'Edge cases'],
                     mcp: ['GitHub Actions'],
                     tools: ['Playwright'],
                     skills: ['regression-suite'],
-                    used: ['Регрессионное тестирование', 'GitHub Actions', 'Playwright', 'regression-suite'],
+                    used: ['Regression testing', 'GitHub Actions', 'Playwright', 'regression-suite'],
                 },
                 writer: {
-                    emoji: '📝', name: 'Технический писатель', role: 'Описание изменений',
-                    competencies: ['Changelog', 'Документация'],
+                    emoji: '📝', name: 'Technical writer', role: 'Documenting changes',
+                    competencies: ['Changelog', 'Documentation'],
                     mcp: ['Notion'],
                     tools: ['Markdown'],
                     skills: ['release-notes'],
                     used: [],
                 },
                 reviewer: {
-                    emoji: '✅', name: 'Проверяющий', role: 'Финальная приёмка',
-                    competencies: ['Код-ревью', 'Оценка соответствия ТЗ'],
+                    emoji: '✅', name: 'Reviewer', role: 'Final acceptance',
+                    competencies: ['Code review', 'Spec compliance check'],
                     mcp: ['GitHub'],
                     tools: ['code-review'],
                     skills: ['final-approval'],
@@ -429,7 +410,7 @@
                         </div>
                     </div>
                     <div class="worker-tooltip__section">
-                        <p class="worker-tooltip__label">Компетенции</p>
+                        <p class="worker-tooltip__label">Competencies</p>
                         <div class="worker-tooltip__tags">${renderWorkerTags(info.competencies, used)}</div>
                     </div>
                     <div class="worker-tooltip__section">
@@ -437,14 +418,14 @@
                         <div class="worker-tooltip__tags">${renderWorkerTags(info.mcp, used)}</div>
                     </div>
                     <div class="worker-tooltip__section">
-                        <p class="worker-tooltip__label">Инструменты</p>
+                        <p class="worker-tooltip__label">Tools</p>
                         <div class="worker-tooltip__tags">${renderWorkerTags(info.tools, used)}</div>
                     </div>
                     <div class="worker-tooltip__section">
                         <p class="worker-tooltip__label">Skills</p>
                         <div class="worker-tooltip__tags">${renderWorkerTags(info.skills, used)}</div>
                     </div>
-                    <p class="worker-tooltip__hint">Подсвечено — задействовано в этой задаче</p>
+                    <p class="worker-tooltip__hint">Highlighted — used in this task</p>
                 `;
             }
 
@@ -526,7 +507,6 @@
                 flow: document.getElementById('flowView'),
                 kanban: document.getElementById('kanbanView'),
                 book: document.getElementById('bookView'),
-                hermes: document.getElementById('hermesView'),
                 chat: document.getElementById('chatView'),
             };
 
@@ -551,11 +531,11 @@
                 return String(window);
             }
             function updateContextGauge(percent, window) {
-                if (percent == null) { chatGaugeContext.textContent = 'Контекст: —'; return; }
+                if (percent == null) { chatGaugeContext.textContent = 'Context: —'; return; }
                 const windowLabel = formatContextWindow(window);
                 chatGaugeContext.textContent = windowLabel
-                    ? `Контекст: ${percent}% из ${windowLabel}`
-                    : `Контекст: ${percent}%`;
+                    ? `Context: ${percent}% of ${windowLabel}`
+                    : `Context: ${percent}%`;
             }
             // окно контекста зависит только от модели и известно ещё до первого ответа
             // (см. contextWindowFor в server.js) — используем это, чтобы датчик показывал
@@ -596,8 +576,8 @@
                 }
 
                 chatInput.placeholder = mode === 'Action'
-                    ? 'Опишите действие...'
-                    : 'Напишите сообщение...';
+                    ? 'Describe the action...'
+                    : 'Write a message...';
             }
 
             chatMode.addEventListener('click', (e) => {
@@ -618,7 +598,7 @@
             setMode('Action');
 
             // ---------- панель Sessions на странице Chat ----------
-            // разметку списка строит сервер (SYSTEM/templates/chat-sessions.eta,
+            // разметку списка строит сервер (PROJECTS/Chat/chat-sessions.eta,
             // роут /api/fragment/chat-sessions), htmx подменяет #sessionList целиком
             // по hx-swap-oob — значит сам узел периодически заменяется новым, и
             // держать на него константную ссылку нельзя: обработчик htmx:oobAfterSwap
@@ -631,7 +611,7 @@
             // ---------- панель наблюдения на вкладке Home ----------
 
             // счётчики и списки панели рисует сервер (шаблон
-            // SYSTEM/templates/home-observation.eta, роут /api/fragment/home-observation),
+            // PROJECTS/Home/home-observation.eta, роут /api/fragment/home-observation),
             // htmx подменяет их по hx-swap-oob. Здесь остаётся только строка
             // провайдера — она известна одному браузеру
             const obsConnectionText = document.getElementById('obsConnectionText');
@@ -678,6 +658,31 @@
                 applyRunningIndicator();
             });
 
+            // navigator.clipboard недоступен вне secure context (например, при
+            // заходе на сервер по LAN-адресу без https) — тогда пробуем старый
+            // execCommand('copy') через временный textarea
+            function copySessionId(id) {
+                if (navigator.clipboard && window.isSecureContext) {
+                    return navigator.clipboard.writeText(id).catch(() => copySessionIdFallback(id));
+                }
+                return copySessionIdFallback(id);
+            }
+
+            function copySessionIdFallback(id) {
+                const textarea = document.createElement('textarea');
+                textarea.value = id;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                try {
+                    document.execCommand('copy');
+                } finally {
+                    textarea.remove();
+                }
+                return Promise.resolve();
+            }
+
             // клики по строкам сессии вешаем на неизменяемую панель, а не на сам
             // #sessionList — тот периодически подменяется htmx целиком, и слушатель
             // на нём пережил бы только первую отрисовку
@@ -691,11 +696,12 @@
 
                 const copy = e.target.closest('.session-copy');
                 if (copy) {
-                    navigator.clipboard.writeText(copy.dataset.copyId);
-                    copy.classList.remove('session-copy--copied');
-                    void copy.offsetWidth; // рестарт анимации при повторном клике подряд
-                    copy.classList.add('session-copy--copied');
-                    setTimeout(() => copy.classList.remove('session-copy--copied'), 1000);
+                    copySessionId(copy.dataset.copyId).then(() => {
+                        copy.classList.remove('session-copy--copied');
+                        void copy.offsetWidth; // рестарт анимации при повторном клике подряд
+                        copy.classList.add('session-copy--copied');
+                        setTimeout(() => copy.classList.remove('session-copy--copied'), 1000);
+                    });
                     return; // клик по копированию не должен открывать сессию
                 }
 
@@ -718,10 +724,10 @@
             function renderObsConnection() {
                 const state = connections.get('claude');
                 if (state?.note) {
-                    obsConnectionText.textContent = `${state.note} · модель ${state.model}`;
+                    obsConnectionText.textContent = `${state.note} · model ${state.model}`;
                     obsConnectionText.classList.remove('obs-connection__text--off');
                 } else {
-                    obsConnectionText.textContent = 'Не подключено · подключите провайдера в настройках';
+                    obsConnectionText.textContent = 'Not connected · connect a provider in settings';
                     obsConnectionText.classList.add('obs-connection__text--off');
                 }
             }
@@ -767,7 +773,7 @@
                     <span class="session-item__thumb" aria-hidden="true"></span>
                     <span class="session-item__body">
                         <span class="session-item__title">New</span>
-                        <span class="session-item__meta">черновик</span>
+                        <span class="session-item__meta">draft</span>
                     </span>
                 `;
                 item.append(btn);
@@ -817,11 +823,11 @@
             // иначе следующий вопрос ушёл бы в --resume несуществующей сессии
             async function removeSession(id) {
                 if (!id) return;
-                if (!(await confirmModal('Удалить эту сессию из базы? Действие необратимо.', { title: 'Удалить сессию' }))) return;
+                if (!(await confirmModal('Delete this session from the database? This cannot be undone.', { title: 'Delete session' }))) return;
 
                 const { ok, error } = await api('/api/sessions/delete', { id });
                 if (!ok) {
-                    alert(error || 'Не удалось удалить сессию');
+                    alert(error || 'Failed to delete the session');
                     await loadSessions();
                     return;
                 }
@@ -853,7 +859,7 @@
 
             // обнулить базу сессий: чистим список и текущую переписку
             document.getElementById('sessionReset').addEventListener('click', async () => {
-                if (!(await confirmModal('Удалить все сессии из базы? Действие необратимо.', { title: 'Удалить все сессии' }))) return;
+                if (!(await confirmModal('Delete all sessions from the database? This cannot be undone.', { title: 'Delete all sessions' }))) return;
 
                 await api('/api/sessions/reset');
                 for (const key of Object.keys(localStorage)) {
@@ -907,12 +913,33 @@
                 document.getElementById('chatButton')?.classList.toggle('icon-button--running', runningCount > 0);
                 const chatButtonBadge = document.getElementById('chatButtonBadge');
                 if (chatButtonBadge) chatButtonBadge.textContent = runningCount;
+                syncPendingWithIndicator();
+            }
+
+            // три точки в ленте живут только вместе с оранжевым кругом этой же сессии
+            // в списке слева — круг и есть единственный источник истины для точек:
+            // горит круг у открытой сессии — точки есть (если их ещё нет — создаются
+            // прямо здесь, не дожидаясь подключения к потоку), погас — прячутся.
+            // Прятать, а не удалять: строку ожидания убирает сам поток
+            // (sendToClaude/attachSession), здесь только её наличие и видимость
+            function syncPendingWithIndicator() {
+                const viewedId = chatSessionId || PENDING_SESSION_ID;
+                let circleShown = false;
+                for (const btn of sessionList.querySelectorAll('.session-item--running')) {
+                    const id = btn.dataset.sessionId || (btn.classList.contains('session-item--placeholder') ? PENDING_SESSION_ID : null);
+                    if (id === viewedId) { circleShown = true; break; }
+                }
+                if (circleShown && !chatList.querySelector('.chat__message--pending')) addPendingStatus();
+                for (const el of chatList.querySelectorAll('.chat__message--pending')) el.hidden = !circleShown;
             }
 
             function setRunningSessionId(id) {
                 runningSessionId = id;
                 applyRunningIndicator();
                 syncComposerBusy();
+                // сигнал остальным страницам (слушает PROJECTS/Flow/flow-session-sync.js):
+                // по этой сессии начался ход — можно подключиться к её живому потоку
+                document.body.dispatchEvent(new CustomEvent('session-running-changed', { detail: { id } }));
             }
 
             // Stop-кнопка нужна только той сессии, что сейчас реально выполняется —
@@ -946,6 +973,12 @@
                     restoreServerConnection('claude'); // сервер мог быть перезапущен — вернём ему окружение
                 }
 
+                const savedCodex = loadProviderState('codex');
+                if (savedCodex?.installId) {
+                    connections.set('codex', savedCodex);
+                    restoreServerConnection('codex');
+                }
+
                 const savedOpenCode = loadOpenCodeState();
                 if (savedOpenCode?.installId) {
                     connections.set('opencode', savedOpenCode);
@@ -961,7 +994,7 @@
                 // (кнопка chatButton) сразу показывал её, а не пустой экран. Если страницу
                 // перезагрузили посреди работы той же сессии (например, dev-автообновление) —
                 // ещё и переключаемся на вкладку сами, чтобы не терять индикатор в процессе
-                const saved = savedClaude?.sessionId ? savedClaude : savedOpenCode;
+                const saved = savedClaude?.sessionId ? savedClaude : (savedCodex?.sessionId ? savedCodex : savedOpenCode);
                 const found = saved?.sessionId && sessions.find((s) => s.id === saved.sessionId);
                 if (found) {
                     await openSession(found.id, found.running);
@@ -1167,8 +1200,17 @@
                 await readNdjson(res, onEvent);
             }
 
-            // строка ожидания с тремя точками — она же показывает текущий шаг
+            // строка ожидания с тремя точками — она же показывает текущий шаг.
+            // Если строка уже есть (её мог завести syncPendingWithIndicator по
+            // оранжевому кругу раньше, чем подключился поток), переиспользуем её,
+            // а не заводим вторую: переносим в конец ленты и показываем
             function addPendingStatus() {
+                const existing = chatList.querySelector('.chat__message--pending');
+                if (existing) {
+                    existing.hidden = false;
+                    chatList.append(existing);
+                    return existing;
+                }
                 const status = addMessage('', 'assistant');
                 status.classList.add('chat__message--pending');
                 status.innerHTML = '<span class="chat__typing"><span></span><span></span><span></span></span>';
@@ -1248,7 +1290,7 @@
                 const provider = PROVIDERS.find((p) => p.id === providerId);
                 const claude = connections.get(providerId);
                 if (!claude) {
-                    addMessage(`${provider ? provider.name : 'Провайдер'} не подключён. Откройте Settings и нажмите «Подключить».`, 'error');
+                    addMessage(`${provider ? provider.name : 'Provider'} is not connected. Open Settings and click "Connect".`, 'error');
                     return;
                 }
 
@@ -1295,7 +1337,7 @@
                     // формулировка ошибки идёт от сервера ("Claude не подключён" /
                     // "OpenCode не подключён" и т.п.) — ловим по общему признаку,
                     // а не по конкретному имени провайдера
-                    if (event.type === 'error' && typeof event.error === 'string' && event.error.includes('не подключён')) {
+                    if (event.type === 'error' && typeof event.error === 'string' && event.error.includes('is not connected')) {
                         notConnected = true; // повторим после восстановления окружения
                         return;
                     }
@@ -1331,11 +1373,11 @@
                         const restored = await restoreServerConnection(providerId);
                         if (restored) await ask();
                         if (!restored || notConnected) {
-                            addMessage(`${provider ? provider.name : 'Провайдер'} не подключён. Откройте Settings и подключите заново.`, 'error');
+                            addMessage(`${provider ? provider.name : 'Provider'} is not connected. Open Settings and connect again.`, 'error');
                         }
                     }
                 } catch (err) {
-                    addMessage(`Не удалось получить ответ: ${err.message}`, 'error');
+                    addMessage(`Failed to get a response: ${err.message}`, 'error');
                 } finally {
                     window.__holdReload?.(false);
                     setRunningSessionId(null);

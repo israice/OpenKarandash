@@ -1,75 +1,75 @@
 # 🏠 Home
 
-**Главный экран Mission Control: живая сводка по сессиям и точка входа во все остальные разделы.**
+**The main Mission Control screen: a live summary of sessions and the entry point to every other section.**
 
-## 🧭 Что это
+## 🧭 What this is
 
-Home — вкладка, которая открывается первой. Её кнопка в тулбаре — `homeButton` (`data-view="home"`), и она единственная приходит со страницы уже нажатой: `aria-pressed="true"`. Сама разметка живёт в `index.html` в блоке `<main class="view view--home" id="defaultView">`, а в `App.VIEWS` этот элемент записан под ключом `home`.
+Home is the tab that opens first. Its toolbar button is `homeButton` (`data-view="home"`), and it is the only one that arrives from the page already pressed: `aria-pressed="true"`. The markup itself lives in `index.html` inside the `<main class="view view--home" id="defaultView">` block, and in `App.VIEWS` that element is registered under the key `home`.
 
-Экран собран так, чтобы всё было видно сразу и без прокрутки: `.view--home` занимает ровно `100vh` с `overflow: hidden`, а если сессий много — скроллятся только списки внутри карточек.
+The screen is built so that everything is visible at once without scrolling: `.view--home` occupies exactly `100vh` with `overflow: hidden`, and when there are many sessions only the lists inside the cards scroll.
 
-## 📊 Что на экране
+## 📊 What is on screen
 
-**Три плитки статистики** (`.dashboard`, зафиксирована по центру под тулбаром):
+**Three statistics tiles** (`.dashboard`, pinned in the centre under the toolbar):
 
-- **`runningCount`** — сколько сессий работает прямо сейчас; считается по строкам `.session-item--running` в боковом списке.
-- **`totalCount`** — сессий всего.
-- **`queuedCount`** — сколько стоит в очереди; число приходит с сервера вместе со списком сессий.
+- **`runningCount`** — how many sessions are running right now; counted from the `.session-item--running` rows in the side list.
+- **`totalCount`** — sessions in total.
+- **`queuedCount`** — how many are queued; the number comes from the server together with the session list.
 
-**Четыре карточки наблюдения** (`.observation`, сетка 2×2):
+**Four observation cards** (`.observation`, a 2×2 grid):
 
-| Карточка | Что показывает |
+| Card | What it shows |
 |---|---|
-| **Активность** | `obsMessages` — сумма сообщений по всем сессиям, `obsToday` — сессий за последние 24 часа, `obsLastActive` — когда была последняя активность («только что», «12 мин назад», «3 ч назад» или дата) |
-| **Providers** | `obsConnectionText`: либо «Не подключено · подключите провайдера в настройках», либо заметка подключения и имя модели |
-| **Активные сессии** | `obsRunningList` — только выполняющиеся; пусто → «Сейчас ничего не выполняется» |
-| **Последние сессии** | `obsRecentList` — шесть свежих; пусто → «Сессий пока нет» |
+| **Activity** | `obsMessages` — the total message count across all sessions, `obsToday` — sessions in the last 24 hours, `obsLastActive` — when the last activity happened ("just now", "12 min ago", "3 h ago" or a date) |
+| **Providers** | `obsConnectionText`: either "Not connected · connect a provider in settings", or the connection note and the model name |
+| **Active sessions** | `obsRunningList` — only the running ones; empty → "Nothing is running right now" |
+| **Recent sessions** | `obsRecentList` — the six latest; empty → "No sessions yet" |
 
-Строки в обоих списках кликабельны: нажатие переключает интерфейс на вкладку PROJECTS и сразу открывает выбранную сессию.
+Rows in both lists are clickable: a click switches the interface to the PROJECTS tab and immediately opens the selected session.
 
-## 🗺️ Разделы Mission Control
+## 🗺️ Mission Control sections
 
-| Раздел | Что делает | README |
+| Section | What it does | README |
 |---|---|---|
-| 🕸️ **Graph** | Карта проекта: файлы, функции и связи между ними | [../Graph/README.md](../Graph/README.md) |
-| 🌊 **Flow** | Полотно с узлами и стрелками — схема потока выполнения | [../Flow/README.md](../Flow/README.md) |
-| 🗂️ **Kanban** | Доска задач в колонках | [../Kanban/README.md](../Kanban/README.md) |
-| 💬 **PROJECTS** | Чат с ассистентом и список сессий | [../PROJECTS/README.md](../PROJECTS/README.md) |
-| 📚 **Book** | Карточка на каждый раздел интерфейса, ведёт на его README | [../Book/README.md](../Book/README.md) |
-| ✏️ **Karandash** | Режим комментариев к элементам интерфейса | [../Karandash/README.md](../Karandash/README.md) |
-| ⚙️ **Settings** | Настройки приложения и провайдеров | [../Settings/README.md](../Settings/README.md) |
+| 🕸️ **Graph** | Project map: files, functions and the links between them | [../Graph/README.md](../Graph/README.md) |
+| 🌊 **Flow** | A canvas of nodes and arrows — the execution flow diagram | [../Flow/README.md](../Flow/README.md) |
+| 🗂️ **Kanban** | Task board in columns | [../Kanban/README.md](../Kanban/README.md) |
+| 💬 **PROJECTS** | Chat with the assistant and the session list | [../PROJECTS/README.md](../PROJECTS/README.md) |
+| 📚 **Book** | A card for every interface section, linking to its README | [../Book/README.md](../Book/README.md) |
+| ✏️ **Karandash** | Commenting mode for interface elements | [../Karandash/README.md](../Karandash/README.md) |
+| ⚙️ **Settings** | Application and provider settings | [../Settings/README.md](../Settings/README.md) |
 
-## 🧰 Панель инструментов
+## 🧰 The toolbar
 
-Тулбар вверху слева (`.toolbar` с `aria-label="Действия"`) держит шесть кнопок вида — Graph, Flow, Kanban, PROJECTS, Book, Home. Кнопка **Karandash** добавляет себя сама: `PROJECTS/Karandash/karandash.js` создаёт отдельный `.toolbar` и вставляет его перед блоком `#settings`. Справа — шестерёнка `settingsButton`.
+The toolbar at the top left (`.toolbar` with `aria-label="Actions"`) holds six view buttons — Graph, Flow, Kanban, PROJECTS, Book, Home. The **Karandash** button adds itself: `PROJECTS/Karandash/karandash.js` creates a separate `.toolbar` and inserts it before the `#settings` block. On the right is the `settingsButton` gear.
 
-- **Перетаскивание кнопок.** Долгое нажатие на кнопке — ровно 2 секунды (`LONG_PRESS_MS = 2000`) — включает режим перестановки: тулбар получает класс `toolbar--reorder`, и кнопку можно тащить между соседями. Сдвиг курсора больше чем на 8 пикселей до срабатывания таймера отменяет вход в режим, а клик после перетаскивания не переключает вкладку.
-- **Выход — `Esc`.** В этот момент новый порядок сохраняется в `localStorage` под ключом `toolbarOrder` и восстанавливается при следующей загрузке страницы. Порядок хранится отдельно для каждого тулбара — ключом служит его `aria-label`.
-- **Кнопка версии.** В правом нижнем углу висит `appVersionButton` — зелёная метка вроде `v0.0.6`, видимая на всех вкладках. Сервер подставляет в неё `{{APP_VERSION}}`: это последняя строка блока `DEV LOG` из `VERSION.md`, единственный источник истины о версии. Клик открывает модальное окно `versionModal` со всей историей (`{{VERSION_LIST}}`, новые сверху). Строки проходят через `escapeHtml` в `server.js` — иначе `<` из сообщения коммита порвал бы страницу.
+- **Dragging buttons.** A long press on a button — exactly 2 seconds (`LONG_PRESS_MS = 2000`) — enables reorder mode: the toolbar gets the `toolbar--reorder` class and the button can be dragged between its neighbours. Moving the cursor more than 8 pixels before the timer fires cancels entering the mode, and a click after a drag does not switch tabs.
+- **Exit with `Esc`.** At that moment the new order is saved to `localStorage` under the key `toolbarOrder` and restored on the next page load. The order is stored separately for each toolbar — its `aria-label` serves as the key.
+- **The version button.** In the bottom right corner sits `appVersionButton` — a green badge such as `v0.0.6`, visible on every tab. The server substitutes `{{APP_VERSION}}` into it: that is the last line of the `DEV LOG` block in `VERSION.md`, the single source of truth about the version. A click opens the `versionModal` dialog with the full history (`{{VERSION_LIST}}`, newest first). The lines pass through `escapeHtml` in `server.js` — otherwise a `<` from a commit message would break the page.
 
-## ⚙️ Как это устроено
+## ⚙️ How it works
 
-- **Одна страница, никаких перезагрузок.** Все виды лежат в `index.html` рядом; `MissionTabs.show(name)` из `tabs.js` пробегает по `App.VIEWS`, оставляет видимым один элемент и расставляет `aria-pressed` на кнопках тулбара. Home при показе не требует ничего дополнительного — в отличие от Graph и Flow, которым нужен пересчёт полотна.
-- **Данных ради Home никто не запрашивает отдельно.** Вся сводка считается из того же ответа `/api/sessions`, который наполняет боковой список сессий.
-- **Сводка живая.** `setInterval(loadSessions, 8000)` обновляет и список, и панель наблюдения раз в 8 секунд, пока вкладка открыта.
-- **Клиент разбит на независимые файлы с `defer`.** Home не зависит от `PROJECTS/Graph/graph.js`, `PROJECTS/Flow/flow.js` или `PROJECTS/Kanban/kanban.js`: падение одного файла не гасит остальной интерфейс.
+- **One page, no reloads.** All views sit side by side in `index.html`; `MissionTabs.show(name)` from `tabs.js` walks through `App.VIEWS`, leaves one element visible and sets `aria-pressed` on the toolbar buttons. Home needs nothing extra when shown — unlike Graph and Flow, which have to recompute their canvas.
+- **The observation panel is rendered by the server.** Its markup is not built in the browser: `PROJECTS/Home/home-server.js` renders `home-observation.eta` (next to it) and htmx swaps that piece of the page in through `/api/fragment/home-observation`. Both files live in this folder — `server.js` only wires the route table in. The Providers card is the exception: its state exists only in the browser.
+- **The summary is live.** `setInterval(loadSessions, 8000)` refreshes both the list and the observation panel every 8 seconds while the tab is open.
+- **The client is split into independent `defer` files.** Home does not depend on `PROJECTS/Graph/graph.js`, `PROJECTS/Flow/flow.js` or `PROJECTS/Kanban/kanban.js`: one file failing does not take down the rest of the interface.
 
-## ✅ Что уже работает
+## ✅ What already works
 
-- Счётчики работающих, всех и стоящих в очереди сессий.
-- Карточки активности, состояния провайдера, активных и последних сессий.
-- Переход из списка прямо в нужную сессию чата.
-- Автообновление каждые 8 секунд.
-- Перестановка кнопок тулбара с сохранением порядка.
-- История версий по клику на метку версии.
+- Counters for running, total and queued sessions.
+- Cards for activity, provider state, active and recent sessions.
+- Jumping from the list straight into the right chat session.
+- Auto-refresh every 8 seconds.
+- Reordering toolbar buttons with the order preserved.
+- Version history on a click of the version badge.
 
-## 🚧 Что в планах
+## 🚧 Planned
 
-- **Плитки статистики.** В стилях уже лежит заготовка `.stat-tile--placeholder` — пунктирная рамка под будущие показатели; в разметке Home она пока не используется.
-- **Providers.** Карточка сейчас показывает только состояние подключения `claude` — без разбивки по нескольким провайдерам.
-- **Меню шестерёнки.** Два пункта в `#settingsMenu` так и называются «Заглушка_2»; рабочий пока один — «Settings».
-- **Разделы боковых меню.** Клик по пункту `.side-nav__item` пока только пишет `Раздел:` в консоль.
+- **Statistics tiles.** The styles already contain a `.stat-tile--placeholder` stub — a dashed frame for future metrics; it is not used in the Home markup yet.
+- **Providers.** The card currently shows only the `claude` connection state — with no breakdown across several providers.
+- **The gear menu.** Two entries in `#settingsMenu` are still literally called "Placeholder_2"; only one works so far — "Settings".
+- **Side menu sections.** Clicking a `.side-nav__item` entry so far only logs `Section:` to the console.
 
 ---
 
-Проект распространяется по лицензии **MIT**.
+This project is distributed under the **MIT** license.

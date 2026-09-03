@@ -28,12 +28,12 @@ if (args[0] === '--kind') kind = args.splice(0, 2)[1];
 const query = args.join(' ');
 
 if (!query) {
-    console.error('Использование: node PROJECTS/Graph/search.js [--kind code|note|session] "запрос"');
+    console.error('Usage: node PROJECTS/Graph/search.js [--kind code|note|session] "query"');
     process.exit(2);
 }
 
 if (!fs.existsSync(INDEX_FILE)) {
-    console.error('Индекс не собран. Запустите сервер: node server.js');
+    console.error('Index not built. Start the server: node server.js');
     process.exit(1);
 }
 
@@ -46,7 +46,7 @@ const rows = db.prepare(`
 `).all(...(kind ? [match, kind] : [match]));
 
 if (!rows.length) {
-    console.log('Ничего не найдено.');
+    console.log('Nothing found.');
     process.exit(0);
 }
 

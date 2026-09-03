@@ -1,4 +1,6 @@
-// EasyMDE для файловых панелей: чата (#chatFileEditorText) и вкладки Book (#bookFileEditorText).
+// EasyMDE для файловых панелей. Свою панель чата подключает этот файл сам;
+// чужие вкладки зовут MdEditors.attach(textarea) из своей папки — так вкладка
+// Book (PROJECTS/Book/book-tab.js) держит всё своё у себя.
 (function () {
     const nativeValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
     const nativeReadOnly = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'readOnly');
@@ -32,6 +34,7 @@
 
     document.addEventListener('DOMContentLoaded', () => {
         attach(document.getElementById('chatFileEditorText'));
-        attach(document.getElementById('bookFileEditorText'));
     });
+
+    window.MdEditors = { attach };
 })();

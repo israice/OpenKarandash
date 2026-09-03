@@ -1,230 +1,265 @@
-# Hello World
+# OpenKarandash
 
-Статическая страница «Hello, World!» и минимальный сервер для её раздачи.
+**A local orchestrator for agentic CLIs: a Node server plus a web interface.**
 
-## Требования
+One page in the browser from which you talk to the Claude Code CLI installed on your machine, watch
+every step it takes, keep the whole history, and see the project as a live map. No cloud, no account
+of its own — the server only runs the CLI that is already yours, and answers requests from this
+machine only.
 
-Node.js (проверено на v22). Зависимостей и `npm install` не требуется — сервер использует только встроенные модули.
+What is inside:
 
-## Запуск
+| Tab | What it is for |
+| --- | --- |
+| **Home** | A live summary: how many sessions are running, activity, provider state |
+| **PROJECTS** (Chat) | The conversation with the assistant: a stream of steps, session history, `Action` / `Chat` modes |
+| **Graph** | A map of the project — files, sections, functions, routes and session memory — plus full-text search |
+| **Flow** | An infinite canvas: the task as a diagram of nodes and arrows |
+| **Kanban** | A task board (a skeleton for now: the columns exist, the cards do not) |
+| **Book** | A card for every section, linking to its README |
+| **Karandash** | Point at an element on the page, describe what is wrong — the assistant goes and fixes the sources |
+| **Settings** | Finding and connecting a CLI, the model, the effort, the subscription limits |
+
+Besides the Claude CLI the server can drive **OpenCode** — the same routes, another connector
+in the `AGENTS` table.
+
+## Requirements
+
+Node.js (tested on v22) and an installed Claude Code CLI.
+
+There are two dependencies — `eta` (templates for the server fragments) and `htmx.org` (the client
+half of the same fragments), so after cloning run:
 
 ```powershell
-cd C:\0_PROJECTS\noname
+npm install
+```
+
+## Running
+
+```powershell
+cd C:\0_PROJECTS\OpenKarandash
 node server.js
 ```
 
-При первом запуске сервер создаёт в корне проекта `.env` с портом 3001 и на нём же поднимается:
+On the first run the server creates a `.env` at the project root with port 3001 and starts on it:
 
 ```
-Создан .env с портом 3001 — порт и секреты правьте в нём
-Сервер запущен: http://localhost:3001
+Created .env with port 3001 — edit the port and secrets there
+Server started: http://localhost:3001
 ```
 
-## Свой порт и секреты
+## Your own port and secrets
 
-`.env` — единственное место, где живут порт и любые секреты. В git файл не попадает.
+`.env` is the only place where the port and any secrets live. The file is not tracked by git.
 
 ```
 PORT=8123
 
-# Путь к CLI Claude, если его нет в PATH
+# Path to the Claude CLI, if it is not in PATH
 # CLAUDE_BIN=
-# Внешний Obsidian-vault вместо папки vault/ внутри проекта
+# External Obsidian vault instead of the vault/ folder inside the project
 # OBSIDIAN_VAULT=
 ```
 
-Порт берётся строго из `.env`, соседние сервер не подбирает: вторая копия на той же папке
-дерётся с первой за `DATA/.sessions.db` и `DATA/.index.db` («database is locked») и вслепую
-перезаписывает `vault/`. Если порт занят, сервер скажет об этом и завершится — скорее всего,
-он уже запущен по этому адресу.
+The port is taken strictly from `.env`; the server does not fall back to neighbouring ones: a second
+copy on the same folder would fight the first over `DATA/.sessions.db` and `DATA/.index.db`
+("database is locked") and blindly overwrite `vault/`. If the port is busy, the server says so and
+exits — most likely it is already running at that address.
 
-Переменная окружения перекрывает `.env` (этим пользуется смоук, поднимая сервер на свободном
-порту), но для обычной работы менять окружение не нужно.
+An environment variable overrides `.env` (the smoke test uses this to start the server on a free
+port), but for normal work there is no need to touch the environment.
 
-## Автообновление
+## Auto-reload
 
-Сервер следит за файлами проекта. Сохраните `index.html` (или любой другой файл) — открытая вкладка перезагрузится сама, обновлять вручную не нужно.
+The server watches the project files. Save `index.html` (or any other file) and the open tab reloads by itself — no manual refresh needed.
 
-Работает так: в отдаваемый HTML на лету подмешивается небольшой скрипт, который держит SSE-соединение с `/__reload`. Сами файлы проекта при этом не меняются.
+It works like this: a small script is mixed into the served HTML on the fly, and it keeps an SSE connection to `/__reload`. The project files themselves are not modified.
 
-Пока идёт запрос к Claude, автообновление откладывается — и в браузере, и на сервере. Claude из чата правит файлы проекта, в том числе `server.js`, а перезагрузка вкладки оборвала бы чтение потока, перезапуск сервера — сам процесс CLI. Оба обновления срабатывают сразу после того, как запрос закончен: дочерний процесс сообщает родительскому о занятости через IPC, страница — через `window.__holdReload`.
+While a request to Claude is in flight, auto-reload is deferred — both in the browser and on the server. Claude from the chat edits project files, `server.js` included, and reloading the tab would break reading the stream while restarting the server would break the CLI process itself. Both updates fire as soon as the request is finished: the child process tells the parent it is busy over IPC, and the page does the same through `window.__holdReload`.
 
-Если вкладку всё же закрыли или обновили вручную посреди работы, CLI не останавливается: запрос доводится до конца, а вопрос, шаги и ответ ложатся в базу.
+If the tab was closed or refreshed by hand mid-work anyway, the CLI does not stop: the request is carried to completion, and the question, the steps and the answer go into the database.
 
-Больше того, обновлённая страница **подключается к идущей работе**: `/api/sessions` помечает такие сессии полем `running`, а `POST /api/sessions/attach` с id сессии отдаёт поток её оставшихся событий — тех же, что и `/api/claude/ask`. Лента продолжает наполняться вживую с того места, где вы её оставили. Если сессия уже закончила, ответ приходит обычным JSON (`{"ok":true,"running":false}`), и страница просто показывает переписку из базы.
+More than that, the refreshed page **reattaches to the work in progress**: `/api/sessions` marks such sessions with a `running` field, and `POST /api/sessions/attach` with a session id returns the stream of its remaining events — the same ones `/api/claude/ask` sends. The feed keeps filling live from where you left it. If the session has already finished, the answer comes back as ordinary JSON (`{"ok":true,"running":false}`) and the page simply shows the conversation from the database.
 
-Правки самого `server.js` тоже применяются без ручного перезапуска: сервер работает в дочернем процессе, родительский следит за файлом и поднимает дочерний заново, а вкладка перезагружается после восстановления связи. В консоли это видно так:
+Edits to `server.js` itself are also applied without a manual restart: the server runs in a child process, the parent watches the file and brings the child back up, and the tab reloads once the connection is restored. In the console it looks like this:
 
 ```
-server.js изменён — перезапускаю сервер...
-Сервер запущен: http://localhost:3001
+server file changed — restarting the server...
+Server started: http://localhost:3001
 ```
 
-Отключить автообновление (тогда и перезапуск, и обновление страницы — вручную):
+To disable auto-reload (then both the restart and the page refresh are manual):
 
 ```powershell
 $env:NO_RELOAD=1
 node server.js
 ```
 
-## Если страница не обновляется сама
+## If the page does not refresh by itself
 
-- В адресной строке должен быть `http://localhost:...`, а не `file:///C:/...`. При открытии файла двойным кликом сервер не участвует.
-- Не держите много вкладок с одной и той же страницей: каждая занимает постоянное соединение, а браузер разрешает не больше шести на хост — седьмая вкладка просто не загрузится.
+- The address bar must show `http://localhost:...`, not `file:///C:/...`. When a file is opened by double-clicking, the server is not involved.
+- Do not keep many tabs with the same page open: each one holds a persistent connection, and the browser allows no more than six per host — the seventh tab simply will not load.
 
-## Коннектор Claude CLI
+## The Claude CLI connector
 
-В окне Settings у провайдера Claude кнопка «Подключить» работает по-настоящему: сервер ищет Claude CLI сразу в двух окружениях — в Windows и в WSL.
+In the Settings dialog, the "Connect" button on the Claude provider does real work: the server looks for the Claude CLI in two environments at once — in Windows and in WSL.
 
-- Найдено одно окружение — подключается сразу.
-- Найдено оба — открывается окно выбора, клик по строке подключает.
-- Не найдено — окно с подсказкой, что делать.
+- One environment found — it connects immediately.
+- Both found — a selection dialog opens, and a click on a row connects.
+- None found — a dialog with a hint about what to do.
 
-После подключения в строке провайдера видно окружение и версию CLI, а рядом список моделей. Сообщения из вкладки Chat уходят в выбранный CLI и возвращаются ответом в ленту; диалог продолжается в одной сессии, поэтому модель помнит предыдущие сообщения.
+After connecting, the provider row shows the environment and the CLI version, with the model list next to it. Messages from the Chat tab go to the chosen CLI and come back as an answer in the feed; the conversation continues in one session, so the model remembers the previous messages.
 
-Что нужно: установленный Claude Code CLI. Если он лежит не в `PATH`, укажите путь при запуске:
+What you need: an installed Claude Code CLI. If it is not in `PATH`, give the path at startup:
 
 ```powershell
 $env:CLAUDE_BIN="C:\Users\user\.local\bin\claude.exe"
 node server.js
 ```
 
-Как сервер ищет CLI:
+How the server looks for the CLI:
 
-| Сервер запущен в | Windows-установка | WSL-установка |
+| Server runs in | Windows installation | WSL installation |
 | --- | --- | --- |
 | Windows | `claude` | `wsl.exe bash -lc "claude ..."` |
 | WSL | `claude.exe` | `claude` |
 
-Эндпоинты (все `POST`, только для локальных запросов):
+Endpoints (all `POST`, local requests only):
 
-| Путь | Назначение |
+| Path | Purpose |
 | --- | --- |
-| `/api/claude/detect` | ищет CLI во всех окружениях, возвращает найденные |
-| `/api/claude/connect` | фиксирует выбранное окружение |
-| `/api/claude/ask` | отправляет запрос в CLI и отдаёт ход работы потоком |
+| `/api/claude/detect` | looks for the CLI in every environment, returns the ones found |
+| `/api/claude/connect` | fixes the chosen environment |
+| `/api/claude/ask` | sends a request to the CLI and streams the work |
 
-Запросы к CLI выполняются **строго по очереди**: параллельно работает не больше одного хода. Новый запуск ждёт, пока не завершатся уже идущие (`activeRuns`/`waitForTurn` в `server.js`); пока ждёт, страница показывает «В очереди». Так гарантированно нет конфликтующей записи в один файл сразу из двух сессий — отдельных файловых блокировок и PreToolUse-хука под это не требуется.
+Requests to the CLI run **strictly one at a time**: no more than one turn works in parallel. A new run waits until the ones already going have finished (`activeRuns`/`waitForTurn` in `server.js`); while it waits, the page shows "Queued". This guarantees there is no conflicting write to the same file from two sessions at once — no separate file locks and no PreToolUse hook are needed for it.
 
-Рядом работает второй хук — PostToolUse `.claude/hooks/syntax-check.js`. После каждого `Edit`/`Write` он гоняет `node --check` и, если код перестал парситься, возвращает текст ошибки прямо в сессию. Сервер такую правку и так отсекает при самоперезапуске (оставляет работать прежнюю версию), но пишет об этом в свою консоль — сессия об ошибке не узнаёт и продолжает работать по сломанному коду. Хук закрывает именно этот разрыв.
+A second hook works alongside it — the PostToolUse `.claude/hooks/syntax-check.js`. After every `Edit`/`Write` it runs `node --check` and, if the code no longer parses, returns the error text straight into the session. The server already rejects such an edit during its self-restart (it keeps the previous version running), but it writes about it to its own console — the session never learns about the error and keeps working against broken code. The hook closes exactly that gap.
 
-Проверяются и `.js`, и инлайновый `<script>` в `.html`: основная часть кода живёт в `index.html`, и её не страхует ничто — самопроверка сервера касается только самого `server.js`. Из `.html` берётся содержимое голого тега `<script>`, всё остальное заменяется пустыми строками, поэтому номер строки в ошибке — это номер строки в самом `index.html`. Скрипты с атрибутами (`src`, `type="module"`) хук пропускает. Остальные файлы — тоже.
+Both `.js` and inline `<script>` in `.html` are checked: the bulk of the code lives in `index.html`, and nothing insures it — the server's self-check covers only `server.js`. From `.html` the contents of a bare `<script>` tag are taken and everything else is replaced with empty lines, so the line number in the error is the line number in `index.html` itself. Scripts with attributes (`src`, `type="module"`) are skipped by the hook. So are other files.
 
-Ответ `/api/claude/ask` — не один JSON, а поток NDJSON (`claude -p --output-format stream-json --verbose`): по событию в строке, каждое приходит сразу, как случилось.
+The `/api/claude/ask` response is not a single JSON document but an NDJSON stream (`claude -p --output-format stream-json --verbose`): one event per line, each arriving the moment it happens.
 
-| Событие | Когда | Что даёт |
+| Event | When | What it gives |
 | --- | --- | --- |
-| `{"type":"queued","ahead":N}` | перед стартом, если CLI занят | запрос встал в очередь, впереди N работ |
-| `{"type":"session","id":…}` | первая же строка, до ответа | id сессии — строка появляется в панели Sessions сразу |
-| `{"type":"tool","name":…,"detail":…}` | Claude вызвал инструмент | что он делает сейчас: `Read README.md`, `Bash npm test`; шаг пишется в базу и виден при повторном открытии сессии |
-| `{"type":"text","text":…}` | по мере генерации | кусок ответа, сразу в ленту |
-| `{"type":"done","text":…}` | в конце | итоговый ответ; тогда же обмен пишется в базу |
-| `{"type":"error","error":…}` | при ошибке | текст ошибки |
+| `{"type":"queued","ahead":N}` | before the start, if the CLI is busy | the request is queued, with N jobs ahead |
+| `{"type":"session","id":…}` | the very first line, before the answer | the session id — the row appears in the Sessions panel immediately |
+| `{"type":"tool","name":…,"detail":…}` | Claude called a tool | what it is doing right now: `Read README.md`, `Bash npm test`; the step is written to the database and is visible when the session is reopened |
+| `{"type":"text","text":…}` | as it is generated | a chunk of the answer, straight into the feed |
+| `{"type":"done","text":…}` | at the end | the final answer; the exchange is written to the database at the same time |
+| `{"type":"error","error":…}` | on failure | the error text |
 
-Подключение не слетает: выбранное окружение, модель и id сессии CLI сохраняются в `localStorage` браузера. После перезагрузки страницы вкладка сама восстанавливает подключение и продолжает тот же диалог, а если сервер был перезапущен — незаметно возвращает ему выбранное окружение перед отправкой запроса. Кнопка «Отключить» очищает сохранённое состояние.
+The connection does not fall off: the chosen environment, the model and the CLI session id are saved in the browser's `localStorage`. After a page reload the tab restores the connection by itself and continues the same conversation, and if the server has been restarted it quietly hands it the chosen environment back before sending the request. The "Disconnect" button clears the saved state.
 
-Внимание: каждый запрос из чата тратит лимит вашего аккаунта Claude. Простой запрос к `claude-haiku-4-5` обошёлся примерно в $0.05.
+Note: every request from the chat consumes your Claude account's limit. A simple request to `claude-haiku-4-5` cost roughly $0.05.
 
-Сервер отвечает только на запросы с этой же машины: обращения с других адресов получают `403`. Раз он умеет запускать локальный CLI, наружу его отдавать нельзя.
+The server only answers requests from this same machine: requests from other addresses get a `403`. Since it can launch a local CLI, it must not be exposed to the outside.
 
-## Сессии
+## Sessions
 
-Панель Sessions на вкладке Chat показывает сессии, начатые из этого интерфейса. Клик по сессии открывает её переписку и продолжает именно её: следующий вопрос уходит в CLI с `--resume`. Кнопка «+ New» очищает ленту, и следующий вопрос начнёт отдельную историю. Комментарий из режима Karandash тоже начинает новую сессию — вопросом становятся селектор элемента и текст комментария.
+The Sessions panel on the Chat tab shows the sessions started from this interface. Clicking a session opens its conversation and continues that exact one: the next question goes to the CLI with `--resume`. The "+ New" button clears the feed, and the next question starts a separate history. A comment from Karandash mode also starts a new session — the element selector and the comment text become the question.
 
-Хранилище — SQLite в файле `DATA/.sessions.db` (модуль `node:sqlite`, без зависимостей). Папку `DATA/` слежение за файлами не обходит, поэтому запись в базу не вызывает перезагрузку страницы.
+Storage is SQLite in the file `DATA/.sessions.db` (the `node:sqlite` module, no dependencies). File watching skips the `DATA/` folder, so writing to the database does not trigger a page reload.
 
-Откуда берутся сессии: сервер записывает в базу каждый обмен, который прошёл через `/api/claude/ask`, — вопрос, ответ и `session_id`, который вернул CLI. Историю Claude CLI (`~/.claude/projects/*/*.jsonl`) сервер не читает, поэтому в список не попадают интерактивные сессии, запущенные в терминале того же каталога.
+Where the sessions come from: the server writes every exchange that went through `/api/claude/ask` into the database — the question, the answer and the `session_id` the CLI returned. The server does not read the Claude CLI's own history (`~/.claude/projects/*/*.jsonl`), so interactive sessions launched in a terminal in the same directory do not appear in the list.
 
-Очистить список:
+To clear the list:
 
 ```bash
 curl -s -X POST http://localhost:3001/api/sessions/reset
 ```
 
-База очищается; файлы истории самого Claude CLI при этом не трогаются.
+The database is cleared; the Claude CLI's own history files are left alone.
 
-## Карта знаний (Obsidian)
+## Knowledge map (Obsidian)
 
-Вкладка **Graph** показывает карту проекта. Настраивать нечего: при запуске сервер создаёт `vault/` в корне и наполняет её заметками, так что вкладка открывается уже готовой.
+The **Graph** tab shows the project map. There is nothing to configure: on startup the server creates `vault/` at the root and fills it with notes, so the tab opens ready to use.
 
-**Что становится узлом.** Файл проекта, секция внутри крупного файла (по комментариям-разделителям `// ---------- … ----------`), функция верхнего уровня, API-роут и прошлая сессия Claude.
+**What becomes a node.** A project file, a section inside a large file (by the `// ---------- … ----------` separator comments), a top-level function, an API route and a past Claude session.
 
-В карту попадает **всё, что физически лежит в папке проекта** — включая скрытые файлы и то, что игнорирует git: `.env`, `.claude/settings.local.json`. Исключений ровно два, и оба вынужденные: `.git` (служебная база на тысячи объектов, содержимое проекта в ней дублируется) и `DATA/` — всё, что сервер произвёл сам: vault уже присутствует в графе как узлы, а повторный обход плодил бы заметки о заметках с каждой пересборкой.
+The map includes **everything that physically sits in the project folder** — including hidden files and things git ignores: `.env`, `.claude/settings.local.json`. There are exactly two exceptions, both unavoidable: `.git` (an internal database of thousands of objects, in which the project's contents are duplicated) and `DATA/` — everything the server produced itself: the vault is already present in the graph as nodes, and walking it again would breed notes about notes with every rebuild.
 
-**Откуда берутся связи.** Только из якорных мест, а не из совпадения имён: строковые литералы `/api/...` (поэтому видно, кто какой роут вызывает), `src`/`href` в разметке, `require`/`import`, вызовы функций внутри файла, ссылки `[[…]]` в заметках. Отдельно — история git: файлы, которые меняются вместе, и когда файл появился.
+**Where the links come from.** Only from anchor points, not from matching names: `/api/...` string literals (which is why you can see who calls which route), `src`/`href` in markup, `require`/`import`, function calls inside a file, `[[…]]` links in notes. Separately there is git history: files that change together, and when a file first appeared.
 
-**Память о сессиях.** `vault/Сессии/` хранит по заметке на сессию: тема, чем закончилось, какие файлы правились. Если после сессии эти файлы менялись, заметка помечается `stale` и в графе рисуется приглушённой — прошлое решение не должно читаться как актуальное.
+**Session memory.** `vault/Sessions/` keeps one note per session: the subject, how it ended, which files were edited. If those files have changed since the session, the note is marked `stale` and drawn dimmed in the graph — a past decision should not read as the current one.
 
-**Живая раскладка.** Узлы расходятся силовой симуляцией прямо на глазах и замирают, когда граф успокоится (батарею впустую не жжёт). Любой узел можно **потянуть мышью** — соседи потянутся следом, после отпускания граф доукладывается сам. Наведение выводит узел и его связи на первый план, приглушая остальное; найденное поиском пульсирует. Всё это уважает системную настройку «уменьшить движение».
+**A live layout.** The nodes spread out under a force simulation before your eyes and settle once the graph calms down (no battery burned for nothing). Any node can be **dragged with the mouse** — the neighbours follow, and after you let go the graph settles by itself. Hovering brings a node and its links to the front and dims the rest; search matches pulse. All of this respects the system "reduce motion" setting.
 
-**Управление.** Колесо мыши — масштаб, перетаскивание пустого места — панорама, перетаскивание узла — переставить его, наведение — подсветка соседей. Чипы слева включают и выключают виды узлов (функции и сессии выключены по умолчанию, иначе граф не читается); выбор запоминается в браузере. Поле поиска подсвечивает найденное прямо в графе.
+**Controls.** The mouse wheel zooms, dragging empty space pans, dragging a node moves it, hovering highlights the neighbours. The chips on the left turn node kinds on and off (functions and sessions are off by default, otherwise the graph becomes unreadable); the choice is remembered in the browser. The search field highlights matches directly in the graph.
 
-**Клик по узлу** открывает окно с содержимым: сам файл проекта — с правкой и сохранением (кнопка или `Ctrl+S`), для узла-секции и узла-функции текст сразу прокручен к нужной строке. Связи узла показаны чипами вверху окна — по ним можно переходить, не закрывая его. Заметки vault открываются только на чтение: они пересобираются сервером, и правка исчезла бы при следующей пересборке. Двоичные файлы показывают только размер.
+**Clicking a node** opens a window with the contents: a project file itself — editable and saveable (a button or `Ctrl+S`), and for a section node or a function node the text is already scrolled to the right line. The node's links are shown as chips at the top of the window — you can navigate through them without closing it. Vault notes open read-only: they are rebuilt by the server, and an edit would vanish on the next rebuild. Binary files show only their size.
 
-## Поиск по проекту
+## Project search
 
-Полнотекстовый поиск (FTS5 с ранжированием BM25) по коду, заметкам vault и прошлым сессиям. Индекс лежит в `DATA/.index.db`, собирается сервером вместе с картой.
-
-```bash
-node PROJECTS/Graph/search.js "живая перезагрузка"
-node PROJECTS/Graph/search.js --kind session "граф"
-```
-
-Работает и без запущенного сервера — читает готовый индекс. Тот же поиск доступен по `POST /api/search`, им пользуется строка поиска во вкладке Graph.
-
-Хранилище — обычный Obsidian-vault: папку `DATA/vault/` можно открыть в Obsidian и писать свои заметки рядом, они попадут и в граф, и в поиск. Перезаписывается только `DATA/vault/Проект/`. В git vault и индекс не попадают.
-
-Другой vault задаётся переменной окружения:
+Full-text search (FTS5 with BM25 ranking) across code, vault notes and past sessions. The index lives in `DATA/.index.db` and is built by the server together with the map.
 
 ```bash
-OBSIDIAN_VAULT="C:/путь/к/vault" node server.js
+node PROJECTS/Graph/search.js "live reload"
+node PROJECTS/Graph/search.js --kind session "graph"
 ```
 
-## Остановка
+It works without a running server too — it reads the prebuilt index. The same search is available at `POST /api/search`, and the search field on the Graph tab uses it.
 
-`Ctrl+C` в терминале с запущенным сервером.
+Storage is an ordinary Obsidian vault: the `DATA/vault/` folder can be opened in Obsidian and you can write your own notes alongside; they will show up both in the graph and in the search. Only `DATA/vault/Project/` is overwritten. Neither the vault nor the index is tracked by git.
 
-## Структура
+A different vault is set with an environment variable:
 
-| Файл | Назначение |
+```bash
+OBSIDIAN_VAULT="C:/path/to/vault" node server.js
+```
+
+## Stopping
+
+`Ctrl+C` in the terminal running the server.
+
+## Structure
+
+| Path | Purpose |
 | --- | --- |
-| `SYSTEM/` | Клиент: `index.html`, `app.js`, `home-tasks.js`, `tabs.js`, панельные скрипты, `assets/` и смоук-проверка |
-| `server.js` | HTTP-сервер статики, автообновление, самоперезапуск и коннектор Claude CLI |
-| `SYSTEM/smoke.js` | Смоук-проверка HTTP-уровня, см. ниже |
-| `PLAN.md` | План разбора кода на модули |
-| `PROJECTS/Graph/` | Вкладка Graph целиком: клиент, стили, серверная половина и поиск из терминала |
-| `DATA/` | Всё, что сервер собрал сам: vault (`vault/Проект/`, `vault/Сессии/`), поисковый индекс `.index.db`, база сессий `.sessions.db` |
+| `server.js` | A thin dispatcher: `.env`, static files, sessions, live CLI runs. Everything feature-specific lives next to the feature and is wired in through a route table |
+| `SYSTEM/` | The client shell: `index.html`, `app.js`, `tabs.js`, the toolbar and panel scripts, `core/`, `styles/`, `assets/` |
+| `PROJECTS/<Section>/*.eta` | Templates for the server fragments that htmx pulls in — next to the feature that renders them |
+| `SYSTEM/smoke.js` | The HTTP-level smoke test, see below |
+| `PROJECTS/<Section>/` | One folder per interface section — client, styles, the server half and its own README. A page created by the toolbar's «+» button is one of these too: its `page.js` *is* the page |
+| `DOCS/decisions/` | Why something in the project is done the way it is; a new decision goes here when the "why" is not visible from the code |
+| `AGENTS.md` / `CLAUDE.md` | The project rules for any agent, and the Claude Code specifics on top of them |
+| `VERSION.md` | The version history; its last `DEV LOG` line is the single source of truth about the version |
+| `PLAN.md` | The plan for splitting the code into modules |
+| `DATA/` | Everything the server built itself: the vault (`vault/Project/`, `vault/Sessions/`), the `.index.db` search index, the `.sessions.db` session database (not tracked by git) |
 
-## Что делает сервер
+## What the server does
 
-- `/` → отдаёт `SYSTEM/index.html`
-- любой другой путь → соответствующий файл из каталога проекта с нужным `Content-Type`
-- несуществующий файл → `404`
-- попытка выйти за пределы каталога проекта → `403`
-- `POST /api/obsidian/graph` → отдаёт узлы и связи vault для вкладки Graph
-- `POST /api/search` → полнотекстовый поиск по коду, заметкам и сессиям
-- `POST /api/file/read` → содержимое файла для окна узла (только внутри каталога проекта)
-- `POST /api/file/write` → сохранение правки из окна (заметки vault и двоичные файлы отклоняются)
+- `/` → serves `SYSTEM/index.html`
+- any other path → the corresponding file from the project directory with the right `Content-Type`
+- a non-existent file → `404`
+- an attempt to escape the project directory → `403`
+- `POST /api/obsidian/graph` → returns the vault's nodes and links for the Graph tab
+- `POST /api/search` → full-text search across code, notes and sessions
+- `POST /api/file/read` → a file's contents for the node window (inside the project directory only)
+- `POST /api/file/write` → saving an edit from the window (vault notes and binary files are rejected)
 
-## Проверка без браузера
+## Checking without a browser
 
 ```bash
-curl -i http://localhost:3000/
+curl -i http://localhost:3001/
 ```
 
-## Смоук-проверка
+## Smoke test
 
 ```powershell
 node SYSTEM/smoke.js
 ```
 
-Поднимает сервер на свободном порту и сверяет коды ответов основных маршрутов: страница,
-404 на несуществующий файл, 403 на выход за пределы каталога, 403 на запрос не с localhost,
-405 на GET к `/api`, список сессий по `POST /api/sessions`. Ненулевой код возврата означает,
-что что-то сломалось. Зависимостей не требует, запущенный сервер не нужен — смоук поднимает
-свой на свободном порту (через переменную окружения) и гасит его после прогона; `.env` не трогает.
+It starts the server on a free port and walks through 35 checks: the page and the static files,
+404 for a non-existent file, 403 for escaping the directory, 403 for a request not from localhost,
+405 for a GET to `/api`, the session list, the htmx fragments, the project map and the search, reading
+and writing a file, creating/renaming/deleting a page, the toolbar and Flow state, agent detection and
+clear errors when a CLI is not connected. A non-zero exit code means something broke. No running
+server is needed — the smoke test starts its own on a free port (through an environment variable) and
+shuts it down after the run; it does not touch `.env`. It does need the project dependencies, so run
+`npm install` first.
 
-Базу `DATA/.sessions.db` смоук читает, но не меняет: `/api/sessions/reset` он не вызывает.
+The smoke test reads the `DATA/.sessions.db` database but does not change it: it never calls `/api/sessions/reset`.
 
-Проверок DOM тут нет — они требовали бы браузерного движка, то есть зависимости. Клиентская
-часть проверяется вручную, чек-лист лежит в `PLAN.md`.
+There are no DOM checks here — they would require a browser engine. The client side is checked by
+hand, and the checklist is in `PLAN.md`.

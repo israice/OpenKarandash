@@ -1,46 +1,46 @@
 # 🗂️ Kanban
 
-Доска задач в пяти колонках. Пока — каркас: колонки есть, карточек нет, но задачу отсюда уже можно запустить.
+A task board in five columns. For now it is a skeleton: the columns are there, the cards are not, but a task can already be started from here.
 
-## 🧭 Что это
+## 🧭 What this is
 
-Одна из вкладок Mission Control — кнопка `kanbanButton` в тулбаре, вид `kanbanView`, код в `PROJECTS/Kanban/kanban.js` (30 строк). Задумана как доска, по которой задача едет от «New» до «Done».
+One of the Mission Control tabs — the `kanbanButton` toolbar button, the `kanbanView` view, the code in `PROJECTS/Kanban/kanban.js` (30 lines). It is meant to be a board along which a task travels from "New" to "Done".
 
-Сейчас раздел честно находится в начальном состоянии: доска рисует колонки и умеет ровно одно действие — завести новую сессию с заданием. Всё остальное ещё впереди.
+Right now the section is honestly in its initial state: the board draws the columns and can do exactly one thing — start a new session with a task. Everything else is still ahead.
 
-## ✅ Что уже умеет
+## ✅ What it can already do
 
-- **Рисует пять колонок** — `New`, `In Progress`, `Checking`, `Validator`, `Done`. Список берётся из `App.BOARD_COLUMNS` (`app.js`), доска строится при загрузке страницы.
-- **Показывает счётчик** у каждой колонки — пока это статичный `0` в разметке, он ни от чего не считается.
-- **Кнопка «+» в колонке `New`** — спрашивает текст задания через `prompt()` и запускает по нему отдельную сессию Claude.
-- **Горизонтальная прокрутка доски** и вертикальная прокрутка внутри колонки — если колонок или карточек станет больше, вёрстка выдержит.
+- **Draws five columns** — `New`, `In Progress`, `Checking`, `Validator`, `Done`. The list comes from `App.BOARD_COLUMNS` (`app.js`), and the board is built on page load.
+- **Shows a counter** on each column — for now this is a static `0` in the markup, computed from nothing.
+- **The "+" button in the `New` column** — asks for the task text through `prompt()` and starts a separate Claude session with it.
+- **Horizontal scrolling of the board** and vertical scrolling inside a column — the layout will hold up if there are more columns or cards.
 
-Чего доска **не** умеет: карточек нет вовсе, перетаскивания нет, состояние нигде не хранится и на сервер не ходит. В теле каждой колонки написано «Пока пусто» — это буквально текст в разметке.
+What the board **cannot** do: there are no cards at all, no drag and drop, no state is stored anywhere and nothing goes to the server. The body of every column says "Empty for now" — that is literally text in the markup.
 
-## 🚀 Как пользоваться
+## 🚀 How to use it
 
-| Действие | Что происходит |
+| Action | What happens |
 |---|---|
-| Кнопка `Kanban` в тулбаре | Открывается доска (`MissionTabs.show('kanban')`) |
-| «+» в колонке `New` | Появляется браузерный `prompt` «Задание для новой сессии:» |
-| Ввести текст и нажать OK | Интерфейс переключается на вкладку Chat, начинается новая сессия в режиме `Action` с этим заданием |
-| Пустой ввод или Отмена | Ничего не происходит |
+| The `Kanban` button in the toolbar | The board opens (`MissionTabs.show('kanban')`) |
+| "+" in the `New` column | A browser `prompt` appears: "Task for the new session:" |
+| Type text and press OK | The interface switches to the Chat tab and a new session starts in `Action` mode with that task |
+| Empty input or Cancel | Nothing happens |
 
-Кнопка «+» есть только у колонки `New` — у остальных четырёх её нет.
+Only the `New` column has a "+" button — the other four do not.
 
-Задание уходит тем же путём, что и комментарий из режима Karandash: через `App.startCommentSession()`, а тот шлёт запрос на `/api/claude/ask`. То есть карточка не создаётся — создаётся **сессия**, и дальше вы работаете с ней в чате.
+The task travels the same path as a comment from Karandash mode: through `App.startCommentSession()`, which sends a request to `/api/claude/ask`. So no card is created — a **session** is created, and from there you work with it in the chat.
 
-## 🔧 Как это устроено
+## 🔧 How it works
 
-**Данные доски живут прямо в коде.** Никакой базы, никакого API у доски нет:
+**The board's data lives right in the code.** The board has no database and no API:
 
-- названия колонок — массив `BOARD_COLUMNS` в `app.js`, экспортируется через `window.App`;
-- содержимое колонок — строка `Пока пусто` в шаблоне внутри `PROJECTS/Kanban/kanban.js`;
-- счётчик `0` — тоже литерал в шаблоне.
+- the column names — the `BOARD_COLUMNS` array in `app.js`, exported through `window.App`;
+- the column contents — the string `Empty for now` in the template inside `PROJECTS/Kanban/kanban.js`;
+- the `0` counter — also a literal in the template.
 
-В `server.js` нет ни одного роута про доску. Перезагрузка страницы возвращает доску ровно в то же состояние — сохранять пока попросту нечего.
+There is not a single board-related route in `server.js`. Reloading the page returns the board to exactly the same state — there is simply nothing to save yet.
 
-**Разметка** минимальна: `index.html` содержит только пустой контейнер
+**The markup** is minimal: `index.html` contains only an empty container
 
 ```html
 <div class="view view--board" id="kanbanView" hidden>
@@ -48,28 +48,28 @@
 </div>
 ```
 
-Всё остальное — колонки `.board__column`, шапки `.board__header`, счётчики `.board__count`, кнопку `.board__add` и тело `.board__body` — `kanban.js` собирает в цикле и дописывает в `#board`. Стили — в `PROJECTS/Kanban/kanban.css`, он подключён из `index.html` отдельным `<link>`.
+Everything else — the `.board__column` columns, the `.board__header` headers, the `.board__count` counters, the `.board__add` button and the `.board__body` body — is assembled in a loop by `kanban.js` and appended to `#board`. The styles are in `PROJECTS/Kanban/kanban.css`, linked from `index.html` with its own `<link>`.
 
-**Показ вкладки** — забота `tabs.js`: он прячет все виды, кроме нужного, и выставляет `aria-pressed` на кнопке. Для Kanban никакой дополнительной инициализации при показе не вызывается — доска построена один раз при загрузке.
+**Showing the tab** is `tabs.js`'s job: it hides every view except the requested one and sets `aria-pressed` on the button. No additional initialisation is called for Kanban when it is shown — the board was built once, on load.
 
-## 🗺️ Что в планах
+## 🗺️ Planned
 
-- Карточки задач: создание, отображение, привязка к сессии.
-- Перетаскивание карточек между колонками.
-- Живой счётчик задач в шапке колонки.
-- Хранение состояния доски на сервере, чтобы оно переживало перезагрузку.
-- Замена браузерного `prompt()` на нормальное поле ввода.
+- Task cards: creation, display, binding to a session.
+- Dragging cards between columns.
+- A live task counter in the column header.
+- Storing the board state on the server so it survives a reload.
+- Replacing the browser `prompt()` with a proper input field.
 
-## 📁 Файлы
+## 📁 Files
 
-| Файл | Что делает |
+| File | What it does |
 |---|---|
-| `PROJECTS/Kanban/kanban.js` | Строит колонки и вешает обработчик на «+» |
-| `PROJECTS/Kanban/kanban.css` | Стили доски: `.view--board`, `.board*` |
-| `SYSTEM/index.html` | Контейнер `#kanbanView` / `#board`, кнопка `kanbanButton`, подключение `kanban.css` и `kanban.js` |
+| `PROJECTS/Kanban/kanban.js` | Builds the columns and wires up the "+" handler |
+| `PROJECTS/Kanban/kanban.css` | Board styles: `.view--board`, `.board*` |
+| `SYSTEM/index.html` | The `#kanbanView` / `#board` container, the `kanbanButton` button, loading `kanban.css` and `kanban.js` |
 | `SYSTEM/app.js` | `BOARD_COLUMNS`, `VIEWS.kanban`, `startCommentSession()` |
-| `SYSTEM/tabs.js` | Переключение на вид `kanban` |
+| `SYSTEM/tabs.js` | Switching to the `kanban` view |
 
 ---
 
-Лицензия — MIT.
+License — MIT.
