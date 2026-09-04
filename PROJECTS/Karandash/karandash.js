@@ -101,7 +101,7 @@
     function findLandmarks(el) {
         const landmarks = [];
         let cur = el.parentElement;
-        while (cur && cur !== document.body && landmarks.length < 2) {
+        while (cur && cur !== cur.ownerDocument.body && landmarks.length < 2) {
             const kind = landmarkKind(cur);
             if (kind) {
                 const label = landmarkLabel(cur);
@@ -113,7 +113,10 @@
     }
 
     function viewName(el) {
-        const view = el.closest('.view');
+        // элемент из кадра сам про наши вкладки ничего не знает — раздел
+        // определяем по кадру, в котором он лежит
+        const anchor = hostFrame(el.ownerDocument) || el;
+        const view = anchor.closest('.view');
         return view ? (VIEW_NAMES[view.id] || view.id) : null;
     }
 
@@ -134,7 +137,11 @@
         const selector = el.tagName.toLowerCase() + id + cls;
 
         const label = humanLabel(el);
-        const where = [viewName(el), ...findLandmarks(el)].filter(Boolean).join(' → ');
+        // элемент из кадра: подписываем, в каком именно, — иначе по одному
+        // селектору не понять, что он не из нашей разметки
+        const host = hostFrame(el.ownerDocument);
+        const inFrame = host ? `embedded ${host.title || 'frame'}` : null;
+        const where = [viewName(el), inFrame, ...findLandmarks(el)].filter(Boolean).join(' → ');
 
         const parts = [];
         if (label) parts.push(`«${label}»`);
@@ -143,11 +150,70 @@
         return parts.join(' ');
     }
 
+    // ---------- спуск в свои кадры ----------
+    //
+    // Вкладка Kanban показывает beads-web отдельным <iframe>. Пока он был чужого
+    // origin, внутрь заглянуть было нечем, и рамка накрывала доску целиком. Теперь
+    // доска отдаётся с нашего порта (PROJECTS/Kanban/kanban-server.js), её документ
+    // читается, и указывать можно на её же кнопки и карточки.
+    //
+    // Сам кадр при этом прозрачен для указателя (karandash.css) — иначе он забирает
+    // события мыши себе и режим над ним слепнет. Поэтому elementFromPoint кадр не
+    // возвращает, и попадание в него мы считаем сами, по его прямоугольнику.
+
+    // документ кадра, если он наш; чужой origin бросает исключение — там нам нечего делать
+    function frameDoc(frameEl) {
+        try {
+            return frameEl.contentDocument || null;
+        } catch {
+            return null;
+        }
+    }
+
+    function frameAt(x, y) {
+        for (const el of document.querySelectorAll('iframe')) {
+            const r = el.getBoundingClientRect();
+            if (x >= r.left && x < r.right && y >= r.top && y < r.bottom && frameDoc(el)) return el;
+        }
+        return null;
+    }
+
+    // кадр нашей страницы, внутри которого лежит этот документ
+    function hostFrame(doc) {
+        if (doc === document) return null;
+        for (const frameEl of document.querySelectorAll('iframe')) {
+            if (frameDoc(frameEl) === doc) return frameEl;
+        }
+        return null;
+    }
+
+    // смещение документа элемента относительно нашего окна: для элементов внутри
+    // кадра рамку надо рисовать со сдвигом на его позицию
+    function documentOffset(el) {
+        const host = hostFrame(el.ownerDocument);
+        if (!host) return { x: 0, y: 0 };
+        const r = host.getBoundingClientRect();
+        return { x: r.left, y: r.top };
+    }
+
+    // элемент под курсором с заходом внутрь своих кадров
+    function elementAt(x, y) {
+        const frameEl = frameAt(x, y);
+        if (!frameEl) return document.elementFromPoint(x, y);
+        const r = frameEl.getBoundingClientRect();
+        // внутри кадра координаты считаются от его собственного окна
+        return frameDoc(frameEl).elementFromPoint(x - r.left, y - r.top) || frameEl;
+    }
+
     // клик по иконке попадает в <path> внутри <svg> — поднимаемся до кнопки,
     // которая её содержит. Самостоятельные SVG-фигуры (например стрелки Flow)
     // кнопкой не обёрнуты — их оставляем как есть, иначе не по чему кликнуть
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+
     function resolve(el) {
-        if (el instanceof SVGElement) {
+        // instanceof здесь не годится: у документа кадра свои конструкторы,
+        // и его <path> не является SVGElement нашего окна
+        if (el && el.namespaceURI === SVG_NS) {
             return el.closest('button, a') || el;
         }
         return el;
@@ -164,7 +230,9 @@
         let cur = el;
         for (let i = 0; i < depth; i++) {
             const parent = cur.parentElement;
-            if (!parent || parent === document.body) break;
+            // граница подъёма — body того документа, где элемент живёт:
+            // из кадра в нашу страницу колесом не выходим
+            if (!parent || parent === cur.ownerDocument.body) break;
             cur = parent;
         }
         return cur;
@@ -172,15 +240,21 @@
 
     function drawFrame(el) {
         const r = el.getBoundingClientRect();
-        frame.style.top = r.top + 'px';
-        frame.style.left = r.left + 'px';
+        const off = documentOffset(el); // элемент из кадра — его координаты от окна кадра
+        frame.style.top = (r.top + off.y) + 'px';
+        frame.style.left = (r.left + off.x) + 'px';
         frame.style.width = r.width + 'px';
         frame.style.height = r.height + 'px';
         frame.hidden = false;
     }
 
     function placePopover(el, target) {
-        const r = el.getBoundingClientRect();
+        const raw = el.getBoundingClientRect();
+        const off = documentOffset(el);
+        const r = {
+            top: raw.top + off.y, bottom: raw.bottom + off.y,
+            left: raw.left + off.x, height: raw.height,
+        };
         const box = target.getBoundingClientRect();
 
         // под элементом, если снизу есть место, иначе над ним
@@ -267,7 +341,7 @@
 
         if (cursorX < 0) return;
 
-        const base = resolve(document.elementFromPoint(cursorX, cursorY));
+        const base = resolve(elementAt(cursorX, cursorY));
         if (!isTargetable(base)) {
             frame.hidden = true;
             hovered = null;

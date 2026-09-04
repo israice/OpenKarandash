@@ -11,6 +11,17 @@ const { reloadEvents } = require('./SYSTEM/core/reload.js');
 
 const ROOT = __dirname;
 
+// ---------- журнал выключений ----------
+// почему сервер выключился, иначе видно только в терминале, где он запущен, —
+// а к моменту разбора окно уже закрыто или затёрто выводом. Пишем рядом с данными
+// (DATA/ не отслеживается сторожем файлов и не попадает в git)
+const EXIT_LOG = path.join(ROOT, 'DATA', 'server-exits.log');
+function logExit(text) {
+    try {
+        fs.appendFileSync(EXIT_LOG, `${new Date().toISOString()} [${process.pid}] ${text}\n`);
+    } catch { /* журнал не повод падать */ }
+}
+
 // ---------- .env: единственное место для порта и секретов ----------
 // файла нет — создаём его с портом 3001 и на нём же поднимаемся. значения из .env
 // не перетирают то, что уже задано в окружении: так `PORT=3999 node server.js`
@@ -22,6 +33,8 @@ PORT=3001
 # The screen the Karandash button captures (index in the monitor list, starting
 # from zero) — can also be changed from Settings in the interface
 SCREENSHOT_SCREEN=0
+# Port for the embedded beads-web board on the Kanban tab (0 turns it off)
+BEADS_PORT=3008
 
 # Path to the Claude CLI, if it is not in PATH
 # CLAUDE_BIN=
@@ -83,9 +96,7 @@ const EXIT_PORT_BUSY = 3; // код выхода дочернего процес
 // а родительский следит за server.js и поднимает дочерний заново после правок
 if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
     let child = null;
-    let restarting = false;
-    let busy = false;          // дочерний процесс сейчас ведёт запрос к Claude
-    let waiting = false;       // файл изменился, но перезапуск отложен до конца запроса
+    let restarting = false;    // перезапуск запрошен: ждём от сервера «можно»
 
     // server.js подключает через require и серверные модули вне себя самого — их
     // правки тоже должны рестартовать сервер, иначе Node продолжает работать со
@@ -119,13 +130,18 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
         }
     };
 
+    // момент смерти выбирает не сторож, а сам сервер: он один знает, идёт ли сейчас
+    // ход и не начинается ли новый прямо сейчас. Сторож только просит — и ждёт
+    // ответа readyToRestart, сколько бы ни длились текущие ходы
     const restart = () => {
-        waiting = false;
         if (!isValid()) return; // починят файл — mtime изменится, и мы придём сюда снова
-        console.log('server file changed — restarting the server...');
         if (!child) return start(); // прошлый процесс упал сам — просто поднимаем заново
+        if (restarting) return; // уже попросили: перезапустимся с последней версией файлов
         restarting = true;
-        child.kill();
+        console.log('server file changed — restarting as soon as the current turns finish...');
+        // канал мог закрыться, если процесс умирает прямо сейчас: без колбэка ошибка
+        // прилетела бы событием 'error' на child и унесла сторожа вместе с сервером
+        child.send({ prepareRestart: true }, () => {});
     };
 
     const start = () => {
@@ -135,15 +151,17 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
         });
 
         // Claude из чата правит файлы проекта, в том числе server.js. перезапуск
-        // посреди работы убил бы запущенный CLI, поэтому ждём окончания запроса
+        // посреди работы убил бы запущенный CLI, поэтому гасим сервер только
+        // по его собственному «можно»: к этому мгновению ходов нет, а новые он
+        // уже не берёт — раньше между этими двумя событиями была щель, и запрос,
+        // отправленный в неё, умирал вместе с процессом
         child.on('message', (message) => {
-            busy = Boolean(message && message.busy);
-            if (!busy && waiting) restart();
+            if (message && message.readyToRestart) child.kill();
         });
 
         child.on('exit', (code, signal) => {
             child = null;
-            busy = false;
+            logExit(`child exited: code=${code} signal=${signal} restarting=${restarting}`);
             if (restarting) {
                 restarting = false;
                 start();
@@ -178,18 +196,14 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
         if (current === mtime) return;
 
         mtime = current;
-
-        if (busy) {
-            if (!waiting) console.log('server file changed — will restart after the current request');
-            waiting = true;
-            return;
-        }
-
         restart();
     }, POLL_MS);
 
+    process.on('exit', (code) => logExit(`watchdog exit: code=${code}`));
+
     for (const signal of ['SIGINT', 'SIGTERM']) {
         process.on(signal, () => {
+            logExit(`watchdog got ${signal}`);
             if (child) child.kill(signal);
             process.exit(0);
         });
@@ -197,6 +211,17 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
 
     start();
     return; // код ниже выполняется только в дочернем процессе
+}
+
+// исключение вне обработчика запроса (таймер пересборки карты, колбэк процесса CLI)
+// иначе гасит сервер без следа: сторож видит только код выхода, а стек уходит
+// в закрытое окно терминала
+for (const event of ['uncaughtException', 'unhandledRejection']) {
+    process.on(event, (error) => {
+        logExit(`${event}: ${(error && error.stack) || error}`);
+        console.error(error);
+        process.exit(1);
+    });
 }
 
 // версия страницы — единственный источник истины: последняя строка DEV LOG в VERSION.md
@@ -477,13 +502,16 @@ function killProcessTree(child, target) {
 
 // промпт всегда идёт через stdin: так он не попадает в командную строку
 // и не требует экранирования, даже когда команда собирается для `bash -lc`
-function runClaude(target, cliArgs, { input = '', timeoutMs, onLine, onSpawn } = {}) {
+function runClaude(target, cliArgs, { input = '', timeoutMs, onLine, onSpawn, env } = {}) {
     return new Promise((resolve, reject) => {
         const args = target.viaShell
             ? [...target.args, shellLaunch(['claude', ...cliArgs].join(' '))]
             : [...target.args, ...cliArgs];
 
-        const child = spawn(target.cmd, args, { windowsHide: true });
+        // env — только для askClaude: сообщает SessionStart-хуку (context-files-node.js),
+        // что этот запуск сузил --setting-sources, и пользовательский CLAUDE.md сейчас
+        // точно не грузится — без этого хук не мог бы честно решить, включать ли его
+        const child = spawn(target.cmd, args, { windowsHide: true, env: env ? { ...process.env, ...env } : process.env });
         onSpawn?.(child);
 
         let stdout = '';
@@ -600,10 +628,36 @@ function broadcast(sessionId, event) {
     for (const res of listeners) res.write(line);
 }
 
-// пока идёт хотя бы один запрос, родительский процесс откладывает перезапуск
+// ---------- перезапуск после правки: решение за сервером ----------
+// Сторож правку только объявляет, а гасить процесс просит нас: он не видит,
+// идёт ли ход и не начинается ли новый прямо сейчас. Отвечаем «можно» ровно
+// в тот момент, когда последний ход дописан в базу, и с этого же мгновения
+// новых ходов не берём — щели между «ходов нет» и смертью процесса не остаётся
+let restartRequested = false;
+let stopping = false; // ответ сторожу уже отправлен: процесса вот-вот не станет
+
+function confirmRestart() {
+    if (!restartRequested || stopping || running > 0) return;
+    stopping = true;
+    process.send({ readyToRestart: true }, () => {}); // колбэк: закрытый канал не должен ронять сервер
+}
+
+// sendJson/NDJSON — обычный отказ вместо оборванного соединения: страница
+// покажет его как ошибку хода, а человек повторит через пару секунд
+const RESTART_ERROR = 'The server is restarting after a code change — send it again in a few seconds';
+
+if (process.send) {
+    process.on('message', (message) => {
+        if (!message || !message.prepareRestart) return;
+        restartRequested = true;
+        confirmRestart();
+    });
+}
+
+// счётчик идущих ходов: по нему откладывается и пересборка карты, и перезапуск
 function setBusy(delta) {
     running += delta;
-    if (process.send) process.send({ busy: running > 0 });
+    if (running === 0) confirmRestart();
 }
 
 // ---------- общая обвязка хода: одна на все CLI ----------
@@ -1024,6 +1078,9 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
         await runClaude(target, args, {
             input, timeoutMs: CLAUDE_ASK_TIMEOUT_MS, onLine,
             onSpawn: (child) => { ctx.run.child = child; },
+            // см. LEAN_ARGS — сообщаем SessionStart-хуку, что --setting-sources
+            // сужены и пользовательский источник (~/.claude/CLAUDE.md) не грузится
+            env: { OPENKARANDASH_SETTING_SOURCES: 'project,local' },
         });
     });
 }
@@ -1596,7 +1653,7 @@ const listSessions = db.prepare(`
 `);
 
 const listMessages = db.prepare(`
-    SELECT role, text, created_at AS createdAt, model, effort,
+    SELECT position, role, text, created_at AS createdAt, model, effort,
            input_tokens AS inputTokens, output_tokens AS outputTokens,
            cache_read_tokens AS cacheReadTokens, cache_creation_tokens AS cacheCreationTokens,
            cost_usd AS costUsd, duration_ms AS durationMs,
@@ -1620,6 +1677,11 @@ const sumSessionUsage = db.prepare(`
 `);
 
 const countMessages = db.prepare('SELECT COUNT(*) AS n FROM messages WHERE session_id = ?');
+
+// правка собственной реплики на графе Flow (см. DOCS/decisions/018): роль проверяем
+// отдельным запросом, потому что менять разрешено только строку пользователя
+const getMessageRole = db.prepare('SELECT role FROM messages WHERE session_id = ? AND position = ?');
+const setMessageText = db.prepare('UPDATE messages SET text = ? WHERE session_id = ? AND position = ?');
 
 // потолок на tool_input/tool_result/thinking: без лимита один Bash с гигантским
 // выводом раздул бы .sessions.db, но значение выбрано так, чтобы обычные ответы
@@ -1852,6 +1914,12 @@ function sessionSummaries() {
 // серверные половины фич: каждая заводит свои таблицы сама и отдаёт готовую
 // таблицу маршрутов. server.js их только собирает и не знает, что внутри.
 // Список ниже — единственное место, где ядро знает про фичи вообще
+// вкладка Kanban отдаёт готовую доску beads-web. Модуль возвращает не только
+// маршруты: диспетчер ниже спрашивает у него, какие адреса принадлежат доске,
+// и проксирует их на её бинарь. Так кадр вкладки живёт на нашем порту — без
+// этого он чужого origin, и Karandash не может заглянуть внутрь (DOCS/decisions/021)
+const kanban = require('./PROJECTS/Kanban/kanban-server.js').createRoutes({ root: ROOT });
+
 const featureRoutes = {
     ...graph.createRoutes(),
     ...require('./PROJECTS/Flow/flow-server.js').createRoutes({ db }),
@@ -1861,6 +1929,7 @@ const featureRoutes = {
         sessions: sessionSummaries,
         activeCount: () => activeRuns.size,
     }),
+    ...kanban.routes,
     ...require('./PROJECTS/Karandash/karandash-server.js').createRoutes({ setEnvValue }),
     ...require('./SYSTEM/toolbar-icons-server.js').createRoutes({ db }),
 };
@@ -1921,6 +1990,15 @@ async function handleApi(req, res, urlPath) {
         if (urlPath === '/api/agent/ask') {
             const body = await readJson(req);
             const adapter = agentByName(body.agent);
+            // сторожу уже сказано «можно» — этот процесс доживает последние мгновения
+            // и запускать в нём CLI нельзя: ход умрёт вместе с ним, не дописавшись
+            // ответ — строка того же потока событий, а не sendJson: клиент читает
+            // ask построчным NDJSON и обычный JSON без перевода строки не разберёт
+            if (stopping) {
+                res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' });
+                res.end(`${JSON.stringify({ type: 'error', error: RESTART_ERROR })}\n`);
+                return;
+            }
             res.writeHead(200, {
                 'Content-Type': 'application/x-ndjson; charset=utf-8',
                 'Cache-Control': 'no-store',
@@ -2001,6 +2079,30 @@ async function handleApi(req, res, urlPath) {
             return;
         }
 
+        // правка своей реплики прямо на графе Flow (§10 chat.md). Менять разрешено
+        // только строку роли user: остальное — запись того, что модель и инструменты
+        // действительно сделали, и подделывать её значило бы врать самой трассой.
+        // Почему маршрут здесь, а не в flow-server.js — DOCS/decisions/018
+        if (urlPath === '/api/sessions/message/set') {
+            const { id, position, text } = await readJson(req);
+            if (!id || !Number.isInteger(position) || typeof text !== 'string') {
+                sendJson(res, { ok: false, error: 'id, position and text are required' });
+                return;
+            }
+            const row = getMessageRole.get(id, position);
+            if (!row) {
+                sendJson(res, { ok: false, error: 'Message not found' });
+                return;
+            }
+            if (row.role !== 'user') {
+                sendJson(res, { ok: false, error: `Only your own message can be edited, not "${row.role}"` });
+                return;
+            }
+            setMessageText.run(text, id, position);
+            sendJson(res, { ok: true });
+            return;
+        }
+
         if (urlPath === '/api/sessions/messages') {
             const { id } = await readJson(req);
             const meta = getSessionMeta.get(id) || {};
@@ -2073,6 +2175,13 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // адреса встроенной доски (её разметка, /_next/* и её собственные разделы API)
+    // уходят на её бинарь. Список разделов явный — наши маршруты она не перехватывает
+    if (kanban.owns(urlPath)) {
+        kanban.proxy(req, res, urlPath);
+        return;
+    }
+
     if (urlPath.startsWith('/api/')) {
         handleApi(req, res, urlPath);
         return;
@@ -2089,6 +2198,13 @@ const server = http.createServer((req, res) => {
 
     fs.readFile(filePath, (err, data) => {
         if (err) {
+            // такого файла у нас нет. Если это похоже на маршрут встроенной доски
+            // (GET за путём без расширения) — отдаём его ей, а не 404: свои адреса
+            // вроде /project/<id> она знает сама, перечислить их заранее нельзя
+            if (kanban.ownsFallback(req, urlPath)) {
+                kanban.proxy(req, res, urlPath);
+                return;
+            }
             res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('404 Not Found');
             return;
         }

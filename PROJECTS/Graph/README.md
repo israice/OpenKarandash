@@ -52,6 +52,12 @@ Node labels appear as you zoom in: at a wide view they would blur into mush, so 
 | `section` | A `// ---------- … ----------` separator comment in a file of 200 lines or more | yes |
 | `function` | A top-level function in such a large file | no |
 | `session` | A note about a past session from `vault/Sessions/` | no |
+
+A session note is named `<date> <title> <id prefix>`, and the title is the user's first
+message — unbounded. Both parts are capped (`SESSION_TITLE_LIMIT`, `NOTE_NAME_LIMIT` in
+`graph-server.js`): a full path over 260 characters cannot be written on Windows, and the
+failure arrives as `ENOENT` on open — which reads as "no such directory" and used to take
+down the whole map rebuild, not just that one note.
 | `note` | A note written by hand in the vault root | yes |
 | `history` | The "files that change together" summary from git history | no |
 

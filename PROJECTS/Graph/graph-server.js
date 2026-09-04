@@ -98,10 +98,17 @@ const SECTION = /^\s*\/\/ -{3,} (.+?) -{3,}\s*$/;
 const TOP_FUNCTION = /^(\s*)(?:async )?function ([A-Za-z0-9_$]+)\s*\(/;
 const BIG_FILE_LINES = 200; // мелкие файлы на секции не режем — только зашумит граф
 
+// Потолок длины имени заметки. Полный путь в Windows обрывается на 260 символах,
+// и заметка с более длинным именем просто не пишется — причём ошибка приходит
+// как ENOENT на open, то есть выглядит как «нет такой папки», а не «слишком
+// длинно». Роняет это всю пересборку карты целиком, а не одну заметку, поэтому
+// режем здесь — в единственном месте, где имена заметок вообще собираются
+const NOTE_NAME_LIMIT = 120;
+
 // имя заметки должно быть уникальным по всему vault: buildVaultGraph резолвит
 // [[ссылки]] по basename, как это делает сам Obsidian
 function noteName(text) {
-    return text.replace(/[\\/:*?"<>|]/g, '-').trim();
+    return text.replace(/[\\/:*?"<>|]/g, '-').trim().slice(0, NOTE_NAME_LIMIT).trim();
 }
 
 // секции (комментарии-разделители) и функции верхнего уровня — узлы внутри файла.
@@ -533,9 +540,15 @@ function buildVaultGraph() {
 // это память: её не сносим даже при сбросе списка сессий
 const EDITING_TOOLS = /^(Edit|Write|NotebookEdit) (.+)$/;
 
+// заголовок сессии — это первое сообщение пользователя, длины у него нет никакой.
+// Режем его отдельно и до сборки имени: общий потолок noteName обрубил бы хвост,
+// а в хвосте лежит кусок id — то единственное, что делает имя уникальным
+const SESSION_TITLE_LIMIT = 80;
+
 function sessionNote(session) {
     const date = String(session.updatedAt || '').slice(0, 10);
-    return noteName(`${date} ${deps.sessionTitle(session)} ${String(session.id).slice(0, 8)}`);
+    const title = String(deps.sessionTitle(session) || '').slice(0, SESSION_TITLE_LIMIT).trim();
+    return noteName(`${date} ${title} ${String(session.id).slice(0, 8)}`);
 }
 
 function syncSessionNotes() {
@@ -625,8 +638,11 @@ function ftsQuery(raw) {
 // индекс собираем целиком: весь проект — сотни килобайт, полная пересборка
 // занимает единицы миллисекунд, инкрементальность тут не окупается
 function rebuildSearchIndex() {
-    searchDb.exec('BEGIN');
     try {
+        // BEGIN тоже внутри try: занятая база (второй процесс, checkpoint) роняла
+        // его исключением мимо этого catch, а пересборка идёт из таймера — некому
+        // было ловить, и сервер выключался целиком
+        searchDb.exec('BEGIN');
         searchDb.exec('DELETE FROM docs');
 
         // код: крупные файлы режем по секциям, чтобы попадание указывало на узел графа
@@ -664,7 +680,9 @@ function rebuildSearchIndex() {
 
         searchDb.exec('COMMIT');
     } catch (error) {
-        searchDb.exec('ROLLBACK');
+        // откат без открытой транзакции — сам по себе исключение («no transaction
+        // is active»), и оно улетело бы выше catch
+        try { searchDb.exec('ROLLBACK'); } catch { /* транзакции не было */ }
         console.error(`Failed to build the search index: ${error.message}`);
     }
 }
@@ -803,4 +821,5 @@ module.exports = {
     createRoutes,
     prepareVault,
     projectFiles, // нужен сторожу файлов в server.js: состав папки проекта
+    noteName,     // нужен смоуку: потолок длины имени проверяется без HTTP
 };

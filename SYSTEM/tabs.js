@@ -20,8 +20,11 @@
                 try { return localStorage.getItem(LAST_VIEW_KEY); } catch { return null; }
             }
 
-            // показываем один вид, активную кнопку панели помечаем через aria-pressed
-            function showView(name) {
+            // показываем один вид, активную кнопку панели помечаем через aria-pressed.
+            // restored=true — вкладку не выбирали, её просто вернули после перезагрузки
+            // страницы. Разделу это важно знать, если открытие само по себе что-то
+            // запускает: восстановление вкладки не должно считаться просьбой пользователя
+            function showView(name, restored = false) {
                 // страницы кнопки «+» лежат поверх вкладок — их скрываем всегда,
                 // в том числе при программном MissionTabs.show из app.js
                 window.MissionPages?.hideAll();
@@ -38,6 +41,11 @@
                 if (name === 'graph') MissionGraph.show();
                 if (name === 'flow') MissionFlow.center();
                 if (name === 'book') MissionBookTab.show();
+                // Kanban поднимает сторонний бинарь beads-web, поэтому восстановление
+                // вкладки ему передаётся отдельно: после `node server.js` страница
+                // перезагружается сама, и молчаливый запуск чужого процесса выглядел
+                // бы так, будто сервер завёл его сам (DOCS/decisions/021)
+                if (name === 'kanban') MissionKanban.show(restored);
                 saveLastView(name);
             }
 
@@ -50,7 +58,7 @@
             const lastView = readLastView() || 'chat';
             // страницы кнопки «+» приходят с сервера асинхронно, поэтому 'page:<id>'
             // восстанавливает уже сам new-button.js — здесь вкладку не трогаем
-            if (!lastView.startsWith('page:')) showView(App.VIEWS[lastView] ? lastView : 'home');
+            if (!lastView.startsWith('page:')) showView(App.VIEWS[lastView] ? lastView : 'home', true);
 
             // пункты боковых меню пока только сообщают о нажатии
             for (const nav of document.querySelectorAll('.side-nav')) {

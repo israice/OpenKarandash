@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "create-beads-orchestration": {
+      "source": "AvivK5498/The-Claude-Protocol",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "5ba3f1e53a3da0f140e0216d1dce249eb8f4f425870ddedf5fb0037af013f526"
+    }
+  }
+}

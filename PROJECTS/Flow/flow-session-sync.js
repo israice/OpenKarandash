@@ -22,8 +22,11 @@
 
     async function rebuild(sessionId, flow, generation) {
         const { messages = [] } = await App.api('/api/sessions/messages', { id: sessionId });
-        if (generation !== liveGeneration) return;
-        MissionFlow.buildFromSession(flow, messages);
+        // пока шёл запрос, пользователь мог уйти на другой пункт меню. Строить туда
+        // нельзя: buildFromSession делает свой канвас активным (setActiveFlow), и ноды
+        // чужой сессии показались бы поверх того канваса, который человек открыл
+        if (generation !== liveGeneration || activeFlow() !== flow) return;
+        MissionFlow.buildFromSession(flow, messages, sessionId);
     }
 
     // если сессия сейчас выполняется, сервер отдаёт её поток NDJSON — тот же
@@ -143,6 +146,17 @@
     select.addEventListener('change', () => {
         if (select.value) syncFromSession(select.value);
         else liveGeneration += 1; // сброс на плейсхолдер — за прежней сессией больше не следим
+    });
+
+    // переход на пункт меню, которому список сессий показывается: граф строится
+    // заново прямо сейчас. Раньше это делалось один раз за загрузку страницы, и
+    // канвас, открытый переключением пункта, оставался пустым до тех пор, пока
+    // сессию не выберут в списке руками. Обработчик вешаем на #flowNav после
+    // flow.js — к этому моменту активный пункт уже сменился (см. setActiveFlow)
+    document.getElementById('flowNav')?.addEventListener('click', (e) => {
+        if (!e.target.closest('.side-nav__item') || e.target.closest('.side-nav__delete')) return;
+        if (select.hidden || !select.value) return;
+        syncFromSession(select.value);
     });
 
     // новый ход по выбранной сессии мог начаться позже построения графа

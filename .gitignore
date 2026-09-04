@@ -2,3 +2,4 @@
 .playwright-mcp
 /DATA/
 /node_modules/
+/.agents/

@@ -638,3 +638,130 @@ textarea.node-modal__field {
     justify-content: flex-end;
     margin-top: 4px;
 }
+
+/* --- виды нод сессии (см. NODE_KINDS/TOOL_KINDS в flow.js) ---
+   роль сообщения читается на канвасе без раскрытия карточки: цвет семейства
+   уходит в полосу слева, эмодзи — в аватар. Цвет держим переменной, чтобы
+   правило полосы было одно на все семейства */
+.flow-node--kind-user { --flow-kind-color: #5aa9ff; }
+.flow-node--kind-assistant { --flow-kind-color: #7bffb0; }
+.flow-node--kind-thinking { --flow-kind-color: #c084fc; }
+.flow-node--kind-hook { --flow-kind-color: #ffb84d; }
+.flow-node--kind-system { --flow-kind-color: #8b93a1; }
+.flow-node--kind-unknown { --flow-kind-color: #6b7280; }
+.flow-node--kind-tool { --flow-kind-color: #9aa3b0; }
+.flow-node--kind-tool-mcp { --flow-kind-color: #f472b6; }
+.flow-node--kind-tool-web { --flow-kind-color: #38bdf8; }
+.flow-node--kind-tool-file { --flow-kind-color: #facc15; }
+.flow-node--kind-tool-shell { --flow-kind-color: #4ade80; }
+.flow-node--kind-tool-task { --flow-kind-color: #a78bfa; }
+.flow-node--kind-tool-ask { --flow-kind-color: #fb923c; }
+.flow-node--kind-tool-search { --flow-kind-color: #22d3ee; }
+
+.flow-node[class*="flow-node--kind-"] {
+    border-left: 3px solid var(--flow-kind-color, #2e3138);
+}
+
+/* шаг, закончившийся ошибкой инструмента или хука (toolError). Красим рамку,
+   а не тень: тень занята выделением ноды (.flow-node--selected), и выделение
+   должно оставаться видимым поверх ошибки */
+.flow-node--error {
+    border-color: #ff6b6b;
+}
+
+/* --- гармошка ноды сессии (см. applyNodeFacts в flow.js) ---
+   три секции «что вошло / что произошло / что вышло» на нативном <details>:
+   раскрытием занимается браузер, JS только пересчитывает раскладку по toggle */
+.flow-node__facts {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0 16px 12px;
+}
+
+.flow-node__fact {
+    border: 1px solid #2e3138;
+    border-radius: 8px;
+    background: #14161a;
+}
+
+.flow-node__fact-summary {
+    padding: 5px 10px;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #7c818b;
+    cursor: pointer;
+}
+
+.flow-node__fact-summary:hover {
+    color: #d8dade;
+}
+
+.flow-node__fact[open] .flow-node__fact-summary {
+    border-bottom: 1px solid #2e3138;
+}
+
+.flow-node__fact-text {
+    margin: 0;
+    padding: 8px 10px;
+    /* текст ноды не выделяется мышью (.flow-node, user-select: none), а содержимое
+       шага копируют — здесь выделение возвращаем */
+    user-select: text;
+    max-height: 260px;
+    overflow: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.68rem;
+    line-height: 1.45;
+    color: #9a9ea6;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+.flow-node__fact--error {
+    border-color: #ff6b6b;
+}
+
+.flow-node__fact--error .flow-node__fact-text {
+    color: #ffb1b1;
+}
+
+/* нода-документ (см. applyFileNode в flow.js): один файл — одна нода, ребро от
+   каждого шага, который его трогал. Фиолетовый фон вместо белой полосы слева —
+   md-файл в контексте сессии должен быть виден сразу, без раскрытия карточки */
+.flow-node--kind-doc {
+    --flow-kind-color: #a78bfa;
+    background: linear-gradient(180deg, #2a2140, #201a33);
+    border-color: #4c3d78;
+}
+
+.flow-node__open {
+    display: block;
+    margin: 0 16px 12px;
+    padding: 5px 10px;
+    border: 1px solid #2e3138;
+    border-radius: 8px;
+    background: #1e2128;
+    color: #d8dade;
+    font: inherit;
+    font-size: 0.72rem;
+    cursor: pointer;
+}
+
+.flow-node__open:hover {
+    background: #2b4d78;
+    color: #f2f2f4;
+}
+
+/* секция «что произошло» у своей реплики: её текст правится прямо здесь и уходит
+   в саму сессию (см. focusout в flow.js) */
+.flow-node__fact-text--editable {
+    cursor: text;
+    color: #d8dade;
+}
+
+.flow-node__fact-text--editable:focus {
+    outline: 1px dashed #6ea8fe;
+    outline-offset: -1px;
+}

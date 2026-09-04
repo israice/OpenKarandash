@@ -827,6 +827,9 @@
         show(force) { showGraph(force); },
         // открыть панель редактирования произвольного файла по пути, в обход узла графа
         openFile(path) { chatFilePanelEditor.open({ file: path, kind: 'file', label: path }); },
+        // то же, но окном поверх страницы: панель живёт внутри вкладки Chat, а звать
+        // редактор файла нужно и с чужого экрана — Flow открывает так свои ноды-документы
+        openFileModal(path) { fileModalEditor.open({ file: path, kind: 'file', label: path }); },
         closeFilePanel,
         // тот же редактор файла, но для чужой панели: вкладка Book собирает свою
         // сама (PROJECTS/Book/book-tab.js), а разметку узлов графа знает только этот файл

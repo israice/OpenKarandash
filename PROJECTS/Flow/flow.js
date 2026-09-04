@@ -23,10 +23,12 @@
                         pendingCenter = true;
                     }
                 },
-                // вызывается из PROJECTS/Flow/flow-session-sync.js по кнопке в тулбаре
-                buildFromSession(flow, messages) {
-                    if (buildSessionFlow) buildSessionFlow(flow, messages);
-                    else pendingBuild = { flow, messages };
+                // вызывается из PROJECTS/Flow/flow-session-sync.js по кнопке в тулбаре.
+                // sessionId нужен для id нод (flowNode_<сессия>_<позиция>): по нему
+                // перестройка отличает свои ноды от заведённых руками
+                buildFromSession(flow, messages, sessionId) {
+                    if (buildSessionFlow) buildSessionFlow(flow, messages, sessionId);
+                    else pendingBuild = { flow, messages, sessionId };
                 },
             };
 
@@ -53,9 +55,25 @@
             function flowGet(key, fallback) {
                 return flowState[key] !== undefined ? flowState[key] : fallback;
             }
+            // построение графа сессии трогает позиции, тексты и граф на каждой ноде —
+            // без накопления сессия в 200 сообщений давала сотни POST подряд. На время
+            // построения копим тронутые ключи и шлём их один раз в конце: ключей всего
+            // четыре, а /api/flow/state/set принимает ровно одну пару за запрос
+            // (серверную половину этап не трогает — см. TASKS.md)
+            let flowBatch = null;
             function flowSet(key, value) {
                 flowState[key] = value;
-                App.api('/api/flow/state/set', { key, value });
+                if (flowBatch) flowBatch.add(key);
+                else App.api('/api/flow/state/set', { key, value });
+            }
+            function beginFlowBatch() {
+                if (!flowBatch) flowBatch = new Set();
+            }
+            function flushFlowBatch() {
+                const keys = flowBatch;
+                flowBatch = null;
+                if (!keys) return;
+                for (const key of keys) App.api('/api/flow/state/set', { key, value: flowState[key] });
             }
 
             // нода «New»: дата/время открытия и имя проекта
@@ -392,6 +410,12 @@
                 }
 
                 canvas.addEventListener('wheel', (e) => {
+                    // внутри раскрытой секции ноды колесо листает её текст, а не зумит
+                    // канвас: иначе до конца длинного результата вызова не добраться.
+                    // Но только пока там есть что листать — над короткой секцией
+                    // колесо должно зумить, как и над всей остальной картой
+                    const fact = e.target.closest('.flow-node__fact-text');
+                    if (fact && fact.scrollHeight > fact.clientHeight) return;
                     e.preventDefault();
                     zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.1 : 1 / 1.1);
                 }, { passive: false });
@@ -489,6 +513,18 @@
                 }
                 applyTexts(node);
                 applyTexts(startNode);
+
+                // тип узла (.flow-node__type) — свойство ноды, а не украшение: на нём
+                // держится гейт «ask_human» (§7 chat.md), поэтому выбор переживает
+                // перезагрузку. Ноды сессии сюда не попадают: им тип ставит построение
+                const TYPES_KEY = 'flowNodeTypes';
+                function loadTypes() {
+                    return flowGet(TYPES_KEY, {});
+                }
+                function applyNodeType(n) {
+                    const type = loadTypes()[n.id];
+                    if (type) setNodeType(n, type);
+                }
 
                 // вопросы под телом ноды — переменное число полей (кнопка + добавляет
                 // ещё), поэтому хранятся отдельно от заголовка/тела/тела: там всегда
@@ -689,6 +725,10 @@
                     if (!field || field.id) return;
                     field.contentEditable = 'false';
                     const n = field.closest('.flow-node');
+                    // правка текста ноды сессии живёт до ближайшей перестройки графа
+                    // и в состояние не пишется — она всё равно будет перезаписана
+                    // сообщением (правка самой сессии — этап 3 в TASKS.md)
+                    if (n.dataset.session) return;
                     const all = loadTexts();
                     all[`${n.id}:${fieldName(field)}`] = field.textContent;
                     flowSet(TEXT_KEY, all);
@@ -701,7 +741,14 @@
                 function loadPositions() {
                     return flowGet(POS_KEY, {});
                 }
+                // ноды сессии (dataset.session) в состояние Flow не попадают вовсе —
+                // ни позицией, ни текстом, ни ребром: они целиком выводятся из сообщений
+                // и рисуются заново при каждом построении (buildSessionFlow). Хранить их
+                // значило бы держать вторую копию переписки, и на большой сессии
+                // flowNodeText перерастал лимит тела запроса (readJson, 100 КБ) —
+                // запись состояния молча обрывалась вся целиком
                 function savePosition(el) {
+                    if (el.dataset.session) return;
                     const all = loadPositions();
                     all[el.id] = { left: el.offsetLeft, top: el.offsetTop };
                     flowSet(POS_KEY, all);
@@ -724,9 +771,16 @@
                     flowSet(GRAPH_KEY, {
                         nodeSeq,
                         nodes: [...nodeFlow.entries()]
-                            .filter(([n]) => n !== startNode && n !== node)
+                            .filter(([n]) => n !== startNode && n !== node && !n.dataset.session)
                             .map(([n, flow]) => ({ id: n.id, flow })),
-                        edges: edges.map((e) => ({ from: e.from.id, to: e.to.id, direction: e.direction })),
+                        // ребро между двумя нодами сессии не сохраняем — оно и так
+                        // выводится из сообщений. А вот ребро, которым пользователь
+                        // привязал свою ноду к ноде сессии, — единственное, что помнит
+                        // её место в цепочке, и его беречь надо: id ноды сессии
+                        // детерминированный, после перестройки он тот же самый
+                        edges: edges
+                            .filter((e) => !e.from.dataset.session || !e.to.dataset.session)
+                            .map((e) => ({ from: e.from.id, to: e.to.id, direction: e.direction })),
                     });
                 }
 
@@ -734,37 +788,48 @@
                 // вызывается один раз при первом показе вкладки, до отрисовки рёбер
                 function restoreGraph() {
                     const graph = loadGraph();
-                    if (!graph || !graph.edges || !graph.edges.length) return;
+                    if (!graph || !graph.nodes || !graph.nodes.length) return;
 
                     const positions = loadPositions();
                     const flowById = {};
                     for (const n of graph.nodes || []) flowById[n.id] = n.flow;
 
                     const byId = { [startNode.id]: startNode, [node.id]: node };
-                    for (const e of graph.edges) {
-                        for (const id of [e.from, e.to]) {
-                            if (byId[id]) continue;
-                            const clone = nodeTemplate.content.firstElementChild.cloneNode(true);
-                            clone.id = id;
-                            surface.append(clone);
-                            attachAddBottom(clone);
-                            attachAddRight(clone);
-                            populateNodeAgentSelects(clone);
-                            if (positions[id]) {
-                                clone.style.left = positions[id].left + 'px';
-                                clone.style.top = positions[id].top + 'px';
-                            }
-                            nodeFlow.set(clone, flowById[id] || 'New');
-                            applyTexts(clone);
-                            applyQuestions(clone);
-                            byId[id] = clone;
+                    // идём по списку нод, а не по концам рёбер: нода без единой связи
+                    // (одиночная заглушка, только что заведённый узел) тоже сохранена,
+                    // и раньше она молча пропадала при каждой перезагрузке страницы.
+                    // Концы рёбер, которых в списке нет, — это ноды сессии: их создаст
+                    // построение графа, а ребро до тех пор ждёт (см. pendingEdges)
+                    for (const id of Object.keys(flowById)) {
+                        if (byId[id]) continue;
+                        const clone = nodeTemplate.content.firstElementChild.cloneNode(true);
+                        clone.id = id;
+                        surface.append(clone);
+                        attachAddBottom(clone);
+                        attachAddRight(clone);
+                        populateNodeAgentSelects(clone);
+                        if (positions[id]) {
+                            clone.style.left = positions[id].left + 'px';
+                            clone.style.top = positions[id].top + 'px';
                         }
+                        nodeFlow.set(clone, flowById[id] || 'New');
+                        applyTexts(clone);
+                        applyQuestions(clone);
+                        applyNodeType(clone);
+                        byId[id] = clone;
                     }
                     nodeSeq = Math.max(nodeSeq, graph.nodeSeq || 0);
 
                     for (const e of [...edges]) removeEdge(e);
-                    for (const e of graph.edges) {
-                        if (byId[e.from] && byId[e.to]) createEdge(byId[e.from], byId[e.to], null, e.direction);
+                    pendingEdges = [];
+                    for (const e of graph.edges || []) {
+                        if (!byId[e.from] || !byId[e.to]) { pendingEdges.push(e); continue; } // ждёт своей ноды сессии
+                        // второе входящее ребро в ту же ноду (старый граф, заведённый до
+                        // запрета такого соединения) раскладка не учитывает и рисует
+                        // стрелкой не в ту сторону — отбрасываем его при восстановлении,
+                        // как теперь и не даём создать заново
+                        if (edges.some((ed) => ed.to === byId[e.to])) continue;
+                        createEdge(byId[e.from], byId[e.to], null, e.direction);
                     }
 
                     // позиции сохранены под старую высоту нод — если разметка ноды
@@ -801,6 +866,27 @@
                 const nodeTemplate = document.getElementById('flowNodeTemplate');
                 let nodeSeq = 0;
                 const edges = [];
+                // рёбра из сохранённого графа, чья нода сессии на канвасе ещё не появилась:
+                // ждут ближайшего построения графа (см. applyPendingEdges)
+                let pendingEdges = [];
+                // идёт построение графа сессии. Каждая нода в одиночку зовёт раскладку,
+                // сохранение и отрисовку дуг; на пятидесяти нодах это давало пять секунд
+                // замершей вкладки, хотя нужен один пересчёт — в самом конце
+                let bulkBuild = false;
+                function afterNodeChange() {
+                    if (bulkBuild) return;
+                    layoutAllNodes();
+                    saveGraph();
+                    drawEdge();
+                }
+
+                // id ноды. У заведённых руками — прежний счётчик со временем создания;
+                // ноды сессии просят свой (flowNode_<сессия>_<позиция>, см. buildSessionFlow),
+                // и он держится за конкретное сообщение: живая перестройка по нему находит
+                // уже стоящую ноду и обновляет её, вместо того чтобы снести и создать заново
+                function nextNodeId(id) {
+                    return id || 'flowNode_' + (++nodeSeq) + '_' + Date.now();
+                }
 
                 // провайдер/модель/effort у обычных узлов — тот же набор, что и у
                 // Секретаря, но без сохранения в localStorage: как type/context/scope
@@ -851,26 +937,44 @@
                     renderNodeModelEffort(e.target.closest('.flow-node'));
                 });
 
-                // геометрия дуги: сторона крепления фиксирована типом плюса, которым
-                // ребро создано (горизонтальный — право/лево по центру высоты,
-                // вертикальный — низ/верх по центру ширины), а не углом между
-                // центрами нод — иначе при перетаскивании ноды крепление съезжало
-                // бы на другую сторону вместо того, чтобы оставаться на своём входе/выходе
+                // геометрия дуги: сторона крепления идёт от типа плюса, которым ребро
+                // создано (горизонтальный — право/лево по центру высоты, вертикальный —
+                // низ/верх по центру ширины), а не от угла между центрами нод — при обычной
+                // раскладке цель всегда лежит по нужную сторону, и крепление держится своего
+                // входа/выхода. Меняется сторона только когда цель всё же оказалась
+                // не там (см. ниже) — иначе кривая рисовалась бы задом наперёд
                 function edgeGeometry(from, to, direction) {
                     const fromCX = from.offsetLeft + from.offsetWidth / 2;
                     const fromCY = from.offsetTop + from.offsetHeight / 2;
                     const toCX = to.offsetLeft + to.offsetWidth / 2;
                     const toCY = to.offsetTop + to.offsetHeight / 2;
 
+                    // раскладка держит цель по нужную сторону от источника всегда (вправо —
+                    // та же строка, вниз — ниже), но общий файл сессии — законное исключение:
+                    // на него ведут рёбра сразу от нескольких шагов, и не для каждого из них
+                    // цель окажется строго справа/снизу. Крепление в таком случае перекладываем
+                    // на противоположную сторону — иначе кривая гнулась бы назад через ноду
                     let start, end, ux, uy;
                     if (direction === 'vertical') {
-                        start = { x: fromCX, y: from.offsetTop + from.offsetHeight };
-                        end = { x: toCX, y: to.offsetTop };
-                        ux = 0; uy = 1;
+                        if (to.offsetTop + to.offsetHeight / 2 < from.offsetTop) {
+                            start = { x: fromCX, y: from.offsetTop };
+                            end = { x: toCX, y: to.offsetTop + to.offsetHeight };
+                            ux = 0; uy = -1;
+                        } else {
+                            start = { x: fromCX, y: from.offsetTop + from.offsetHeight };
+                            end = { x: toCX, y: to.offsetTop };
+                            ux = 0; uy = 1;
+                        }
                     } else {
-                        start = { x: from.offsetLeft + from.offsetWidth, y: fromCY };
-                        end = { x: to.offsetLeft, y: toCY };
-                        ux = 1; uy = 0;
+                        if (to.offsetLeft + to.offsetWidth / 2 < from.offsetLeft) {
+                            start = { x: from.offsetLeft, y: fromCY };
+                            end = { x: to.offsetLeft + to.offsetWidth, y: toCY };
+                            ux = -1; uy = 0;
+                        } else {
+                            start = { x: from.offsetLeft + from.offsetWidth, y: fromCY };
+                            end = { x: to.offsetLeft, y: toCY };
+                            ux = 1; uy = 0;
+                        }
                     }
 
                     // изгиб считаем от зазора вдоль основной оси (dy для вертикали, dx для
@@ -939,7 +1043,7 @@
                     const from = edge.from, to = edge.to;
 
                     const newNode = nodeTemplate.content.firstElementChild.cloneNode(true);
-                    newNode.id = 'flowNode_' + (++nodeSeq) + '_' + Date.now();
+                    newNode.id = nextNodeId();
                     surface.append(newNode);
                     attachAddBottom(newNode);
                     attachAddRight(newNode);
@@ -952,9 +1056,7 @@
                     removeEdge(edge);
                     createEdge(from, newNode, null, edge.direction);
                     createEdge(newNode, to, null, edge.direction);
-                    layoutAllNodes();
-                    saveGraph();
-                    drawEdge();
+                    afterNodeChange();
                 }
 
                 // точка крепления ребра на ноде — низ по центру для вертикали,
@@ -1005,8 +1107,15 @@
                     connecting.path.setAttribute('d',
                         `M${anchor.x},${anchor.y} C${anchor.x + ux * bend},${anchor.y + uy * bend} ${pt.x - ux * bend},${pt.y - uy * bend} ${pt.x},${pt.y}`);
 
+                    // у ноды с уже существующим входящим ребром не может появиться второе:
+                    // раскладка (layoutAllNodes) держит позицию только по первому родителю,
+                    // и второе ребро рисовалось бы поверх места, которое диктует направление
+                    // совсем другой связи — стрелка «вправо» упиралась в ноду не в той строке,
+                    // «вниз» — в ноду не под источником. Поэтому такую цель не подсвечиваем
+                    // и не даём в неё соединиться вовсе
                     const hovered = document.elementFromPoint(e.clientX, e.clientY)?.closest('.flow-node');
-                    const target = hovered && hovered !== connecting.source ? hovered : null;
+                    const hasParent = hovered && edges.some((ed) => ed.to === hovered);
+                    const target = hovered && hovered !== connecting.source && !hasParent ? hovered : null;
                     if (connecting.target !== target) {
                         if (connecting.target) connecting.target.classList.remove('flow-node--drop-target');
                         if (target) target.classList.add('flow-node--drop-target');
@@ -1026,7 +1135,7 @@
                         else addChildNodeRight(source);
                         return;
                     }
-                    if (!target || edges.some((ed) => ed.from === source && ed.to === target)) return;
+                    if (!target || edges.some((ed) => ed.to === target)) return;
                     createEdge(source, target, null, direction);
                     saveGraph();
                     drawEdge();
@@ -1042,9 +1151,10 @@
                 // добавляет дочерний узел снизу; точную сетку тут же расставляет
                 // layoutAllNodes() по всему канвасу — так чинятся и все накопившиеся
                 // наложения, а не только ветка вокруг `from`
-                function addChildNode(from) {
+                function addChildNode(from, id, sessionId) {
                     const newNode = nodeTemplate.content.firstElementChild.cloneNode(true);
-                    newNode.id = 'flowNode_' + (++nodeSeq) + '_' + Date.now();
+                    newNode.id = nextNodeId(id);
+                    if (sessionId) newNode.dataset.session = sessionId;
                     surface.append(newNode);
                     attachAddBottom(newNode);
                     attachAddRight(newNode);
@@ -1054,9 +1164,7 @@
                     newNode.style.top = Math.round(from.offsetTop + from.offsetHeight + NODE_GAP_Y) + 'px';
                     savePosition(newNode);
                     createEdge(from, newNode, null, 'vertical');
-                    layoutAllNodes();
-                    saveGraph();
-                    drawEdge();
+                    afterNodeChange();
                     return newNode;
                 }
 
@@ -1067,9 +1175,10 @@
                 }
 
                 // добавляет дочерний узел справа — симметрично addChildNode
-                function addChildNodeRight(from) {
+                function addChildNodeRight(from, id, sessionId) {
                     const newNode = nodeTemplate.content.firstElementChild.cloneNode(true);
-                    newNode.id = 'flowNode_' + (++nodeSeq) + '_' + Date.now();
+                    newNode.id = nextNodeId(id);
+                    if (sessionId) newNode.dataset.session = sessionId;
                     surface.append(newNode);
                     attachAddBottom(newNode);
                     attachAddRight(newNode);
@@ -1079,9 +1188,7 @@
                     newNode.style.top = Math.round(from.offsetTop + (from.offsetHeight - newNode.offsetHeight) / 2) + 'px';
                     savePosition(newNode);
                     createEdge(from, newNode, null, 'horizontal');
-                    layoutAllNodes();
-                    saveGraph();
-                    drawEdge();
+                    afterNodeChange();
                     return newNode;
                 }
 
@@ -1230,8 +1337,17 @@
                     const widthOf = new Map();
                     const groupsOf = new Map();
                     const extrasOf = new Map();
+                    // цепочка, которую сейчас меряем. Комментарий выше обещает дерево,
+                    // но у ноды может оказаться и два входящих ребра (повторный drag-connect,
+                    // накопленные сборки на одном канвасе) — тогда цепочки ссылаются друг
+                    // на друга по кругу, и measure→measure не заканчивается вовсе:
+                    // вкладка падала с «Maximum call stack size exceeded». Повторный вход
+                    // отдаёт 0 — ветка уже учтена тем вызовом, который её и меряет
+                    const measuring = new Set();
                     function measure(chain) {
                         if (widthOf.has(chain)) return widthOf.get(chain);
+                        if (measuring.has(chain)) return 0;
+                        measuring.add(chain);
                         const groups = chainChildGroups(chain);
                         const byIdx = new Map(groups.map((g) => [chain.indexOf(g.anchor), g]));
                         for (const g of groups) g.width = g.items.reduce((sum, c) => sum + measure(c), 0);
@@ -1242,6 +1358,7 @@
                         widthOf.set(chain, baseWidth + extraWidth);
                         groupsOf.set(chain, byIdx);
                         extrasOf.set(chain, { list: rightExtras, baseWidth });
+                        measuring.delete(chain);
                         return baseWidth + extraWidth;
                     }
 
@@ -1251,6 +1368,9 @@
                     const seenChains = new Set();
                     let maxRowSeen = -1;
                     function place(chain, minCol, chainRow) {
+                        // та же защита, что и в measure: цепочку, уже получившую колонку,
+                        // второй раз не расставляем — иначе тот же круг ссылок зацикливает
+                        if (seenChains.has(chain)) return;
                         colStart.set(chain, minCol);
                         rowOf.set(chain, chainRow);
                         seenChains.add(chain);
@@ -1436,8 +1556,13 @@
                     if (!e.target.matches('.flow-node__type')) return;
                     e.target.style.color = e.target.selectedOptions[0].style.color;
                     // блок вопросов имеет смысл только у типа Question
-                    const questions = e.target.closest('.flow-node').querySelector('.flow-node__questions');
+                    const n = e.target.closest('.flow-node');
+                    const questions = n.querySelector('.flow-node__questions');
                     if (questions) questions.hidden = e.target.value !== 'question';
+                    if (n.dataset.session) return; // тип ноды сессии задаёт построение
+                    const all = loadTypes();
+                    all[n.id] = e.target.value;
+                    flowSet(TYPES_KEY, all);
                 });
 
                 // toggle «Context on/off» в правой половине строки типа узла
@@ -1455,26 +1580,102 @@
                     selectEdge(null);
                 });
 
+                // правка своей реплики в карточке уходит в саму сессию, а не только в
+                // подпись ноды (§10 chat.md). Сервер отдаёт правку только для роли user
+                // (см. /api/sessions/message/set): отказ откатывает поле и объясняет причину
+                surface.addEventListener('focusout', async (e) => {
+                    const pre = e.target.closest('.flow-node__fact-text');
+                    if (!pre || pre.contentEditable !== 'true') return;
+                    const n = pre.closest('.flow-node');
+                    const text = pre.textContent;
+                    if (!n.dataset.session || text === pre.dataset.saved) return;
+                    const res = await App.api('/api/sessions/message/set', {
+                        id: n.dataset.session,
+                        position: Number(n.dataset.position),
+                        text,
+                    });
+                    if (res.ok) {
+                        pre.dataset.saved = text;
+                        setNodeTexts(n, n.querySelector('.flow-node__title').textContent, truncate(text, 200));
+                        return;
+                    }
+                    pre.textContent = pre.dataset.saved || '';
+                    App.confirmModal(res.error || 'The server did not respond', { title: 'Message not changed', confirmText: 'OK', cancelText: 'Close' });
+                });
+
+                // кнопка ноды-документа: открываем файл тем же окном, которым его
+                // открывает клик по узлу графа (MissionGraph — внутри обработчика,
+                // чтобы порядок загрузки файлов ни на что не влиял)
+                surface.addEventListener('click', (e) => {
+                    const btn = e.target.closest('.flow-node__open');
+                    if (!btn) return;
+                    const path = btn.closest('.flow-node').dataset.file;
+                    if (path && window.MissionGraph) MissionGraph.openFileModal(path);
+                });
+
+                // раскрытие секции меняет высоту ноды — соседей надо раздвинуть, а дуги
+                // перерисовать. Событие toggle не всплывает, поэтому слушаем его в фазе
+                // перехвата; самим раскрытием по-прежнему занимается браузер
+                surface.addEventListener('toggle', (e) => {
+                    if (!e.target.classList?.contains('flow-node__fact')) return;
+                    layoutAllNodes();
+                    drawEdge();
+                }, true);
+
                 function deleteNode(n) {
                     for (const e of [...edges]) {
                         if (e.from === n || e.to === n) removeEdge(e);
                     }
                     n.remove();
                     nodeFlow.delete(n);
-                    const positions = loadPositions();
-                    delete positions[n.id];
-                    flowSet(POS_KEY, positions);
-                    selectedNode = null;
+                    // ноды сессии в состоянии и не лежали (см. savePosition) — чистить нечего
+                    if (!n.dataset.session) {
+                        const types = loadTypes();
+                        if (types[n.id]) {
+                            delete types[n.id];
+                            flowSet(TYPES_KEY, types);
+                        }
+                        const positions = loadPositions();
+                        delete positions[n.id];
+                        flowSet(POS_KEY, positions);
+                        // тексты и вопросы удалённой ноды раньше оставались в состоянии
+                        // навсегда: их ключи привязаны к id, который больше никому не выдадут
+                        const texts = loadTexts();
+                        for (const field of ['title', 'subtitle', 'body']) delete texts[`${n.id}:${field}`];
+                        flowSet(TEXT_KEY, texts);
+                        const questions = loadQuestions();
+                        if (questions[n.id]) {
+                            delete questions[n.id];
+                            flowSet(QUESTIONS_KEY, questions);
+                        }
+                    }
+                    // выделение снимаем только со своей же ноды: живая перестройка графа
+                    // сессии удаляет чужие ноды и не должна сбрасывать выбор пользователя
+                    if (selectedNode === n) selectedNode = null;
                     saveGraph();
                     drawEdge();
                 }
 
                 // на пустом канвасе нечего показать и не от чего плюсовать — заводим
                 // одну ноду-заглушку по центру, чтобы с неё можно было расти
-                function ensureRootNode(flow) {
-                    for (const n of nodeFlow.keys()) if (nodeFlow.get(n) === flow) return n;
+                function ensureRootNode(flow, id, sessionId) {
+                    // с готовым id заглушка не годится: зовущий (buildSessionFlow) просит
+                    // ноду именно под своё сообщение, а не любую уже стоящую на канвасе
+                    if (!id) {
+                        for (const n of nodeFlow.keys()) if (nodeFlow.get(n) === flow) return n;
+                    } else {
+                        for (const n of nodeFlow.keys()) {
+                            if (n.id !== id) continue;
+                            // нода могла приехать из сохранённого состояния (restoreGraph)
+                            // без пометки — без неё её текст пошёл бы в flow_state, то есть
+                            // переписка снова копилась бы второй копией (см. savePosition)
+                            if (sessionId) n.dataset.session = sessionId;
+                            return n;
+                        }
+                    }
                     const root = nodeTemplate.content.firstElementChild.cloneNode(true);
-                    root.id = 'flowNode_' + (++nodeSeq) + '_' + Date.now();
+                    root.id = nextNodeId(id);
+                    if (sessionId) root.dataset.session = sessionId;
                     root.querySelector('.flow-node__title').textContent = 'Start';
                     surface.append(root);
                     attachAddBottom(root);
@@ -1544,15 +1745,13 @@
                 function setNodeTexts(n, title, body) {
                     const titleEl = n.querySelector('.flow-node__title');
                     const bodyEl = n.querySelector('.flow-node__body');
+                    if (titleEl) titleEl.textContent = title;
+                    if (bodyEl) bodyEl.textContent = body;
+                    // текст ноды сессии — копия сообщения, хранить его незачем (см. savePosition)
+                    if (n.dataset.session) return;
                     const all = loadTexts();
-                    if (titleEl) {
-                        titleEl.textContent = title;
-                        all[`${n.id}:title`] = title;
-                    }
-                    if (bodyEl) {
-                        bodyEl.textContent = body;
-                        all[`${n.id}:body`] = body;
-                    }
+                    if (titleEl) all[`${n.id}:title`] = title;
+                    if (bodyEl) all[`${n.id}:body`] = body;
                     flowSet(TEXT_KEY, all);
                 }
 
@@ -1577,37 +1776,418 @@
                     if (questions) questions.hidden = type !== 'question';
                 }
 
+                // вид ноды сессии по роли сообщения: эмодзи в аватар, цвет — классом
+                // .flow-node--kind-* (см. flow.css), заголовок карточки. Роли те же,
+                // что записывает сервер (см. listMessages в server.js). Select
+                // .flow-node__type не трогаем: это словарь пользователя для его
+                // собственной разметки, а не тип факта из сессии
+                const NODE_KINDS = {
+                    user: { emoji: '👤', kind: 'user', title: 'Question' },
+                    assistant: { emoji: '💬', kind: 'assistant', title: 'Answer' },
+                    thinking: { emoji: '💭', kind: 'thinking', title: 'Reasoning' },
+                    hook: { emoji: '🪝', kind: 'hook', title: 'Hook' },
+                    system: { emoji: '🖥️', kind: 'system', title: 'System event' },
+                    unknown: { emoji: '❔', kind: 'unknown', title: 'Unrecognized event' },
+                    top_level: { emoji: '❔', kind: 'unknown', title: 'Event of unknown type' },
+                };
+
+                // семейства инструментов; первое совпадение выигрывает, поэтому префикс
+                // mcp__ стоит выше собственных имён — инструмент MCP-сервера может
+                // называться как угодно, включая Read или Task
+                const TOOL_KINDS = [
+                    [/^mcp__/, '🔌', 'tool-mcp'],
+                    [/^(WebSearch|WebFetch)$/, '🌐', 'tool-web'],
+                    [/^(Read|Write|Edit|NotebookEdit)$/, '📄', 'tool-file'],
+                    [/^(Bash|PowerShell)$/, '⌨️', 'tool-shell'],
+                    [/^Task$/, '🤖', 'tool-task'],
+                    [/^AskUserQuestion$/, '🙋', 'tool-ask'],
+                    [/^(Grep|Glob)$/, '🔍', 'tool-search'],
+                ];
+
+                function nodeKindOf(m) {
+                    if (m.role !== 'tool') return NODE_KINDS[m.role] || NODE_KINDS.unknown;
+                    const name = m.toolName || 'Tool';
+                    for (const [re, emoji, kind] of TOOL_KINDS) {
+                        if (re.test(name)) return { emoji, kind, title: name };
+                    }
+                    return { emoji: '🔧', kind: 'tool', title: name };
+                }
+
+                // ставит ноде вид: класс семейства (ровно один на ноду), пометку ошибки
+                // и эмодзи в аватар — тем же способом, что и ручной выбор иконки в меню
+                function setNodeKind(n, kind, emoji, isError) {
+                    for (const c of [...n.classList]) {
+                        if (c.startsWith('flow-node--kind-')) n.classList.remove(c);
+                    }
+                    n.classList.add('flow-node--kind-' + kind);
+                    n.classList.toggle('flow-node--error', !!isError);
+                    const avatar = n.querySelector('.flow-node__avatar');
+                    if (avatar) avatar.textContent = emoji;
+                }
+
+                // toolInput приходит сериализованным JSON (см. recordStep в server.js) —
+                // печатаем читаемо, многострочные значения (old_string/new_string правок
+                // кода) настоящими переносами, а не как «\n» внутри одной строки.
+                // Копия из PROJECTS/Feed/page.js: прямой зависимости Flow от Feed быть
+                // не может — Feed это страница кнопки «+», её удаляют из меню
+                // (DOCS/decisions/016)
+                function formatJsonValue(value, indent) {
+                    const pad = '  '.repeat(indent);
+                    const childPad = '  '.repeat(indent + 1);
+                    if (value === null || value === undefined) return 'null';
+                    if (Array.isArray(value)) {
+                        if (value.length === 0) return '[]';
+                        const items = value.map((v) => `${childPad}${formatJsonValue(v, indent + 1)}`);
+                        return `[\n${items.join(',\n')}\n${pad}]`;
+                    }
+                    if (typeof value === 'object') {
+                        const keys = Object.keys(value);
+                        if (keys.length === 0) return '{}';
+                        const items = keys.map((k) => `${childPad}${JSON.stringify(k)}: ${formatJsonValue(value[k], indent + 1)}`);
+                        return `{\n${items.join(',\n')}\n${pad}}`;
+                    }
+                    if (typeof value === 'string' && value.includes('\n')) {
+                        const lines = value.split('\n').map((line) => childPad + line);
+                        return `"""\n${lines.join('\n')}\n${childPad}"""`;
+                    }
+                    return JSON.stringify(value);
+                }
+                function prettyJson(raw) {
+                    if (!raw) return '';
+                    try { return formatJsonValue(JSON.parse(raw), 0); } catch { return raw; }
+                }
+                function truncate(s, n) { return s && s.length > n ? `${s.slice(0, n)}…` : (s || ''); }
+
+                // три секции шага: что вошло, что произошло, что вышло. Пустые не
+                // показываем — у реплики пользователя нет ни аргументов, ни результата
+                function sessionFacts(m) {
+                    const input = m.role === 'user'
+                        // в Chat-режиме модели уходит не то, что видно в чате, а текст с
+                        // приклеенной преамбулой (server.js) — показываем реально отправленное
+                        ? (m.inputSent && m.inputSent !== m.text ? m.inputSent : '')
+                        : prettyJson(m.toolInput);
+                    return [
+                        ['Input', input, false],
+                        ['What happened', m.text || '', false],
+                        ['Output', m.toolResult || '', !!m.toolError],
+                    ];
+                }
+
+                // гармошка в карточке: нативный <details>, своего JS на раскрытие нет.
+                // Секции сверяются по подписи и переиспользуются — иначе живая
+                // перестройка закрывала бы раскрытую секцию раз в секунду
+                function applyNodeFacts(n, m) {
+                    const sections = sessionFacts(m).filter(([, text]) => text);
+                    let box = n.querySelector('.flow-node__facts');
+                    if (!sections.length) {
+                        if (box) box.remove();
+                        return;
+                    }
+                    if (!box) {
+                        box = document.createElement('div');
+                        box.className = 'flow-node__facts';
+                        n.querySelector('.flow-node__body').after(box);
+                    }
+                    const items = [];
+                    for (const [label, text, isError] of sections) {
+                        let item = [...box.children].find((el) => el.dataset.label === label);
+                        if (!item) {
+                            item = document.createElement('details');
+                            item.className = 'flow-node__fact';
+                            item.dataset.label = label;
+                            const summary = document.createElement('summary');
+                            summary.className = 'flow-node__fact-summary';
+                            summary.textContent = label;
+                            const pre = document.createElement('pre');
+                            pre.className = 'flow-node__fact-text';
+                            item.append(summary, pre);
+                        }
+                        item.classList.toggle('flow-node__fact--error', isError);
+                        const pre = item.querySelector('.flow-node__fact-text');
+                        // «свои слова» правятся прямо здесь и уходят в саму сессию
+                        // (см. focusout ниже); остальные секции — запись факта, только чтение.
+                        // Присваиваем, только если значение меняется: переустановка
+                        // contentEditable у поля в фокусе сбивает каретку, а перестройка
+                        // при живом ходе идёт раз в секунду
+                        const editable = m.role === 'user' && label === 'What happened';
+                        const want = editable ? 'true' : 'false';
+                        if (pre.contentEditable !== want) pre.contentEditable = want;
+                        pre.classList.toggle('flow-node__fact-text--editable', editable);
+                        // пока поле в фокусе, живая перестройка не должна затирать набранное
+                        if (pre.textContent !== text && document.activeElement !== pre) {
+                            pre.textContent = text;
+                            pre.dataset.saved = text;
+                        }
+                        items.push(item);
+                    }
+                    for (const el of [...box.children]) {
+                        if (!items.includes(el)) el.remove();
+                    }
+                    // порядок восстанавливаем только когда он вправду нарушен: секция
+                    // «что вышло» появляется позже остальных, когда сервер дописывает
+                    // результат вызова. append переносит узел (удаляет и вставляет
+                    // заново), а перенос снимает фокус — правка реплики во время живого
+                    // хода теряла бы каретку на каждой перестройке
+                    const ordered = items.length === box.children.length
+                        && items.every((el, i) => box.children[i] === el);
+                    if (!ordered) box.append(...items);
+                }
+
+                // файл, которого коснулся шаг: путь берём из аргументов вызова.
+                // Разделители приводим к одному виду — иначе один и тот же файл,
+                // названный то абсолютным путём, то относительным, даст две ноды
+                function toolFilePath(m) {
+                    if (m.role !== 'tool' || !m.toolInput) return null;
+                    try {
+                        const input = JSON.parse(m.toolInput);
+                        if (input.file_path) return String(input.file_path).split('\\').join('/');
+                        // вызов Skill читает целиком SKILL.md в контекст — тот же факт,
+                        // что и Read, только путь не приходит полем, а собирается по
+                        // имени навыка. Скоуп «plugin:skill»/«dir:skill» неоднозначен
+                        // (без плагина или лишней папки не собрать верный путь без
+                        // догадок) — на таких молчим, чем дорисовывать наугад
+                        if (m.toolName === 'Skill' && input.skill && !String(input.skill).includes(':')) {
+                            return `.claude/skills/${input.skill}/SKILL.md`;
+                        }
+                        return null;
+                    } catch { return null; }
+                }
+
+                // пути документов, которых коснулось сообщение. Обычный шаг — один путь
+                // из toolInput.file_path (Read/Edit/…). CLAUDE.md и файл авто-памяти в
+                // трассу так не попадают вовсе: CLI подмешивает их в системный промпт до
+                // первого хода агента, вызова инструмента под это нет (см. TASKS.md,
+                // «Чего в плане нет и почему», и DOCS/decisions/019 — единственный честный
+                // канал для такого факта это хук). SessionStart-хук
+                // (.claude/hooks/context-files-node.js) сообщает реально загруженные им
+                // файлы списком в stdout — эта функция достаёт их из строки роли hook
+                function messageFilePaths(m) {
+                    const single = toolFilePath(m);
+                    if (single) return [single];
+                    if (m.role !== 'hook' || !m.toolResult) return [];
+                    try {
+                        const parsed = JSON.parse(m.toolResult);
+                        if (!Array.isArray(parsed.contextFiles)) return [];
+                        return parsed.contextFiles.map((p) => String(p).split('\\').join('/'));
+                    } catch { return []; }
+                }
+
+                // короткий детерминированный ключ пути: сам путь в id ноды не положить —
+                // слэши и точки ломают селектор, а хэша хватает, чтобы одна и та же
+                // строка всегда давала одну и ту же ноду
+                function pathKey(path) {
+                    let h = 0;
+                    for (let i = 0; i < path.length; i++) h = (Math.imul(h, 31) + path.charCodeAt(i)) | 0;
+                    return (h >>> 0).toString(36);
+                }
+
+                // нода документа: заголовок — имя файла, тело — полный путь, кнопка
+                // открывает его в том же окне файла, что и клик по узлу графа
+                function applyFileNode(n, path) {
+                    setNodeTexts(n, path.split('/').pop(), path);
+                    setNodeKind(n, 'doc', '🗒️', false);
+                    setNodeScope(n, 'system');
+                    setNodeType(n, 'system');
+                    n.dataset.file = path;
+                    if (!n.querySelector('.flow-node__open')) {
+                        const btn = document.createElement('button');
+                        btn.type = 'button';
+                        btn.className = 'flow-node__open';
+                        btn.textContent = 'Open file';
+                        n.querySelector('.flow-node__body').after(btn);
+                    }
+                }
+
+                // пустая нода-заглушка: не из сессии, ни с чем не соединена и ничего в
+                // себе не несёт. Всё, что пользователь в неё вписал или чем связал,
+                // выводит ноду из этой категории — такую не удаляем
+                function isBlankPlaceholder(n) {
+                    if (n.dataset.session || n === node || n === startNode) return false;
+                    if (edges.some((e) => e.from === n || e.to === n)) return false;
+                    const texts = loadTexts();
+                    if (['title', 'subtitle', 'body'].some((f) => texts[`${n.id}:${f}`])) return false;
+                    return !loadQuestions()[n.id] && !loadTypes()[n.id];
+                }
+
+                // ребро, которым пользователь привязал свою ноду к ноде сессии, пережило
+                // перезагрузку, а его нода сессии появляется только сейчас — досоздаём.
+                // То, чему ноды всё ещё нет (выбрана другая сессия), остаётся ждать
+                function applyPendingEdges() {
+                    if (!pendingEdges.length) return;
+                    const byId = new Map([...nodeFlow.keys()].map((n) => [n.id, n]));
+                    pendingEdges = pendingEdges.filter((e) => {
+                        const from = byId.get(e.from);
+                        const to = byId.get(e.to);
+                        if (!from || !to) return true;
+                        if (!edges.some((x) => x.to === to)) createEdge(from, to, null, e.direction);
+                        return false;
+                    });
+                }
+
+                // содержимое ноды сессии целиком — вид, заголовок, тело и секции
+                function applySessionNode(n, m) {
+                    // позиция строки в сессии — адрес для правки текста на сервере
+                    n.dataset.position = m.position;
+                    const kind = nodeKindOf(m);
+                    // в теле — только превью: полный текст живёт в секции «what happened»
+                    setNodeTexts(n, kind.title, truncate(m.text, 200));
+                    setNodeKind(n, kind.kind, kind.emoji, m.toolError);
+                    applyNodeFacts(n, m);
+                    setNodeScope(n, 'system');
+                    setNodeType(n, 'system');
+                }
+
                 // строит граф канваса `flow` из сообщений сессии: белый текст (роли
                 // user/assistant) идёт цепочкой вправо, серый текст (роль tool, шаги
                 // между вопросом и ответом) — вертикальной цепочкой под ним, потому что
                 // белый текст — причина, по которой эти шаги вообще появились
-                buildSessionFlow = (flow, messages) => {
-                    setActiveFlow(flow);
-                    for (const n of [...nodeFlow.keys()]) {
-                        if (nodeFlow.get(n) === flow) deleteNode(n);
+                buildSessionFlow = (flow, messages, sessionId) => {
+                    beginFlowBatch();
+                    bulkBuild = true;
+                    try {
+                        buildSessionNodes(flow, messages, sessionId);
+                    } finally {
+                        bulkBuild = false;
+                        // падение посреди построения не должно оставить запись состояния
+                        // выключенной навсегда — иначе канвас перестанет сохраняться молча
+                        flushFlowBatch();
                     }
+                };
 
-                    let lastWhite = null;
-                    let lastGray = null;
-                    for (const m of messages) {
-                        if (m.role === 'tool') {
-                            const from = lastGray || lastWhite;
-                            if (!from) continue;
-                            lastGray = addChildNode(from);
-                            setNodeTexts(lastGray, 'Step', m.text);
-                            setNodeScope(lastGray, 'system');
-                            setNodeType(lastGray, 'system');
-                        } else {
-                            lastWhite = lastWhite ? addChildNodeRight(lastWhite) : ensureRootNode(flow);
-                            setNodeTexts(lastWhite, m.role === 'user' ? 'Question' : 'Answer', m.text);
-                            setNodeScope(lastWhite, 'system');
-                            setNodeType(lastWhite, 'system');
-                            lastGray = null;
+                function buildSessionNodes(flow, messages, sessionId) {
+                    setActiveFlow(flow);
+                    // выбор другой сессии в списке (#flowSessionSelect) должен показывать
+                    // ЕЁ граф, а не добавлять его поверх прежнего: ноды предыдущей
+                    // просмотренной сессии на этом канвасе никак иначе не убираются —
+                    // без этой чистки переключение выглядело так, будто канвас не
+                    // изменился (старое дерево оставалось на месте, новое пряталось
+                    // среди/позади него после общей autoLayoutAndFit)
+                    for (const n of [...nodeFlow.keys()]) {
+                        if (nodeFlow.get(n) === flow && n.dataset.session && n.dataset.session !== sessionId) deleteNode(n);
+                    }
+                    // на пустом канвасе заглушка заводится «чтобы было от чего расти»
+                    // (ensureRootNode). Графу сессии расти есть от чего и без неё, а
+                    // оставшись, она копится: канвас обрастал пустыми карточками от
+                    // прошлых открытий, и одна такая уже успела уехать в сохранённое
+                    // состояние — поэтому убираем не только что созданную, а любую
+                    // пустую и ни с чем не связанную ноду этого канваса
+                    if (messages.length) {
+                        for (const n of [...nodeFlow.keys()]) {
+                            if (nodeFlow.get(n) === flow && isBlankPlaceholder(n)) deleteNode(n);
                         }
                     }
-                    if (!lastWhite) ensureRootNode(flow);
+
+                    // ноды этой сессии узнаются по префиксу id (см. nextNodeId): сообщение,
+                    // которое уже стоит на канвасе, переиспользуется и лишь обновляется —
+                    // иначе раскрытая гармошка и выделение схлопывались бы при каждой живой
+                    // перестройке (раз в секунду, см. flow-session-sync.js). Всё, что
+                    // пользователь вставил руками, префикса не имеет и не трогается вовсе
+                    const prefix = `flowNode_${sessionId}_`;
+                    const mine = new Map();
+                    for (const n of nodeFlow.keys()) {
+                        if (nodeFlow.get(n) === flow && n.dataset.session === sessionId) mine.set(n.id, n);
+                    }
+
+                    let lastWhite = null;            // конец главной цепочки вправо
+                    let lastGray = null;             // конец текущей цепочки шагов вниз
+                    const byToolUse = new Map();     // toolUseId -> нода этого вызова
+                    const lastInBranch = new Map();  // parentToolUseId -> конец ветки субагента
+                    const files = new Map();         // путь файла -> его единственная нода
+
+                    for (let i = 0; i < messages.length; i++) {
+                        const m = messages[i];
+                        // адрес ноды — позиция строки в базе, а не номер в массиве:
+                        // по ней же идёт правка сообщения (/api/sessions/message/set)
+                        const id = prefix + (m.position ?? i);
+                        // шаг субагента принадлежит не главной цепочке, а ноде вызова,
+                        // внутри которого он произошёл (единственная настоящая причинная
+                        // связь, которая есть в базе, — см. TASKS.md)
+                        const branch = m.parentToolUseId && byToolUse.has(m.parentToolUseId) ? m.parentToolUseId : null;
+
+                        let parent, direction;
+                        if (branch) {
+                            parent = lastInBranch.get(branch) || byToolUse.get(branch);
+                            direction = 'vertical';
+                        } else if (m.role === 'tool') {
+                            parent = lastGray || lastWhite;
+                            direction = 'vertical';
+                        } else {
+                            parent = lastWhite;
+                            direction = 'horizontal';
+                        }
+                        // сессия может начаться не с реплики (первым идёт хук или tool) —
+                        // тогда цепляемся к тому, что уже есть, а самая первая нода станет корнем
+                        if (!parent) parent = lastGray || lastWhite;
+
+                        let node = mine.get(id);
+                        if (node) {
+                            mine.delete(id);
+                            // родитель мог измениться задним числом: tool_use_id/parent_tool_use_id
+                            // сервер дописывает отдельным UPDATE уже после самой строки
+                            const inEdge = edges.find((e) => e.to === node);
+                            // ребро, пришедшее от ноды пользователя, — его вставка в
+                            // цепочку (плюс на ребре). Чинить её нельзя: перестройка
+                            // выкинула бы вставленную ноду из графа через секунду
+                            const fromUser = inEdge && !inEdge.from.dataset.session;
+                            if (parent && !fromUser && (!inEdge || inEdge.from !== parent || inEdge.direction !== direction)) {
+                                if (inEdge) removeEdge(inEdge);
+                                createEdge(parent, node, null, direction);
+                            }
+                        } else if (!parent) {
+                            node = ensureRootNode(flow, id, sessionId);
+                        } else {
+                            // пометку ставим до создания ребра: savePosition/saveGraph
+                            // внутри addChildNode* уже должны видеть ноду как сессионную
+                            node = direction === 'vertical' ? addChildNode(parent, id, sessionId) : addChildNodeRight(parent, id, sessionId);
+                        }
+
+                        applySessionNode(node, m);
+
+                        // документ, которого коснулся шаг: одна нода на путь во всей
+                        // сессии. У неё, как и у любой другой ноды, ровно одно входящее
+                        // ребро — от САМОГО СВЕЖЕГО использования (сообщения идут по
+                        // порядку, поэтому «свежее» здесь — просто «текущее» на этом
+                        // проходе). Раньше ребро добавлялось от каждого использования и
+                        // копилось: на сессии с десятком правок одного файла в общую ноду
+                        // документа сходилось столько же стрелок из совершенно разных
+                        // веток дерева — раскладка умеет держать позицию только по одному
+                        // родителю, а остальные рёбра рисовались поверх, задевая чужие
+                        // ноды. Один родитель, который просто переезжает к новому
+                        // использованию, — и лишних стрелок нет в принципе
+                        for (const filePath of messageFilePaths(m)) {
+                            const fileId = `${prefix}file_${pathKey(filePath)}`;
+                            let fileNode = files.get(filePath) || mine.get(fileId);
+                            if (!fileNode) {
+                                fileNode = addChildNodeRight(node, fileId, sessionId);
+                            } else {
+                                const inEdge = edges.find((e) => e.to === fileNode);
+                                if (!inEdge || inEdge.from !== node) {
+                                    if (inEdge) removeEdge(inEdge);
+                                    createEdge(node, fileNode, null, 'horizontal');
+                                }
+                            }
+                            mine.delete(fileId);
+                            files.set(filePath, fileNode);
+                            applyFileNode(fileNode, filePath);
+                        }
+
+                        if (m.toolUseId) byToolUse.set(m.toolUseId, node);
+                        if (branch) lastInBranch.set(branch, node);
+                        else if (m.role === 'tool') lastGray = node;
+                        else { lastWhite = node; lastGray = null; }
+                    }
+
+                    // сообщение исчезло (сессия перечитана короче) — его нода уходит с ним
+                    for (const n of mine.values()) deleteNode(n);
+                    applyPendingEdges();
+                    // канвас без единой ноды: заводим заглушку, чтобы было от чего расти
+                    ensureRootNode(flow);
+                    // единственные за всё построение сохранение и раскладка: отдельные
+                    // ноды их не звали (bulkBuild), иначе на полусотне сообщений вкладка
+                    // замирала на несколько секунд
+                    saveGraph();
                     autoLayoutAndFit();
-                };
+                }
             })();
 
             // категория «провайдер / модель / effort» ноды Секретаря — какой агент
@@ -1676,7 +2256,7 @@
             // buildFromSession могли дёрнуть, пока грузилось состояние (см. pendingBuild
             // в начале файла) — достраиваем граф теперь, когда buildSessionFlow готов
             if (pendingBuild) {
-                buildSessionFlow(pendingBuild.flow, pendingBuild.messages);
+                buildSessionFlow(pendingBuild.flow, pendingBuild.messages, pendingBuild.sessionId);
                 pendingBuild = null;
             }
 

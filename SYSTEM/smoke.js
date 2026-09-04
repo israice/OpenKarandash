@@ -90,8 +90,8 @@ function startServer(port) {
         // обычный сервер, а не самоперезапускающийся
         const child = spawn(process.execPath, ['server.js'], {
             cwd: ROOT,
-            env: { ...process.env, PORT: String(port), NO_RELOAD: '1', DATA_DIR: SMOKE_DATA_DIR },
-            stdio: ['ignore', 'pipe', 'pipe'],
+            env: { ...process.env, PORT: String(port), NO_RELOAD: '1', DATA_DIR: SMOKE_DATA_DIR, BEADS_PORT: '0' },
+            stdio: ['ignore', 'pipe', 'pipe', 'ipc'], // ipc — по нему уходит prepareRestart (проверка в конце файла)
         });
         server = child;
 
@@ -160,6 +160,20 @@ check('правка выбирает верное событие живой пе
 // Инлайновый <style> в index.html ломает сразу два правила: у стилей компонента
 // снова становится два места жительства, и правка стиля тянет перезагрузку всей
 // страницы вместо подмены одного <link>
+// Имя заметки в vault собирается из заголовка сессии, а заголовок — это первое
+// сообщение пользователя, длины у него нет никакой. Полный путь в Windows обрывается
+// на 260 символах, и длинное имя роняло пересборку карты целиком, причём ошибкой
+// ENOENT — она читается как «нет такой папки». Проверяем сам потолок, без HTTP
+check('имя заметки не перерастает предел длины пути', async () => {
+    const { noteName } = require(path.join(ROOT, 'PROJECTS/Graph/graph-server.js'));
+    const long = `2026-09-04 ${'очень длинный заголовок сессии '.repeat(20)} a1b2c3d4`;
+    const name = noteName(long);
+    if (name.length > 120) throw new Error(`имя не обрезано: ${name.length} символов`);
+
+    // и режет запрещённые в Windows символы — это его первая работа, её не потеряли
+    equal(noteName('a/b:c*d?e"f<g>h|i'), 'a-b-c-d-e-f-g-h-i', 'запрещённые символы');
+});
+
 check('index.html не держит стили внутри себя', async () => {
     const html = fs.readFileSync(path.join(ROOT, 'SYSTEM/index.html'), 'utf8');
     if (/<style[\s>]/.test(html)) throw new Error('в index.html снова появился <style>');
@@ -213,6 +227,46 @@ check('POST /api/sessions отвечает списком', async (port) => {
     equal(res.status, 200, 'код ответа');
     const parsed = JSON.parse(res.body);
     if (!parsed.ok || !Array.isArray(parsed.sessions)) throw new Error(`неожиданный ответ: ${res.body}`);
+});
+
+// вкладка Kanban показывает встроенный beads-web. Сам бинарь в прогоне не
+// поднимается (BEADS_PORT=0 выше), поэтому проверяем то, что от маршрута и
+// требуется: он отвечает понятной причиной, а не падает и не вешает запрос
+// правка своей реплики с графа Flow. Настоящей сессии в одноразовой базе прогона
+// нет, поэтому проверяем то, что от маршрута и требуется в первую очередь: он не
+// принимает мусор и не даёт править чужую строку (см. DOCS/decisions/018)
+check('POST /api/sessions/message/set проверяет тело', async (port) => {
+    const res = await request(port, '/api/sessions/message/set', { method: 'POST', json: { id: 'nope' } });
+    equal(res.status, 200, 'код ответа');
+    const parsed = JSON.parse(res.body);
+    if (parsed.ok !== false || !parsed.error) throw new Error(`ожидалась ошибка: ${res.body}`);
+});
+
+check('POST /api/sessions/message/set не правит несуществующее сообщение', async (port) => {
+    const res = await request(port, '/api/sessions/message/set', { method: 'POST', json: { id: 'nope', position: 0, text: 'x' } });
+    equal(res.status, 200, 'код ответа');
+    const parsed = JSON.parse(res.body);
+    if (parsed.ok !== false || !/not found/i.test(parsed.error)) throw new Error(`ожидалось «не найдено»: ${res.body}`);
+});
+
+// Доска отдаётся через наш порт (иначе её кадр чужого origin и Karandash не может
+// заглянуть внутрь). Проксирование включается только при живом бинаре, а в прогоне
+// он выключен — поэтому проверяем обратное и более важное: контракты 404 при этом
+// целы, чужие правила не перехватывают ни наш /api, ни файлы
+check('выключенная доска не перехватывает наши 404', async (port) => {
+    const file = await request(port, '/no-such-file.txt');
+    equal(file.status, 404, 'код ответа на несуществующий файл');
+    const route = await request(port, '/api/no-such-route', { method: 'POST' });
+    equal(route.status, 404, 'код ответа на неизвестный /api');
+    const mount = await request(port, '/kanban-ui/');
+    equal(mount.status, 404, 'код ответа на адрес доски');
+});
+
+check('POST /api/kanban/status отвечает про выключенный beads-web', async (port) => {
+    const res = await request(port, '/api/kanban/status', { method: 'POST' });
+    equal(res.status, 200, 'код ответа');
+    const parsed = JSON.parse(res.body);
+    if (parsed.ok !== false || !/BEADS_PORT/.test(parsed.error)) throw new Error(`ожидалась причина: ${res.body}`);
 });
 
 check('POST /api/fragment/home-observation отдаёт HTML панели', async (port) => {
@@ -432,6 +486,29 @@ check('запрос не с localhost — 403', async (port) => {
     if (!lan) return 'пропущено: у машины нет адреса в локальной сети';
     const res = await request(port, '/', { host: lan });
     equal(res.status, 403, 'код ответа');
+});
+
+// Перезапуск после правки серверного файла: момент выбирает сам сервер, а не сторож
+// (DOCS/decisions/020). Шлём prepareRestart по каналу ipc, ждём readyToRestart и
+// убеждаемся, что следующий ask получает отказ, а не оборванное соединение.
+// Идёт последней: после неё сервер прогона ходы больше не принимает
+check('после prepareRestart сервер отвечает «можно» и не берёт новые ходы', async (port) => {
+    const ready = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('сервер не ответил readyToRestart за 10 с')), 10_000);
+        server.on('message', (message) => {
+            if (!message || !message.readyToRestart) return;
+            clearTimeout(timer);
+            resolve();
+        });
+    });
+    server.send({ prepareRestart: true });
+    await ready;
+
+    // ответ на ask — строка NDJSON, а не обычный JSON: клиент читает его построчно
+    const res = await request(port, '/api/agent/ask', { method: 'POST', json: { agent: 'claude', prompt: 'привет' } });
+    equal(res.status, 200, 'код ответа');
+    const event = JSON.parse(res.body.trim());
+    if (event.type !== 'error' || !/restarting/i.test(event.error)) throw new Error(`ожидался отказ: ${res.body}`);
 });
 
 // ---------- прогон ----------
