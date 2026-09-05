@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "OpenKarandash",
+  "project_id": "8582d6d0-4230-4f2a-b17a-158aa6f2e3b9"
+}

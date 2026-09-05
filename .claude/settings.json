@@ -1,73 +1,82 @@
 {
-    "enabledPlugins": {
-        "typescript-lsp@claude-plugins-official": false
-    },
-    "permissions": {
-        "allow": [
-            "Bash(node --check *)",
-            "Bash(node PROJECTS/Graph/search.js *)",
-            "mcp__playwright__browser_take_screenshot",
-            "mcp__playwright__browser_console_messages",
-            "mcp__playwright__browser_snapshot"
+  "enabledPlugins": {
+    "typescript-lsp@claude-plugins-official": false
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/syntax-check.js\"",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "Edit|Write"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-bg-server.js\"",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-files-node.js\"",
+            "timeout": 10,
+            "type": "command"
+          }
         ]
-    },
-    "hooks": {
-        "SessionStart": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-files-node.js\"",
-                        "timeout": 10
-                    }
-                ]
-            }
+      },
+      {
+        "hooks": [
+          {
+            "command": "bd prime --hook-json",
+            "type": "command"
+          }
         ],
-        "UserPromptSubmit": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/language-reminder.js\"",
-                        "timeout": 10
-                    }
-                ]
-            }
-        ],
-        "PreToolUse": [
-            {
-                "matcher": "Bash",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-bg-server.js\"",
-                        "timeout": 10
-                    }
-                ]
-            }
-        ],
-        "PostToolUse": [
-            {
-                "matcher": "Edit|Write",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/syntax-check.js\"",
-                        "timeout": 10
-                    }
-                ]
-            }
-        ],
-        "Stop": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/language-check.js\"",
-                        "timeout": 10
-                    }
-                ]
-            }
+        "matcher": ""
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/language-check.js\"",
+            "timeout": 10,
+            "type": "command"
+          }
         ]
-    }
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/language-reminder.js\"",
+            "timeout": 10,
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(node --check *)",
+      "Bash(node PROJECTS/Graph/search.js *)",
+      "mcp__playwright__browser_take_screenshot",
+      "mcp__playwright__browser_console_messages",
+      "mcp__playwright__browser_snapshot"
+    ]
+  }
 }
