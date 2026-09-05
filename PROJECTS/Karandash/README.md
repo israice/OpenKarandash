@@ -79,7 +79,7 @@ Only the wiring stays outside — three lines that cannot be moved out of the sh
 |---|---|
 | `SYSTEM/index.html` | A `<link>` to `karandash.css` and a `<script defer>` for `karandash.js` |
 | `server.js` | Only wires the folder in: `require('./PROJECTS/Karandash/karandash-server.js').createRoutes(...)`. The `/api/screenshot*` routes themselves live in the folder |
-| `SYSTEM/app.js` | `App.startCommentSession` — shared core, also used by the `+` button on the Kanban board (`PROJECTS/Kanban/kanban.js`) |
+| `PROJECTS/Chat/chat.js` | `App.startCommentSession` — declared by the Chat tab and added to `window.App` by it (it used to be in `SYSTEM/app.js`, `DOCS/decisions/022`); also used by the `+` button on the Kanban board (`PROJECTS/Kanban/kanban.js`) and by `SYSTEM/home-tasks.js` |
 
 The `karandash.js` file is self-contained: it creates its own toolbar and inserts it before `#settings`, which is why `index.html` contains neither the button, nor the frame, nor the popup.
 

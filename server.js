@@ -25,7 +25,7 @@ function logExit(text) {
 // ---------- .env: единственное место для порта и секретов ----------
 // файла нет — создаём его с портом 3001 и на нём же поднимаемся. значения из .env
 // не перетирают то, что уже задано в окружении: так `PORT=3999 node server.js`
-// (смоук поднимает сервер на свободном порту) продолжает работать
+// продолжает работать
 const ENV_FILE = path.join(ROOT, '.env');
 
 const ENV_TEMPLATE = `# Project settings and secrets. Not tracked by git — edit it right here.
@@ -35,6 +35,11 @@ PORT=3001
 SCREENSHOT_SCREEN=0
 # Port for the embedded beads-web board on the Kanban tab (0 turns it off)
 BEADS_PORT=3008
+
+# Telegram bridge: the bot token and the ids of the users allowed to talk to it
+# (comma separated). Both are filled from Settings in the interface
+# TELEGRAM_BOT_TOKEN=
+# TELEGRAM_USER_IDS=
 
 # Path to the Claude CLI, if it is not in PATH
 # CLAUDE_BIN=
@@ -311,7 +316,7 @@ const RELOAD_SNIPPET = `
         source.onmessage = (event) => {
             const data = event.data;
             // карта пересобирается позже самой правки, поэтому у неё своё событие:
-            // страницу перезагружать незачем, достаточно перерисовать граф
+            // страницу перезагружать незачем, достаточно забыть прежнюю карту
             if (data === 'map') { window.__onMapUpdate && window.__onMapUpdate(); return; }
             // точечные события: обновляем один фрагмент или одну таблицу стилей.
             // hold здесь не смотрим — в отличие от перезагрузки, поток ответа они не рвут
@@ -757,6 +762,15 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
                 ...meta,
                 assistantPosition: ctx.assistantPosition,
                 stopReason: meta.stopReason || (ctx.errorText ? 'error' : null),
+            });
+            // последний ответ сессии уходит в Telegram, если мост настроен: для
+            // человека это и сигнал «задание закончено», и сообщение, ответом
+            // на которое он продолжит эту же сессию. Без await: почта не должна
+            // ни задерживать ход, ни ронять его своей ошибкой
+            notifyTurnFinished({
+                sessionId: ctx.session,
+                title: getSessionTitle.get(ctx.session)?.title || '',
+                text: ctx.answer || `⚠️ ${ctx.errorText}`,
             });
         }
         // работа окончена — отпускаем подключившиеся страницы
@@ -1573,6 +1587,15 @@ function agentByName(name) {
     return agent;
 }
 
+// какой CLI вёл сессию, видно по её target: id окружений у каждого коннектора
+// свои и начинаются с его имени (кроме Claude — он в проекте был первым,
+// и его окружения зовутся просто windows/wsl/custom)
+function agentNameByTarget(targetId) {
+    if (!targetId) return 'claude';
+    const name = String(targetId).split('-')[0];
+    return AGENTS[name] ? name : 'claude';
+}
+
 const upsertSession = db.prepare(`
     INSERT INTO sessions (id, title, updated_at, target)
     VALUES (?, ?, ?, ?)
@@ -1643,6 +1666,15 @@ const setSessionContext = db.prepare('UPDATE sessions SET context_percent = ?, c
 const setSessionInfo = db.prepare('UPDATE sessions SET session_info = ? WHERE id = ?');
 const setSessionRateLimit = db.prepare('UPDATE sessions SET rate_limit = ? WHERE id = ?');
 const getSessionMeta = db.prepare('SELECT context_percent AS contextPercent, context_window AS contextWindow, session_info AS sessionInfo, rate_limit AS rateLimit, target, thumb FROM sessions WHERE id = ?');
+
+const getSessionTitle = db.prepare('SELECT title FROM sessions WHERE id = ?');
+
+// чем сессия шла в прошлый раз: ход, начатый не из браузера (ответ в Telegram),
+// берёт модель, effort и режим оттуда — своих настроек у такого хода нет
+const getLastTurnParams = db.prepare(`
+    SELECT model, effort, mode FROM messages
+    WHERE session_id = ? AND role = 'user' ORDER BY position DESC LIMIT 1
+`);
 
 const listSessions = db.prepare(`
     SELECT s.id, s.title, s.updated_at AS updatedAt, s.thumb AS thumb,
@@ -1887,10 +1919,38 @@ function finishExchange(sessionId, answer, meta = {}) {
     return position;
 }
 
-// ---------- граф Obsidian ----------
+// ход, начатый не из браузера — сейчас это ответ человека в Telegram.
+// Исполнителя и параметры берём из самой сессии, поток событий никуда не пишем:
+// подключённые страницы всё равно получат его через broadcast внутри runTurn,
+// а человеку в Telegram уйдёт готовый ответ из notifyTurnFinished
+async function askOutsideBrowser({ sessionId, text }) {
+    if (!getSessionTitle.get(sessionId)) throw new Error('Session not found');
+    if (stopping) throw new Error(RESTART_ERROR);
 
-// вся вкладка Graph живёт в PROJECTS/Graph; здесь остаётся только её запуск —
-// маршруты вкладка отдаёт сама (graph.createRoutes в featureRoutes ниже)
+    const name = agentNameByTarget(getSessionMeta.get(sessionId)?.target);
+    const adapter = AGENTS[name];
+    if (!adapter.connected()) throw new Error(`${name} is not connected — open Settings and connect it`);
+
+    const last = getLastTurnParams.get(sessionId) || {};
+    // отказ до старта хода (не подключён, пустой запрос) в базу не попадёт и
+    // обратно сам не уедет — такой возвращаем ошибкой. Всё, что случилось уже
+    // внутри хода, дописано в сессию и уйдёт в Telegram обычным путём
+    let started = false;
+    let failure = null;
+    await adapter.ask(
+        { prompt: text, sessionId, model: last.model || undefined, effort: last.effort || undefined, mode: last.mode || undefined },
+        (event) => {
+            if (event.type === 'session') started = true;
+            if (event.type === 'error') failure = event.error;
+        },
+    );
+    if (failure && !started) throw new Error(failure);
+}
+
+// ---------- карта проекта (vault Obsidian) ----------
+
+// вся карта живёт в PROJECTS/Graph; здесь остаётся только её запуск —
+// маршруты папка отдаёт сама (graph.createRoutes в featureRoutes ниже)
 const { prepareVault, projectFiles } = graph.init({
     listSessions,
     listMessages,
@@ -1920,6 +1980,11 @@ function sessionSummaries() {
 // этого он чужого origin, и Karandash не может заглянуть внутрь (DOCS/decisions/021)
 const kanban = require('./PROJECTS/Kanban/kanban-server.js').createRoutes({ root: ROOT });
 
+// телеграм-мост Settings: ему нужен и .env (ключ бота), и способ начать ход
+// не из браузера — ответ человека в личке продолжает ту же сессию
+const telegram = require('./PROJECTS/Settings/telegram-server.js');
+const { notifyTurnFinished } = telegram.init({ setEnvValue, ask: askOutsideBrowser });
+
 const featureRoutes = {
     ...graph.createRoutes(),
     ...require('./PROJECTS/Flow/flow-server.js').createRoutes({ db }),
@@ -1931,6 +1996,7 @@ const featureRoutes = {
     }),
     ...kanban.routes,
     ...require('./PROJECTS/Karandash/karandash-server.js').createRoutes({ setEnvValue }),
+    ...telegram.createRoutes(),
     ...require('./SYSTEM/toolbar-icons-server.js').createRoutes({ db }),
 };
 
@@ -2245,8 +2311,8 @@ server.on('error', (err) => {
 server.listen(PORT, () => {
     // prepareVault() синхронна и на этом проекте занимает ~20 с: пока она идёт,
     // event loop занят и сокет никому не отвечает. Поэтому «Сервер запущен»
-    // печатается после неё — иначе и человек, и смоук идут на порт, который
-    // молчит, и получают таймаут вместо страницы
+    // печатается после неё — иначе человек идёт на порт, который молчит,
+    // и получает таймаут вместо страницы
     console.log('Building the project map — this takes a few seconds...');
     prepareVault();
     console.log(`Server started: http://localhost:${PORT} (runtime: ${detectRuntimePlatform()})`);

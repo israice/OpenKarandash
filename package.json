@@ -4,9 +4,6 @@
   "version": "0.0.7",
   "description": "Локальный оркестратор агентных CLI: сервер на Node + веб-интерфейс",
   "type": "commonjs",
-  "scripts": {
-    "smoke": "node SYSTEM/smoke.js"
-  },
   "dependencies": {
     "beads-kanban-ui": "0.4.2",
     "eta": "3.5.0",

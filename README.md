@@ -66,8 +66,8 @@ copy on the same folder would fight the first over `DATA/.sessions.db` and `DATA
 ("database is locked") and blindly overwrite `vault/`. If the port is busy, the server says so and
 exits — most likely it is already running at that address.
 
-An environment variable overrides `.env` (the smoke test uses this to start the server on a free
-port), but for normal work there is no need to touch the environment.
+An environment variable overrides `.env` (handy for starting a second copy on a free port), but for
+normal work there is no need to touch the environment.
 
 ## Auto-reload
 
@@ -219,7 +219,6 @@ OBSIDIAN_VAULT="C:/path/to/vault" node server.js
 | `server.js` | A thin dispatcher: `.env`, static files, sessions, live CLI runs. Everything feature-specific lives next to the feature and is wired in through a route table |
 | `SYSTEM/` | The client shell: `index.html`, `app.js`, `tabs.js`, the toolbar and panel scripts, `core/`, `styles/`, `assets/` |
 | `PROJECTS/<Section>/*.eta` | Templates for the server fragments that htmx pulls in — next to the feature that renders them |
-| `SYSTEM/smoke.js` | The HTTP-level smoke test, see below |
 | `PROJECTS/<Section>/` | One folder per interface section — client, styles, the server half and its own README. A page created by the toolbar's «+» button is one of these too: its `page.js` *is* the page |
 | `DOCS/decisions/` | Why something in the project is done the way it is; a new decision goes here when the "why" is not visible from the code |
 | `AGENTS.md` / `CLAUDE.md` | The project rules for any agent, and the Claude Code specifics on top of them |
@@ -244,22 +243,9 @@ OBSIDIAN_VAULT="C:/path/to/vault" node server.js
 curl -i http://localhost:3001/
 ```
 
-## Smoke test
+## Automated checks
 
-```powershell
-node SYSTEM/smoke.js
-```
-
-It starts the server on a free port and walks through 35 checks: the page and the static files,
-404 for a non-existent file, 403 for escaping the directory, 403 for a request not from localhost,
-405 for a GET to `/api`, the session list, the htmx fragments, the project map and the search, reading
-and writing a file, creating/renaming/deleting a page, the toolbar and Flow state, agent detection and
-clear errors when a CLI is not connected. A non-zero exit code means something broke. No running
-server is needed — the smoke test starts its own on a free port (through an environment variable) and
-shuts it down after the run; it does not touch `.env`. It does need the project dependencies, so run
-`npm install` first.
-
-The smoke test reads the `DATA/.sessions.db` database but does not change it: it never calls `/api/sessions/reset`.
-
-There are no DOM checks here — they would require a browser engine. The client side is checked by
-hand, and the checklist is in `PLAN.md`.
+There are none. The smoke test was removed (`DOCS/decisions/025`): keeping it in step with the routes
+cost more than it caught. A server file is checked by parsing it — `node --check <file>` — and whether
+a feature actually works is checked by hand in the browser, on the server the user starts themselves.
+The client-side checklist is in `PLAN.md`.

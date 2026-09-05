@@ -42,7 +42,7 @@
         for (const btn of toolbar.querySelectorAll('[data-page]')) btn.setAttribute('aria-pressed', 'false');
     }
 
-    // переключение на обычную вкладку (Graph/Flow/Kanban/Projects/Home) скрывает
+    // переключение на обычную вкладку (Flow/Kanban/Projects/Home) скрывает
     // сгенерированные страницы: SYSTEM/tabs.js зовёт hideAll внутри showView,
     // поэтому покрыты и программные переключения (MissionTabs.show из app.js)
     //

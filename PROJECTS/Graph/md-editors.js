@@ -8,7 +8,7 @@
     function attach(textEl) {
         if (!textEl) return;
 
-        // makeFileEditor() в graph.js читает/пишет textEl.value напрямую — подменяем
+        // makeFileEditor() в file-editor.js читает/пишет textEl.value напрямую — подменяем
         // геттер/сеттер, чтобы EasyMDE был источником истины прозрачно для него.
         const easymde = new EasyMDE({ element: textEl, spellChecker: false, status: false });
         easymde.codemirror.on('change', () => textEl.dispatchEvent(new Event('input')));

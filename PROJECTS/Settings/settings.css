@@ -154,6 +154,13 @@
     color: #5fd08a;
 }
 
+/* у .provider__status свой display: inline-flex, и он сильнее браузерного
+   [hidden] { display: none } — без этого правила скрытая строка состояния
+   Telegram всё равно рисовала зелёный кружок ::before до подключения */
+.provider__status[hidden] {
+    display: none;
+}
+
 .provider__status::before {
     content: "";
     width: 6px;
@@ -268,6 +275,33 @@
 .provider__model + .provider__model {
     margin-top: 10px;
 }
+
+/* ---------- подключение Telegram ---------- */
+
+/* карточка стоит последней в окне настроек, после экрана для скриншотов */
+.telegram {
+    margin-top: 10px;
+}
+
+/* поля токена и id — под кнопкой, показываются по нажатию «Connect».
+   у .provider__model свой display: flex, поэтому hidden ему нужно вернуть силу */
+.telegram__fields {
+    margin-top: 12px;
+}
+
+.telegram__fields[hidden] {
+    display: none;
+}
+
+/* подсказка и ошибка сохранения — своей строкой под полями во всю ширину */
+.telegram__hint {
+    flex: 1 0 100%;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    color: #8b909a;
+}
+
+.telegram__hint--error { color: #ff9a9d; }
 
 .screenshot-screen {
     display: flex;

@@ -57,7 +57,7 @@ A node built from a session message gets a deterministic id, `flowNode_<sessionI
 - **The canvas holds the session and nothing else.** Switching to an empty entry normally leaves one placeholder node behind ("so there is something to grow from"); when a session is drawn there, every blank placeholder is removed — one with no text, no questions, no type and no edge at all. Anything you typed into a node, or tied to another node, keeps it out of that category and is never removed.
 - **Opening the entry draws the session.** Switching to the menu entry that shows the session picker rebuilds the graph right then, not only once per page load. A rebuild that was already in flight is dropped if you moved to another entry meanwhile — otherwise it would pull its own canvas back on top of the one you just opened.
 - **Session nodes are never saved.** Neither their text, nor their position, nor their edges go into `flow_state`: all of it is derived from the messages. Storing it would keep a second copy of the whole conversation — and on a long session that copy outgrew the 100 KB request-body limit of `readJson` (`SYSTEM/core/http.js`), which silently killed the whole state write.
-- **Files are nodes of their own.** A step that names a `file_path` gets an edge to a node for that file — one node per path for the whole session, so five reads of `app.js` are five edges into the same node. Its "Open file" button opens the file in the same editor window a graph node opens (`MissionGraph.openFileModal`), where it can be edited and saved.
+- **Files are nodes of their own.** A step that names a `file_path` gets an edge to a node for that file — one node per path for the whole session, so five reads of `app.js` are five edges into the same node. Its "Open file" button opens the file in the shared editor window (`MissionFiles.openFileModal`), where it can be edited and saved.
 - **The look says what happened.** Role plus tool name pick the emoji, the card colour (`.flow-node--kind-*`) and the title; a step that failed (`toolError`) gets a red border. The body holds a preview, and three native `<details>` sections hold the whole thing: `Input` (`toolInput`, or what was actually sent for a user message), `What happened` (`text`) and `Output` (`toolResult`). A step that ran inside a subagent hangs under the node of the `Task` call it belongs to (`parentToolUseId`), not in the main chain.
 - **Your own words are editable.** The `What happened` section of a user message is edited in place, and the text goes into the session itself (`POST /api/sessions/message/set`). Only the `user` role can be changed — everything else is a record of what the model and the tools actually did, and the server refuses to rewrite it. See `DOCS/decisions/018`.
 - **Nodes you add survive.** A node inserted into the chain by hand keeps its place across the live rebuild and across a reload: the edges tying it to a session node are saved (its id is deterministic, so it is the same node after the rebuild) and re-created as soon as the session graph is built again.
@@ -82,7 +82,7 @@ Stored state (the same key names now live in `flow_state` on the server):
 **Planned:**
 
 - **Executing the flow.** Flow is a map, not an engine: the only server side it has is `flow_state` (key/value for the canvas). The graph is not sent anywhere and does not run anything, so editing it does not change how future sessions behave.
-- **The Secretary.** The card is honestly marked with a "Temporary node" badge: the provider and model selection is saved, but it does not affect real agent work yet. The model lists in `app.js` are a stub for real provider data.
+- **The Secretary.** The card is honestly marked with a "Temporary node" badge: the provider and model selection is saved, but it does not affect real agent work yet. The model lists in `SYSTEM/providers.js` are a stub for real provider data.
 
 ## 📁 Files
 
@@ -94,7 +94,7 @@ Stored state (the same key names now live in `flow_state` on the server):
 | `PROJECTS/Flow/flow-session-sync.js` | The session picker in the toolbar: reads the messages and keeps the graph live while the session runs |
 | `SYSTEM/index.html` | The `#flowView` markup (canvas, starting nodes, node template, zoom panel) and the shared `.side-nav*` side menu styles |
 | `SYSTEM/tabs.js` | Tab switching; calls `MissionFlow.center()` on the first show of Flow |
-| `SYSTEM/app.js` | Shared core: `App.PROVIDERS` for the Secretary selects and `App.BOARD_COLUMNS` for the Flows menu |
+| `SYSTEM/app.js` | Shared core through `window.App`: `App.BOARD_COLUMNS` for the Flows menu and `App.PROVIDERS` for the Secretary selects — the provider list itself now lives in `SYSTEM/providers.js` (`DOCS/decisions/022`) |
 
 ---
 

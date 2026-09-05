@@ -66,7 +66,6 @@
     // под которым пользователь знает вкладку в тулбаре приложения
     const VIEW_NAMES = {
         defaultView: 'Home',
-        graphView: 'Graph',
         flowView: 'Flow',
         kanbanView: 'Kanban',
         chatView: 'Sessions',

@@ -1604,13 +1604,13 @@
                 });
 
                 // кнопка ноды-документа: открываем файл тем же окном, которым его
-                // открывает клик по узлу графа (MissionGraph — внутри обработчика,
+                // открывает клик по ноде-документу (MissionFiles — внутри обработчика,
                 // чтобы порядок загрузки файлов ни на что не влиял)
                 surface.addEventListener('click', (e) => {
                     const btn = e.target.closest('.flow-node__open');
                     if (!btn) return;
                     const path = btn.closest('.flow-node').dataset.file;
-                    if (path && window.MissionGraph) MissionGraph.openFileModal(path);
+                    if (path && window.MissionFiles) MissionFiles.openFileModal(path);
                 });
 
                 // раскрытие секции меняет высоту ноды — соседей надо раздвинуть, а дуги

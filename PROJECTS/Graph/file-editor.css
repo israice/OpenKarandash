@@ -1,0 +1,198 @@
+/* Редактор файла проекта: окно-модалка, панель справа в чате и её markdown-режим.
+   Раньше это был низ стилей вкладки Graph (PROJECTS/Graph/graph.css); вкладку
+   убрали, редактор остался (DOCS/decisions/023). Разметку панели Book красит
+   PROJECTS/Book/book.css поверх этих же классов. */
+
+/* панель редактирования файла справа в чате: карточка проекта открывает её вместо окна,
+   так же как выбор сессии заменяет содержимое чата */
+.chat__file-editor {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    width: calc(100% - var(--sbw, 0px));
+}
+
+.chat__file-editor[hidden] {
+    display: none;
+}
+
+.chat__file-editor-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.chat__file-editor-title {
+    margin: 0;
+    font-size: 1rem;
+    word-break: break-all;
+}
+
+.chat__file-editor-header .file-modal__meta {
+    margin: 0 0 6px;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+/* окно с содержимым узла: просмотр и правка файла */
+.file-modal .modal__dialog {
+    display: flex;
+    flex-direction: column;
+    max-width: min(1080px, 92vw);
+    height: min(84vh, 900px);
+    overflow: hidden;
+}
+
+.file-modal__meta {
+    margin: 6px 0 10px;
+    color: #8b909a;
+    font-size: 0.78rem;
+}
+
+.file-modal__links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    max-height: 66px;
+    overflow-y: auto;
+    margin-bottom: 10px;
+}
+
+.file-modal__link {
+    padding: 2px 8px;
+    border: 1px solid #2e3138;
+    border-radius: 999px;
+    background: #16181c;
+    color: #6ea8fe;
+    font-size: 0.72rem;
+    cursor: pointer;
+}
+
+.file-modal__link:hover { border-color: #3d424c; }
+
+.file-modal__text {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    padding: 12px;
+    border: 1px solid #2e3138;
+    border-radius: 8px;
+    background: #131417;
+    color: #d8dce4;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    tab-size: 4;
+    resize: none;
+    white-space: pre;
+    overflow: auto;
+}
+
+.file-modal__text:focus {
+    outline: none;
+    border-color: #6ea8fe;
+}
+
+.file-modal__text[readonly] {
+    color: #a9adb6;
+}
+
+.chat__file-editor .EasyMDEContainer {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+.chat__file-editor .EasyMDEContainer .CodeMirror {
+    flex: 1;
+}
+
+/* тёмная тема EasyMDE — по умолчанию редактор белый, подгоняем под тёмный интерфейс */
+.chat__file-editor .EasyMDEContainer .CodeMirror {
+    background: #131417;
+    color: #d8dce4;
+    border: 1px solid #2e3138;
+}
+
+.chat__file-editor .EasyMDEContainer .CodeMirror-cursor { border-left-color: #d8dce4; }
+.chat__file-editor .EasyMDEContainer .CodeMirror-selected { background: #2e3138; }
+.chat__file-editor .EasyMDEContainer .CodeMirror-gutters { background: #131417; border-right-color: #2e3138; }
+.chat__file-editor .EasyMDEContainer .CodeMirror-linenumber { color: #6b6f78; }
+
+.chat__file-editor .EasyMDEContainer .cm-s-easymde .cm-header { color: #6ea8fe; }
+.chat__file-editor .EasyMDEContainer .cm-s-easymde .cm-link,
+.chat__file-editor .EasyMDEContainer .cm-s-easymde .cm-url { color: #6ea8fe; }
+.chat__file-editor .EasyMDEContainer .cm-s-easymde .cm-comment { color: #a9adb6; }
+.chat__file-editor .EasyMDEContainer .cm-s-easymde .cm-string { color: #9fd88a; }
+
+.chat__file-editor .EasyMDEContainer .editor-toolbar {
+    background: #16181c;
+    border: 1px solid #2e3138;
+    border-bottom: none;
+}
+
+.chat__file-editor .EasyMDEContainer .editor-toolbar button {
+    color: #d8dce4 !important;
+}
+
+.chat__file-editor .EasyMDEContainer .editor-toolbar button:hover,
+.chat__file-editor .EasyMDEContainer .editor-toolbar button.active {
+    background: #2e3138;
+    border-color: #2e3138;
+}
+
+.chat__file-editor .EasyMDEContainer .editor-toolbar i.separator {
+    border-left: 1px solid #2e3138;
+    border-right: 1px solid #2e3138;
+}
+
+.chat__file-editor .EasyMDEContainer .editor-preview,
+.chat__file-editor .EasyMDEContainer .editor-preview-side {
+    background: #131417;
+    color: #d8dce4;
+}
+
+.chat__file-editor .EasyMDEContainer .editor-preview pre,
+.chat__file-editor .EasyMDEContainer .editor-preview-side pre {
+    background: #1c1e23;
+}
+
+.chat__file-editor .EasyMDEContainer .editor-preview code,
+.chat__file-editor .EasyMDEContainer .editor-preview-side code {
+    background: #1c1e23;
+    color: #d8dce4;
+}
+
+.file-modal__footer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.file-modal__status {
+    flex: 1;
+    color: #8b909a;
+    font-size: 0.76rem;
+}
+
+.file-modal__save {
+    padding: 6px 14px;
+    border: 1px solid #2b4d78;
+    border-radius: 8px;
+    background: #1d3352;
+    color: #e9e9ec;
+    font: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+.file-modal__save:hover:not(:disabled) { background: #2b4d78; }
+
+.file-modal__save:disabled {
+    opacity: 0.4;
+    cursor: default;
+}

@@ -1,12 +1,12 @@
 // Вкладка Book верхнего тулбара: слева карточки всех разделов интерфейса —
-// Graph/Flow/Kanban/PROJECTS/Home/Book/Karandash/Settings, справа — README
+// Flow/Kanban/PROJECTS/Home/Book/Karandash/Settings, справа — README
 // выбранной карточки. Раньше это была вкладка Projects боковой панели
 // Sessions (PROJECTS/Chat/projects-tab.js) с тем же приёмом; теперь это
 // отдельная страница со своей панелью справа.
 //
 // Файл самодостаточный: свою разметку он вставляет сам, стили лежат рядом
-// (book.css), а всё чужое зовётся через окна — редактор файла из графа
-// (MissionGraph.createFileEditor), EasyMDE (MdEditors.attach) и ручку ширины
+// (book.css), а всё чужое зовётся через окна — редактор файла
+// (MissionFiles.createFileEditor), EasyMDE (MdEditors.attach) и ручку ширины
 // панели (SidebarResize.init). Грузится раньше app.js (см. порядок <script>
 // в SYSTEM/index.html): тот на старте ищет #bookView для App.VIEWS.
 (function () {
@@ -58,13 +58,13 @@
     // ---------- панель README справа ----------
 
     // тот же приём, что и в чате: карточка раздела слева заменяет содержимое
-    // панели справа, а не открывает окно посередине. Сам редактор — из графа:
-    // он умеет читать/писать файл и рисовать связи узла
+    // панели справа, а не открывает окно посередине. Сам редактор общий
+    // (PROJECTS/Graph/file-editor.js): он умеет читать/писать файл и рисовать связи
     let editor = null;
 
     function fileEditorPanel() {
         if (!editor) {
-            editor = MissionGraph.createFileEditor({
+            editor = MissionFiles.createFileEditor({
                 titleEl: view.querySelector('#bookFileEditorTitle'),
                 metaEl: view.querySelector('#bookFileEditorMeta'),
                 linksEl: view.querySelector('#bookFileEditorLinks'),
@@ -76,7 +76,7 @@
                     fileEditor.hidden = false;
                 },
                 onLinkClick: (item) => {
-                    const target = MissionGraph.nodeByPath(item);
+                    const target = MissionFiles.nodeByPath(item);
                     if (target) editor.open(target);
                 },
             });
@@ -97,13 +97,12 @@
     // ---------- карточки разделов ----------
 
     const SOURCE_IDS = [
-        'graphButton', 'flowButton', 'kanbanButton', 'chatButton', 'homeButton',
+        'flowButton', 'kanbanButton', 'chatButton', 'homeButton',
         'bookButton', 'karandashButton', 'settingsButton',
     ];
 
     // короткое описание каждого раздела для карточки — по одному на кнопку тулбара
     const DESCRIPTIONS = {
-        graphButton: 'Project map: files, functions and the links between them',
         flowButton: 'Diagram of the project execution flow',
         kanbanButton: 'Task board in columns',
         chatButton: 'Chat with the assistant and the session list',
@@ -115,7 +114,6 @@
 
     // у каждой кнопки тулбара есть своя папка в PROJECTS/ с README.md
     const README = {
-        graphButton: 'PROJECTS/Graph/README.md',
         flowButton: 'PROJECTS/Flow/README.md',
         kanbanButton: 'PROJECTS/Kanban/README.md',
         chatButton: 'PROJECTS/Chat/README.md',

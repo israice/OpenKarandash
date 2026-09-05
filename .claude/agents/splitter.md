@@ -28,7 +28,6 @@ model: opus
 - Клиент: потерянные глобалы ловит ESLint с одним правилом. Пример команды (подправь флаги, если версия ругается, но проверку не пропускай):
   `npx --yes eslint@9 --no-config-lookup --rule '{"no-undef":"error"}' --parser-options 'ecmaVersion:2022' --parser-options 'sourceType:module' --global 'window,document,fetch,console,setTimeout,clearTimeout,setInterval,clearInterval,requestAnimationFrame,cancelAnimationFrame,localStorage,sessionStorage,location,history,navigator,URL,Blob,FormData,AbortController,CustomEvent,Event,KeyboardEvent,MouseEvent,MutationObserver,ResizeObserver,IntersectionObserver,performance,getComputedStyle,htmx,EasyMDE' <файлы>`
 - Циклы: `npx --yes madge --circular <файл входа>` — должно быть ноль.
-- Сервер: `node SYSTEM/smoke.js` зелёный после каждого шага. Клиент: smoke тоже гоняется (он проверяет `index.html` и правила reload), плюс проверки выше.
 - Сервер: `WATCHED_FILES` в сторожевом коде обязан видеть новые папки (`SYSTEM/cli/`) — иначе правка коннектора не перезапустит сервер.
 
 ## Ловушки
@@ -36,11 +35,11 @@ model: opus
 - В IIFE функции видят друг друга по hoisting; в модулях — только через `import`. Именно это ловит `no-undef`.
 - `this` на верхнем уровне модуля — `undefined`; модуль всегда в strict mode.
 - `try/catch`, обработка ошибок, `escapeHtml` на всём, что идёт в HTML, — переносятся дословно. Ничего не «упрощать».
-- Не запускай `node server.js` — ни в фоне, ни на переднем плане: хук это заблокирует, а осиротевший процесс потом держит папку. Проверка сервера — только `node SYSTEM/smoke.js`.
+- Не запускай `node server.js` — ни в фоне, ни на переднем плане: хук это заблокирует, а осиротевший процесс потом держит папку. Сервер проверяется разбором файлов (`node --check`), автоматических прогонов в проекте нет (`DOCS/decisions/025`).
 
 ## Отчёт (последнее сообщение, коротко)
 
 - таблица «новый файл — строк — что внутри»;
 - что нужно поменять в `SYSTEM/index.html` (точные строки) или в чужих файлах;
-- результат smoke / eslint / madge — дословно последние строки;
+- результат `node --check` / eslint / madge — дословно последние строки;
 - что не удалось и почему.

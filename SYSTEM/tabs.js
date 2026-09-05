@@ -1,13 +1,12 @@
 // Панель вкладок: показывает один вид и подсвечивает активную кнопку.
 // Ядро (app.js) переключает вкладку через MissionTabs.show, а сами вкладки
-// живут отдельными файлами — PROJECTS/Graph/graph.js, PROJECTS/Flow/flow.js,
-// PROJECTS/Kanban/kanban.js.
+// живут отдельными файлами — PROJECTS/Flow/flow.js, PROJECTS/Kanban/kanban.js.
 (function () {
             const viewButtons = [...document.querySelectorAll('.toolbar [data-view]')];
             const flowZoomPanel = document.getElementById('flowZoomPanel');
 
             // запоминаем последнее открытое место, чтобы после перезагрузки страницы
-            // пользователь вернулся туда же. Вкладка пишется своим именем ('graph'),
+            // пользователь вернулся туда же. Вкладка пишется своим именем ('flow'),
             // страница кнопки «+» — как 'page:<id>' (её открывает SYSTEM/new-button.js)
             const LAST_VIEW_KEY = 'lastView';
 
@@ -38,7 +37,6 @@
                 // пока chatView скрыт, scrollHeight не считается — лента грузится
                 // ещё до открытия вкладки, поэтому довернуть скролл вниз при показе
                 if (name === 'chat') App.chatMessages.scrollTop = App.chatMessages.scrollHeight;
-                if (name === 'graph') MissionGraph.show();
                 if (name === 'flow') MissionFlow.center();
                 if (name === 'book') MissionBookTab.show();
                 // Kanban поднимает сторонний бинарь beads-web, поэтому восстановление

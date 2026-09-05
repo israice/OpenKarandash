@@ -8,10 +8,13 @@
 //
 // 1. Держит бинарь живым: поднимает по первому заходу на вкладку Kanban (не при
 //    старте сервера — иначе второй слушающий процесс заводился бы всегда, даже
-//    если доску не открывали), гасит вместе с собой и регистрирует в нём папку
-//    проекта. Порт — BEADS_PORT из .env, `0` выключает доску совсем (так делает
-//    смоук). Браузер бинарь не открывает: это делает только команда
-//    `bead-kanban` из пакета, а её мы не зовём — запускаем сам бинарь.
+//    если доску не открывали) и регистрирует в нём папку проекта. Наш перезапуск
+//    он переживает: доску мы не гасим и заново не заводим, а подхватываем ту же —
+//    иначе каждое обновление сервера поднимало бы отдельный процесс доски и
+//    отнимало у неё двадцать секунд на старт. Порт — BEADS_PORT из .env, `0`
+//    выключает доску совсем. Браузер бинарь не открывает: это
+//    делает только команда `bead-kanban` из пакета, а её мы не зовём — запускаем
+//    сам бинарь.
 // 2. Отдаёт его через наш порт. Это не украшение: пока кадр смотрел на
 //    localhost:3008, он был чужого origin, и Karandash не мог заглянуть внутрь —
 //    подсвечивал доску одним прямоугольником на весь экран. С нашего порта его
@@ -23,7 +26,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { spawn } = require('child_process');
-const { sendJson } = require('../../SYSTEM/core/http.js');
+const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
 
 const HEALTH_TIMEOUT_MS = 20_000;  // столько ждём, пока бинарь поднимется
 const HEALTH_INTERVAL_MS = 300;
@@ -93,17 +96,21 @@ function createRoutes({ root }) {
         }
     }
 
+    // на порту уже кто-то отвечает: это либо тот же бинарь, переживший наш
+    // перезапуск, либо поднятый пользователем руками. Подхватываем его как есть,
+    // второго не заводим. id проекта после нашего перезапуска забыт — спрашиваем
+    // заново, иначе кадр открылся бы на списке проектов вместо самого проекта
+    async function adopt() {
+        state.running = await health();
+        if (state.running && !state.projectId) await registerProject();
+        return state.running;
+    }
+
     async function start() {
-        if (!port) return; // BEADS_PORT=0 — доска выключена (смоук, headless-прогон)
+        if (!port) return; // BEADS_PORT=0 — доска выключена (headless-прогон)
         state.error = null; // прошлая неудача не должна висеть вечно: пробуем заново
 
-        // на порту уже кто-то есть: пользователь поднял `bead-kanban` руками или
-        // это тот же бинарь, переживший перезапуск сервера. Второй не заводим
-        if (await health()) {
-            state.running = true;
-            await registerProject();
-            return;
-        }
+        if (await adopt()) return;
 
         const bin = binaryPath(root);
         if (!fs.existsSync(bin)) {
@@ -113,14 +120,11 @@ function createRoutes({ root }) {
 
         const child = spawn(bin, [], {
             windowsHide: true,
+            detached: true, // отвязан от нас: наш перезапуск его не гасит
             stdio: 'ignore',
             env: { ...process.env, PORT: String(port) },
         });
         child.on('error', (err) => { state.error = `beads-web не запустился: ${err.message}`; });
-        // бинарь не должен пережить наш сервер: иначе после перезапуска он
-        // занимает порт, а в диспетчере задач его никто не ищет
-        const kill = () => { try { child.kill(); } catch { /* уже мёртв */ } };
-        process.on('exit', kill);
         child.unref();
 
         if (await waitForHealth()) {
@@ -200,13 +204,16 @@ function createRoutes({ root }) {
             // бинарь мог упасть уже после старта
             '/api/kanban/status': async (req, res) => {
                 if (!port) {
-                    sendJson(res, { ok: false, error: 'BEADS_PORT=0 — доска выключена в .env' });
+                    sendJson(res, { ok: false, disabled: true, error: 'BEADS_PORT=0 — доска выключена в .env' });
                     return;
                 }
                 // не отвечает — значит либо ещё не поднимали, либо упал: пробуем
-                // поднять прямо сейчас. Это единственное место, где он заводится
-                state.running = await health();
-                if (!state.running) await ensureStarted();
+                // поднять прямо сейчас. Это единственное место, где он заводится.
+                // probe: true — вопрос без просьбы (вкладку не выбирали, а вернули
+                // после перезагрузки страницы): живую доску подхватим, мёртвую
+                // поднимать не станем, решает человек кнопкой
+                const { probe } = await readJson(req);
+                if (!await adopt() && !probe) await ensureStarted();
                 if (!state.running) {
                     sendJson(res, { ok: false, error: state.error || `beads-web не отвечает на порту ${port}` });
                     return;

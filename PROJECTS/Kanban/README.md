@@ -36,7 +36,10 @@ Our server does — not the user, and not the package's own `bead-kanban` comman
 2. otherwise spawns the binary and waits up to 20 seconds for it to answer;
 3. registers this repository in it via its `POST /api/projects`, so the board opens on the
    right project. Running again does not duplicate the entry;
-4. kills the binary when our server exits — it must not outlive us and hold the port.
+4. lets the binary outlive our own restarts: it is spawned `detached` and is not killed
+   when we exit. Killing it used to cost more than it fixed — live reload restarts our
+   server on every edit of a server file, and each restart killed the board and spawned a
+   separate new process, twenty seconds of startup and a lost place in the board's own UI.
 
 Nothing ever opens a browser tab. The package can (`bead-kanban` → `openBrowser` in
 `bin/cli.js`), but we do not call that command — we run the `beads-server` binary itself,
@@ -48,15 +51,18 @@ Restoring the tab is not the same as choosing it. After `node server.js` live re
 reloads any open page and `tabs.js` returns to the last view; if that was Kanban, the tab
 used to ask for the status by itself and the server started a third-party process — which
 looked exactly like "starting the server opens beads-web". So `showView(name, restored)`
-passes that apart: a restored tab shows an **Открыть доску** button and lets the person
-decide, while clicking Kanban in the toolbar starts it right away.
+passes that apart: a restored tab asks for the status with `probe: true` — a question, not
+a request. The server only checks whether anything answers on `BEADS_PORT` and starts
+nothing: if the board is alive (the usual case — it survives our restarts) the frame comes
+straight back, and if it is not, the tab shows an **Открыть доску** button and lets the
+person decide. Clicking Kanban in the toolbar, or that button, starts it right away.
 
-`BEADS_PORT=0` turns the whole thing off. That is what the smoke run uses, so a test run
-never starts a stray process or fights the working copy for the port.
+`BEADS_PORT=0` turns the whole thing off — handy for a headless run that must not start a
+stray process or fight the working copy for the port.
 
 | Route | What it does |
 |---|---|
-| `/api/kanban/status` | `{ ok, url }` — the address of the board (`/kanban-ui/`), or `{ ok: false, error }` with the reason it is not there |
+| `/api/kanban/status` | `{ ok, url }` — the address of the board (`/kanban-ui/`), or `{ ok: false, error }` with the reason it is not there. Body `{ probe: true }` asks without starting anything |
 
 Liveness is re-checked on every request: the binary can die after a successful start.
 
@@ -74,7 +80,7 @@ belong to the board, and they are listed explicitly rather than taken as "anythi
 Its client-side navigation (clicking a project) changes the frame's address to something like
 `/project/<id>`; such paths cannot be listed in advance, so they are picked up by a residual
 rule — a GET for an extensionless path we do not have on disk. Both previous contracts are
-intact and covered by the smoke run: `/no-such-file.txt` is still 404, and
+intact: `/no-such-file.txt` is still 404, and
 `POST /api/no-such-route` is still 404. With `BEADS_PORT=0` nothing is proxied at all.
 
 ## 🖼️ Why a frame
@@ -86,7 +92,7 @@ clicks, or its React taking over our whole page. So the tab hands it a frame at 
 with no padding of ours. The reasoning in full — `DOCS/decisions/021`.
 
 The frame is created on the first visit to the tab (`MissionKanban.show()`, called from
-`tabs.js` the same way Graph and Book are) and is not reloaded on later visits.
+`tabs.js` the same way Book is) and is not reloaded on later visits.
 
 ## ✏️ Karandash on this tab
 
@@ -138,7 +144,6 @@ but with the old code.
 | `PROJECTS/Karandash/karandash.js` | Descends into same-origin frames: hit test, outline offset, wheel boundary |
 | `SYSTEM/index.html` | The `#kanbanView` / `#board` container, the `kanbanButton` button, loading `kanban.css` and `kanban.js` |
 | `SYSTEM/tabs.js` | Switching to the `kanban` view; passes `restored` so a reload does not start the binary |
-| `SYSTEM/smoke.js` | Two checks: the route answers with a reason when off, and the 404 contracts stay intact |
 | `server.js` | `BEADS_PORT` in the `.env` template, the module in `featureRoutes`, and the two proxy hooks in the dispatcher |
 
 ---

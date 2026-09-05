@@ -31,7 +31,6 @@ Rows in both lists are clickable: a click switches the interface to the PROJECTS
 
 | Section | What it does | README |
 |---|---|---|
-| 🕸️ **Graph** | Project map: files, functions and the links between them | [../Graph/README.md](../Graph/README.md) |
 | 🌊 **Flow** | A canvas of nodes and arrows — the execution flow diagram | [../Flow/README.md](../Flow/README.md) |
 | 🗂️ **Kanban** | Task board in columns | [../Kanban/README.md](../Kanban/README.md) |
 | 💬 **PROJECTS** | Chat with the assistant and the session list | [../PROJECTS/README.md](../PROJECTS/README.md) |
@@ -41,7 +40,7 @@ Rows in both lists are clickable: a click switches the interface to the PROJECTS
 
 ## 🧰 The toolbar
 
-The toolbar at the top left (`.toolbar` with `aria-label="Actions"`) holds six view buttons — Graph, Flow, Kanban, PROJECTS, Book, Home. The **Karandash** button adds itself: `PROJECTS/Karandash/karandash.js` creates a separate `.toolbar` and inserts it before the `#settings` block. On the right is the `settingsButton` gear.
+The toolbar at the top left (`.toolbar` with `aria-label="Actions"`) holds five view buttons — Flow, Kanban, PROJECTS, Book, Home. The **Karandash** button adds itself: `PROJECTS/Karandash/karandash.js` creates a separate `.toolbar` and inserts it before the `#settings` block. On the right is the `settingsButton` gear.
 
 - **Dragging buttons.** A long press on a button — exactly 2 seconds (`LONG_PRESS_MS = 2000`) — enables reorder mode: the toolbar gets the `toolbar--reorder` class and the button can be dragged between its neighbours. Moving the cursor more than 8 pixels before the timer fires cancels entering the mode, and a click after a drag does not switch tabs.
 - **Exit with `Esc`.** At that moment the new order is saved to `localStorage` under the key `toolbarOrder` and restored on the next page load. The order is stored separately for each toolbar — its `aria-label` serves as the key.
@@ -49,10 +48,10 @@ The toolbar at the top left (`.toolbar` with `aria-label="Actions"`) holds six v
 
 ## ⚙️ How it works
 
-- **One page, no reloads.** All views sit side by side in `index.html`; `MissionTabs.show(name)` from `tabs.js` walks through `App.VIEWS`, leaves one element visible and sets `aria-pressed` on the toolbar buttons. Home needs nothing extra when shown — unlike Graph and Flow, which have to recompute their canvas.
+- **One page, no reloads.** All views sit side by side in `index.html`; `MissionTabs.show(name)` from `tabs.js` walks through `App.VIEWS`, leaves one element visible and sets `aria-pressed` on the toolbar buttons. Home needs nothing extra when shown — unlike Flow, which has to recompute its canvas.
 - **The observation panel is rendered by the server.** Its markup is not built in the browser: `PROJECTS/Home/home-server.js` renders `home-observation.eta` (next to it) and htmx swaps that piece of the page in through `/api/fragment/home-observation`. Both files live in this folder — `server.js` only wires the route table in. The Providers card is the exception: its state exists only in the browser.
 - **The summary is live.** `setInterval(loadSessions, 8000)` refreshes both the list and the observation panel every 8 seconds while the tab is open.
-- **The client is split into independent `defer` files.** Home does not depend on `PROJECTS/Graph/graph.js`, `PROJECTS/Flow/flow.js` or `PROJECTS/Kanban/kanban.js`: one file failing does not take down the rest of the interface.
+- **The client is split into independent `defer` files.** Home does not depend on `PROJECTS/Flow/flow.js` or `PROJECTS/Kanban/kanban.js`: one file failing does not take down the rest of the interface.
 
 ## ✅ What already works
 

@@ -96,6 +96,33 @@
                 <select class="provider__select" id="screenshotScreenSelect" aria-label="Screen for screenshots"></select>
                 <img class="screenshot-screen__preview" id="screenshotScreenPreview" alt="Selected screen preview" hidden style="cursor: zoom-in">
             </div>
+            <div class="provider telegram" id="telegramRow">
+                <div class="provider__row">
+                    <div>
+                        <div class="provider__name">Telegram</div>
+                        <div class="provider__note">Bot token and allowed user ids — saved to the local .env</div>
+                    </div>
+                    <div class="provider__actions">
+                        <span class="provider__status" id="telegramStatus" hidden></span>
+                        <button type="button"
+                                class="provider__button provider__button--connect"
+                                id="telegramConnectButton"
+                                aria-expanded="false"
+                                aria-controls="telegramFields">Connect</button>
+                    </div>
+                </div>
+                <div class="provider__model telegram__fields" id="telegramFields" hidden>
+                    <span class="provider__model-label">API key:</span>
+                    <input type="password" class="provider__input" id="telegramTokenInput"
+                           placeholder="123456789:AA..." autocomplete="off" spellcheck="false"
+                           aria-label="Telegram bot API key">
+                    <span class="provider__model-label">User ids:</span>
+                    <input type="text" class="provider__input" id="telegramUsersInput"
+                           placeholder="12345678, 87654321" autocomplete="off" spellcheck="false"
+                           aria-label="Telegram user ids, comma separated">
+                    <div class="telegram__hint" id="telegramHint"></div>
+                </div>
+            </div>
         </div>
     `;
     document.body.append(settingsModal);
@@ -602,6 +629,87 @@
         renderScreenshotPreview(index);
     });
 
+    // ---------- подключение Telegram ----------
+
+    // Кнопка раскрывает под собой два поля — ключ бота и id людей через запятую;
+    // оба сохраняются сами, с задержкой после последней правки, и уезжают
+    // в .env (серверная половина — telegram-server.js). Сам ключ сервер наружу
+    // не отдаёт: в поле лежит маска из точек, и она же уходит обратно, пока
+    // поле не тронули, — значит, ключ в .env менять не надо
+    const telegramConnectButton = settingsModal.querySelector('#telegramConnectButton');
+    const telegramFields = settingsModal.querySelector('#telegramFields');
+    const telegramTokenInput = settingsModal.querySelector('#telegramTokenInput');
+    const telegramUsersInput = settingsModal.querySelector('#telegramUsersInput');
+    const telegramStatus = settingsModal.querySelector('#telegramStatus');
+    const telegramHint = settingsModal.querySelector('#telegramHint');
+
+    const TELEGRAM_SAVE_DELAY = 700;
+    let telegramSaveTimer = null;
+    let telegramConnected = false;
+    // трогали ли поле ключа в этом сеансе: пока нет — шлём null вместо значения,
+    // и сервер оставляет ключ в .env как есть. Иначе правка одних только id
+    // отправляла бы набранный ключ заново, а сервер на каждую букву гасил бы
+    // опрос и снова ходил в getMe
+    let telegramTokenTouched = false;
+
+    function renderTelegram(info) {
+        if (!info) return;
+        // маска приходит с сервера и в поле выглядит точками — своё значение
+        // затираем только тогда, когда человек его сейчас не набирает
+        if (document.activeElement !== telegramTokenInput) telegramTokenInput.value = info.tokenMask || '';
+        if (document.activeElement !== telegramUsersInput) telegramUsersInput.value = info.users || '';
+        if (info.ok !== false) telegramTokenTouched = false;
+
+        telegramConnected = Boolean(info.connected);
+        telegramStatus.hidden = !info.connected;
+        telegramStatus.textContent = info.connected ? 'Connected' : '';
+        // кнопка ведёт себя как у остальных провайдеров: пока моста нет —
+        // синий «Connect», у поднятого — обычный «Disconnect»
+        telegramConnectButton.textContent = info.connected ? 'Disconnect' : 'Connect';
+        telegramConnectButton.classList.toggle('provider__button--connect', !info.connected);
+        // у подключённого провайдера его настройки видны всегда (как строка
+        // с моделью), поэтому поля моста не прячем; у неподключённого их
+        // раскрывает сама кнопка, и текущий выбор человека мы не сбиваем
+        if (info.connected) telegramFields.hidden = false;
+        telegramConnectButton.setAttribute('aria-expanded', String(!telegramFields.hidden));
+
+        // подсказки под полями нет — строка занята только ошибкой сохранения
+        telegramHint.textContent = info.error || '';
+        telegramHint.classList.toggle('telegram__hint--error', Boolean(info.error));
+    }
+
+    async function saveTelegram(token = telegramTokenTouched ? telegramTokenInput.value : null) {
+        renderTelegram(await api('/api/telegram/save', {
+            token,
+            users: telegramUsersInput.value,
+        }));
+    }
+
+    for (const input of [telegramTokenInput, telegramUsersInput]) {
+        input.addEventListener('input', () => {
+            if (input === telegramTokenInput) telegramTokenTouched = true;
+            clearTimeout(telegramSaveTimer);
+            telegramSaveTimer = setTimeout(() => saveTelegram(), TELEGRAM_SAVE_DELAY);
+        });
+    }
+
+    telegramConnectButton.addEventListener('click', async () => {
+        // у поднятого моста кнопка отключает его: пустой ключ стирает строку
+        // в .env и гасит опрос — id людей при этом остаются на месте
+        if (telegramConnected) {
+            clearTimeout(telegramSaveTimer);
+            telegramTokenInput.value = '';
+            await saveTelegram('');
+            telegramFields.hidden = true;
+            telegramConnectButton.setAttribute('aria-expanded', 'false');
+            return;
+        }
+        const show = telegramFields.hidden;
+        telegramFields.hidden = !show;
+        telegramConnectButton.setAttribute('aria-expanded', String(show));
+        if (show) telegramTokenInput.focus();
+    });
+
     // ---------- открытие окна настроек ----------
 
     function openSettings() {
@@ -609,6 +717,7 @@
         renderDefaultProviderRow();
         renderProviders();
         renderScreenshotScreen();
+        api('/api/telegram/state').then(renderTelegram);
         App.openModal(settingsModal);
     }
 

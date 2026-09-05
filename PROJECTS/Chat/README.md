@@ -2,11 +2,11 @@
 
 **Chat with an AI assistant right in the browser: every step is visible and nothing is lost on reload.**
 
-A Mission Control interface section. The toolbar button is `chatButton` (aria-label "PROJECTS"), the screen itself is `#chatView`, the logic is in `SYSTEM/app.js` (`window.App`). The internal names are left over from the section's former name — `chat` — so that is what to look for in the code.
+A Mission Control interface section. The toolbar button is `chatButton` (aria-label "PROJECTS"), the screen itself is `#chatView`, the logic is in `PROJECTS/Chat/chat*.js` — the entry point `chat.js` plus `chat-state.js`, `chat-sessions.js`, `chat-feed.js` and `chat-stream.js` (`DOCS/decisions/022`); it used to sit in `SYSTEM/app.js`, which now keeps only the shared core of `window.App`. The internal names are left over from the section's former name — `chat` — so that is what to look for in the code.
 
 ## 🧭 What this is
 
-The tab where you talk to the locally installed **Claude Code CLI**. You write a question — the server runs `claude -p --output-format stream-json --verbose`, and the answer does not arrive as one lump at the end but as a **stream of events**: first the session id, then every tool call (`Read app.js`, `Bash node smoke.js`), then the text. The whole conversation goes into SQLite, so you can come back to it at any time.
+The tab where you talk to the locally installed **Claude Code CLI**. You write a question — the server runs `claude -p --output-format stream-json --verbose`, and the answer does not arrive as one lump at the end but as a **stream of events**: first the session id, then every tool call (`Read app.js`, `Bash git status`), then the text. The whole conversation goes into SQLite, so you can come back to it at any time.
 
 On the left is the **Tasks** panel with every conversation started from this interface. While no session is selected, the feed shows a demo layout of task cards ("User Chat") — that is a mock-up of a future multi-agent view, not live data. The interface section cards (the README of each section) have moved to a separate top-menu tab — **Book** (`PROJECTS/Book/book-tab.js`).
 
@@ -46,7 +46,7 @@ The `/api/agent/ask` response is not a single JSON document but an **NDJSON** st
 | --- | --- | --- |
 | `{"type":"queued","ahead":N}` | before the start, if the files are busy | N jobs ahead; "Queued" is shown |
 | `{"type":"session","id":…}` | the very first line, before the answer | the session id — the row appears in the panel immediately |
-| `{"type":"tool","name":…,"detail":…}` | the assistant called a tool | `Read app.js`, `Bash node smoke.js`; the step is written to the database |
+| `{"type":"tool","name":…,"detail":…}` | the assistant called a tool | `Read app.js`, `Bash git status`; the step is written to the database |
 | `{"type":"text","text":…}` | as it is generated | a chunk of the answer, straight into the feed |
 | `{"type":"rate_limit","info":…}` | together with the CLI's answer | the 5-hour / 7-day limit windows |
 | `{"type":"done","text":…}` | at the end | the final answer; the exchange is written to the database at the same time |
@@ -80,7 +80,13 @@ Endpoints (all `POST`, localhost only):
 
 | File | What is in it |
 | --- | --- |
-| `SYSTEM/app.js` | the tab's core: the message feed, the NDJSON stream, the Tasks panel, providers and limits |
+| `PROJECTS/Chat/chat.js` | the tab's entry point: send modes, the composer, wiring the panel, the feed and the stream together. Connected as `<script type="module">` right after `app.js`, it imports the core from there and adds its own functions to `window.App` |
+| `PROJECTS/Chat/chat-state.js` | the tab's shared mutable state in one object (`export const state`); imports nothing |
+| `PROJECTS/Chat/chat-sessions.js` | the Tasks panel: the list, selecting and deleting sessions, drafts, the "running" indicator, composer busy state |
+| `PROJECTS/Chat/chat-feed.js` | the message feed: markdown, tool steps and thinking, autoscroll, the preview lightbox |
+| `PROJECTS/Chat/chat-stream.js` | the NDJSON stream: `ask`/`attach`/`stop` and turning CLI events into feed rows |
+| `SYSTEM/app.js` | the shared core the tab imports: `api()`, modals, the lightbox, `App.VIEWS`, restoring the CLI connection, `escapeHtml` |
+| `SYSTEM/providers.js` | providers and connections, subscription limits, the session header with model and effort, the context gauge |
 | `SYSTEM/sidebar-resize.js` | the handle on the panel's right edge: dragging the width, with persistence |
 | `PROJECTS/Book/book-tab.js` | the Book top-menu tab: cards for the interface sections that open their README (it used to live here as the `Projects` tab) |
 | `SYSTEM/index.html` | the `#chatView` markup and styles: panel, session header, feed, composer |

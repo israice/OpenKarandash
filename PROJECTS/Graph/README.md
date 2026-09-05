@@ -1,102 +1,85 @@
-# 🕸 Graph
+# 🕸 Project map
 
-A living map of the project: files, sections, functions, routes and memory of past sessions — in one cloud of nodes that builds itself.
+A living map of the project: files, sections, functions, routes and memory of past sessions — built by the server, read by search and by the file editor.
 
 ## 🧭 What this is
 
-The **Graph** tab is a graph of everything that physically sits in the project folder. There is nothing to configure: on startup the server creates an Obsidian vault next to the code (`DATA/vault/`), fills it with notes — one per file, one per section of a large file, one per top-level function, one per API route — and keeps them up to date. The tab simply fetches the finished map in a single request.
+There used to be a **Graph** tab here — a canvas with a force layout of the whole project. It was removed (`DOCS/decisions/023`): nobody used it, and it cost about 700 lines of client code and styles. Everything the tab was built on stayed, because the rest of the project lives on it.
 
-The links here are not invented from matching names. An edge appears only where the code has a real binding: a `/api/...` string literal, a `src`/`href` attribute, a `require`/`import`, a function call inside a file, a `[[…]]` link in a note. Git history forms a separate layer — files that change together from commit to commit.
+On startup the server creates an Obsidian vault next to the code (`DATA/vault/`) and fills it with notes — one per file, one per section of a large file, one per top-level function, one per API route, one per past session — and keeps them up to date. From those notes it builds a full-text index and a node/link map.
 
-The graph is not only for looking at. Clicking a node opens the file's contents right in a window — editable and saveable. The search field at the top does a full-text search across code, notes and past sessions, and highlights the hits directly in the node cloud.
+The links are not invented from matching names. An edge appears only where the code has a real binding: a `/api/...` string literal, a `src`/`href` attribute, a `require`/`import`, a function call inside a file, a `[[…]]` link in a note. Git history forms a separate layer — files that change together from commit to commit.
 
-## ✨ Features
+## 🎯 Who uses it
 
-- **A live layout.** The force simulation runs every frame: nodes push each other apart, links pull them together, and light gravity keeps the cloud centred. The motion decays and stops on its own — no battery burned in the background.
-- **Nodes can be dragged.** Grab a node with the mouse and its neighbours follow; let go and the graph settles by itself.
-- **Seven node kinds.** Files, API, sections, functions, sessions, notes, history — each with its own colour. The chips on the left turn kinds on and off; functions, sessions and history are off by default, otherwise the picture becomes unreadable.
-- **Neighbourhood highlighting.** Hovering brings a node and its links to the front and dims the rest. The circle grows with the number of links — hubs are visible at a glance.
-- **Project-wide search.** Full-text (FTS5 with BM25 ranking) across code, vault notes and the conversations of past sessions. Matching nodes pulse, and the hint shows how many were found in total and how many of those are visible in the graph.
-- **The links panel.** The selected node expands to the side: kind, file and line, date, and the list of neighbours — any of which can be opened with one click.
-- **An editor in the window.** Text files can be edited and saved with a button or `Ctrl+S`. For a section node and a function node the text is already scrolled to the right line. Vault notes open read-only — they are rebuilt by the server, and an edit would not survive the next rebuild. Binary files show only their size.
-- **A stale marker.** If the files a session touched have changed since, its note is marked `stale` and drawn dimmed: a past decision should not read as the current one.
-- **Updates without a reload.** Edits in the project rebuild the map, and an open tab redraws itself.
-- **Respect for accessibility settings.** With the system "reduce motion" setting, the appearance animation, transitions and pulsing are turned off.
-
-## 🎛 Controls
-
-| Action | What happens |
+| Consumer | What it takes |
 | --- | --- |
-| Mouse wheel | Zoom towards the point under the cursor |
-| Dragging empty space | Pan the canvas |
-| Dragging a node | The node follows the cursor, neighbours are pulled along |
-| Hovering a node | The node and its links are highlighted, the rest fades |
-| Clicking a node | The links panel on the right plus a window with the contents |
-| Clicking a kind chip | Turn that node kind on or off |
-| Typing in the search field | After a 200 ms pause — the matches are highlighted in the graph |
-| An empty search field | The highlighting is cleared |
-| Clicking a link name | Jump to the neighbouring node |
-| `Ctrl+S` / `Cmd+S` in the window | Save the edit |
-| `×` in the right-hand panel | Close the panel and clear the selection |
+| `node PROJECTS/Graph/search.js "query"` | Full-text search over code, notes and past sessions — the way agents search this repo (`AGENTS.md`) |
+| The Book tab | README panel on the right: reading, editing and autosaving a file through `MissionFiles.createFileEditor` |
+| The Chat tab | The file panel instead of the message feed, plus `MissionFiles.closeFilePanel` when a session is switched |
+| The Flow tab | "Open file" on a document node — `MissionFiles.openFileModal` |
+| Agents and sessions | Session memory in `DATA/vault/Sessions/`: what was asked, how it ended, which files were touched |
 
-Node labels appear as you zoom in: at a wide view they would blur into mush, so at that distance only the labels of the hovered and the selected node are shown.
+## ✨ What it gives
+
+- **Project-wide search.** Full-text (FTS5 with BM25 ranking) across code, vault notes and the conversations of past sessions.
+- **A file editor.** Text files can be edited and saved with a button, with `Ctrl+S`, or automatically after a pause in typing. For a section node and a function node the text is already scrolled to the right line. Vault notes open read-only — they are rebuilt by the server, and an edit would not survive the next rebuild. Binary files show only their size.
+- **A stale marker.** If the files a session touched have changed since, its note is marked `stale`: a past decision should not read as the current one.
+- **Updates without a reload.** Edits in the project rebuild the map, and the page is told to fetch it again next time it needs it.
 
 ## 🔬 How it works
 
 **Where the nodes come from.** The server walks the entire project folder — including hidden files and things git ignores (`.env`, `.sessions.db`, local settings). There are exactly three exceptions, all unavoidable: `.git`, `node_modules` and `DATA/` — everything the server produced itself, the vault included.
 
-| Kind | What becomes a node | Visible immediately |
-| --- | --- | --- |
-| `file` | Any file in the project folder | yes |
-| `route` | A `urlPath === '/api/…'` declaration in server code | yes |
-| `section` | A `// ---------- … ----------` separator comment in a file of 200 lines or more | yes |
-| `function` | A top-level function in such a large file | no |
-| `session` | A note about a past session from `vault/Sessions/` | no |
+| Kind | What becomes a node |
+| --- | --- |
+| `file` | Any file in the project folder |
+| `route` | A `urlPath === '/api/…'` declaration in server code |
+| `section` | A `// ---------- … ----------` separator comment in a file of 200 lines or more |
+| `function` | A top-level function in such a large file |
+| `session` | A note about a past session from `vault/Sessions/` |
+| `note` | A note written by hand in the vault root |
+| `history` | The "files that change together" summary from git history |
 
-A session note is named `<date> <title> <id prefix>`, and the title is the user's first
-message — unbounded. Both parts are capped (`SESSION_TITLE_LIMIT`, `NOTE_NAME_LIMIT` in
-`graph-server.js`): a full path over 260 characters cannot be written on Windows, and the
-failure arrives as `ENOENT` on open — which reads as "no such directory" and used to take
-down the whole map rebuild, not just that one note.
-| `note` | A note written by hand in the vault root | yes |
-| `history` | The "files that change together" summary from git history | no |
+A session note is named `<date> <title> <id prefix>`, and the title is the user's first message — unbounded. Both parts are capped (`SESSION_TITLE_LIMIT`, `NOTE_NAME_LIMIT` in `graph-vault.js`): a full path over 260 characters cannot be written on Windows, and the failure arrives as `ENOENT` on open — which reads as "no such directory" and used to take down the whole map rebuild, not just that one note.
 
 **Where the links come from.** Before looking for calls, strings and comments are stripped from the code — a function name mentioned in prose does not count as a call. A function is attached to the section it is declared in, and a section to its file: the result is a tree rather than a flat fan. The "changed together" pairs come from commits where the files met at least twice, and a file edited in more than 60 % of commits is excluded from the pairs so it does not become a false hub.
 
-**Which routes the tab calls.** All `POST`, all local-only:
+**Which routes there are.** All `POST`, all local-only:
 
 | Route | Why |
 | --- | --- |
-| `/api/obsidian/graph` | The vault's nodes and links — the whole canvas is built from them |
+| `/api/obsidian/graph` | The vault's nodes and links. The canvas is gone; now the file editor takes them for a node's list of links |
 | `/api/search` | Search: `{ q, limit }` → a list of hits with snippets |
-| `/api/file/read` | A node's contents for the window: text, size, the `binary` and `editable` flags |
+| `/api/file/read` | A file's contents for the panel: text, size, the `binary` and `editable` flags |
 | `/api/file/write` | Saving an edit; vault notes and binary files are rejected |
 
-**Where state is kept.** The set of enabled node kinds survives a reload — it lives in `localStorage` under the key `graph.visibleKinds` (if storage is unavailable, the tab quietly falls back to the defaults). Everything else — the camera position, the node coordinates, the selection — lives only in the page's memory and is recomputed every time the tab is opened: the cloud comes alive from scratch each time.
-
-**How updates arrive.** The server polls the project files every 400 ms. Three seconds after the last edit it rebuilds the vault and the search index (`DATA/.index.db`), then sends the page a `map` SSE event. The tab redraws the graph — but only if it is currently open: there is no point computing a layout for a hidden canvas. While a request to Claude is in flight, the rebuild is deferred until it finishes.
+**How updates arrive.** The server polls the project files every 400 ms. Three seconds after the last edit it rebuilds the vault and the search index (`DATA/.index.db`), then sends the page a `map` SSE event. The page does not refetch on the spot — it just forgets the map it holds and takes a fresh one the next time a file is opened. While a request to Claude is in flight, the rebuild is deferred until it finishes.
 
 ## 📁 Files
 
 | File | What it is responsible for |
 | --- | --- |
-| `PROJECTS/Graph/graph.js` | The client: layout, simulation, search, links panel, contents window (`window.MissionGraph`) |
-| `PROJECTS/Graph/graph.css` | The tab's styles: canvas, kind chips, links panel, the window and the file editing panel |
-| `PROJECTS/Graph/graph-server.js` | The server half: building the vault, parsing code into sections and functions, session notes, the search index, reading and writing files — plus the tab's own routes (`createRoutes`): `/api/obsidian/graph`, `/api/search`, `/api/file/read`, `/api/file/write` |
+| `PROJECTS/Graph/file-editor.js` | The client: the project map (loading, `nodeByPath`, a node's links) and the file editor — the modal window, the Chat panel and the factory for someone else's panel (`window.MissionFiles`) |
+| `PROJECTS/Graph/file-editor.css` | Its styles: the window, the panel in Chat and its markdown mode |
+| `PROJECTS/Graph/md-editors.js` | EasyMDE over a panel's `textarea` (`MdEditors.attach`), vendored in `vendor/easymde/` |
+| `PROJECTS/Graph/graph-server.js` | The server entry point: `init()` (what the folder needs from outside arrives here once), `prepareVault()` — the one place where the map and the search index are rebuilt together — and the routes (`createRoutes`): `/api/obsidian/graph`, `/api/search`, `/api/file/read`, `/api/file/write`. Nothing else lives here: the work is split by topic into the three files below |
+| `PROJECTS/Graph/graph-vault.js` | Building the vault: walking the project folder, parsing code into sections and functions, git history, file/section/route notes, reading the finished vault into a graph (`buildVaultGraph`), session-memory notes. Also owns the state shared by the server half — the project root, the `DATA`/vault paths and the `state` object filled by `init()` — the other two modules and the entry point `require` it, never the other way round |
+| `PROJECTS/Graph/graph-search.js` | The FTS5 index in `DATA/.index.db`: full rebuild over code, vault notes and session conversations (`rebuildSearchIndex`) and the ranked query behind `/api/search` (`searchProject`) |
+| `PROJECTS/Graph/graph-files.js` | Reading and writing a file: the path comes from the client, so it is resolved through real paths and never allowed outside the project root; vault notes and binary files are refused for writing |
 | `PROJECTS/Graph/search.js` | The same search from the terminal: `node PROJECTS/Graph/search.js "query"`, reads the prebuilt index |
 | `DATA/vault/` | The notes themselves: the map in `Project/`, session memory in `Sessions/`, your own notes alongside (not tracked by git) |
 
 Only the wiring stays outside — the parts that cannot be moved out of the shared files:
 
-| File | What it contains about Graph |
+| File | What it contains about this folder |
 | --- | --- |
-| `SYSTEM/index.html` | A `<link>` to `graph.css`, a `<script defer>` for `graph.js`, the `#graphView` markup and the `graphButton` toolbar button |
-| `server.js` | Only wires the folder in: `graph.init(...)` at startup and `graph.createRoutes()` in the route table. None of the tab's routes live there any more |
-| `SYSTEM/tabs.js` | `MissionGraph.show()` when switching to the tab |
+| `SYSTEM/index.html` | A `<link>` to `file-editor.css`, a `<script defer>` for `file-editor.js` and the `#fileModal` markup. There is no toolbar button and no view of its own any more |
+| `server.js` | Only wires the folder in: `graph.init(...)` at startup and `graph.createRoutes()` in the route table |
 
-The `graph-server.js` module knows nothing about the session store: everything external — the session list, their messages, a session's subject and notifying pages about a rebuild — arrives once through `init()`.
+The server half knows nothing about the session store: everything external — the session list, their messages, a session's subject and notifying pages about a rebuild — arrives once through `init()` in `graph-server.js`, which puts it into the shared `state` object in `graph-vault.js`; `graph-search.js` and the session notes read it from there. There are no circular `require`s between the four files (`npx madge --circular PROJECTS/Graph/graph-server.js`).
 
-Put your own notes in the vault root: `DATA/vault/Project/` is overwritten in full on every rebuild, while everything else is left alone and shows up both in the graph and in the search.
+Put your own notes in the vault root: `DATA/vault/Project/` is overwritten in full on every rebuild, while everything else is left alone and shows up both in the map and in the search.
 
 ---
 
