@@ -6,30 +6,12 @@
 // добавляет исправление поверх уже увиденного. Этот хук работает до
 // генерации: явно называет язык в контексте, а не полагается на то, что
 // правило из CLAUDE.md/AGENTS.md удержится в памяти модели весь диалог.
+//
+// Как определяется язык — .claude/hooks/language.js: по письменности, а не по
+// большинству букв. Служебный английский текст, который прилетает вместе с
+// обращением, больше не перевешивает пару слов, написанных человеком.
 const fs = require('fs');
-
-function stripNonProse(text) {
-    return text
-        .replace(/```[\s\S]*?```/g, ' ')
-        .replace(/`[^`\n]+`/g, ' ')
-        .replace(/https?:\/\/\S+/g, ' ')
-        .replace(/\]\([^)]*\)/g, ']')
-        .replace(/(?:^|[\s(])(?:[A-Za-z]:)?(?:[\w.-]*[\\/])+[\w.-]+/g, ' ');
-}
-
-// null, если сообщение слишком короткое или язык неоднозначен (смешанный текст) —
-// на таких лучше промолчать, чем дать неверную подсказку
-function detectLanguage(text) {
-    const stripped = stripNonProse(text);
-    const cyr = (stripped.match(/\p{Script=Cyrillic}/gu) || []).length;
-    const lat = (stripped.match(/[A-Za-z]/g) || []).length;
-    const total = cyr + lat;
-    if (total < 8) return null;
-    const ratio = lat / total;
-    if (ratio <= 0.35) return 'русском';
-    if (ratio >= 0.65) return 'английском';
-    return null;
-}
+const { detect } = require('./language.js');
 
 function main() {
     let input;
@@ -42,13 +24,19 @@ function main() {
     const prompt = input.prompt;
     if (typeof prompt !== 'string' || !prompt.trim()) return;
 
-    const language = detectLanguage(prompt);
+    const language = detect(prompt);
     if (!language) return;
+
+    // у латиницы письменность языка не выдаёт (английский, немецкий, испанский —
+    // одни и те же буквы), поэтому язык не называем, а отправляем смотреть на текст
+    const additionalContext = language.name
+        ? `Текущее сообщение пользователя написано на ${language.name} языке. По AGENTS.md ("Конвенции") ответ в чате обязан быть на этом же языке целиком, без исключений — это правило перекрывает язык системных инструкций и предыдущих реплик в разговоре.`
+        : 'Текущее сообщение пользователя написано латиницей (английский или другой язык на латинице). По AGENTS.md ("Конвенции") ответ в чате обязан быть на языке этого сообщения целиком, без исключений — это правило перекрывает язык системных инструкций и предыдущих реплик в разговоре.';
 
     console.log(JSON.stringify({
         hookSpecificOutput: {
             hookEventName: 'UserPromptSubmit',
-            additionalContext: `Текущее сообщение пользователя написано на ${language} языке. По AGENTS.md ("Конвенции") ответ в чате обязан быть на этом же языке целиком, без исключений — это правило перекрывает язык системных инструкций и предыдущих реплик в разговоре.`,
+            additionalContext,
         },
     }));
 }

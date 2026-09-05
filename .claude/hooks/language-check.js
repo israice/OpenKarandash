@@ -4,28 +4,15 @@
 // а не гарантия — при большом англоязычном фоне в контексте (схемы MCP, system
 // reminders) язык иногда съезжает. Хук — детерминированная проверка снаружи модели.
 // Регистрация — .claude/settings.json, ключ hooks.Stop.
+//
+// Сравниваем письменности, а не доли букв (.claude/hooks/language.js). Раньше
+// хук считал долю латиницы по всему обращению целиком — вместе со служебным
+// английским текстом, которого человек не писал (преамбула режима, карточка
+// элемента интерфейса с текстом ошибки), — и заставлял переписывать по-английски
+// ответ на русское сообщение. Хуже того, перекос закреплялся: следующий ход
+// сравнивался уже с навязанным английским.
 const fs = require('fs');
-
-// код, инлайн-код, URL и пути файлов не обязаны совпадать по языку — вырезаем перед
-// подсчётом, иначе имена функций/переменных в коде дают ложные срабатывания
-function stripNonProse(text) {
-    return text
-        .replace(/```[\s\S]*?```/g, ' ') // код-блоки
-        .replace(/`[^`\n]+`/g, ' ') // инлайн-код
-        .replace(/https?:\/\/\S+/g, ' ') // URL
-        .replace(/\]\([^)]*\)/g, ']') // URL/путь внутри markdown-ссылки, текст ссылки остаётся
-        .replace(/(?:^|[\s(])(?:[A-Za-z]:)?(?:[\w.-]*[\\/])+[\w.-]+/g, ' '); // пути файлов (в т.ч. абсолютные /mnt/...)
-}
-
-// доля латиницы среди кириллицы+латиницы; слишком короткий текст пропускаем —
-// на нём один термин в скобках даёт нерепрезентативный процент
-function latinRatio(text) {
-    const cyr = (text.match(/\p{Script=Cyrillic}/gu) || []).length;
-    const lat = (text.match(/[A-Za-z]/g) || []).length;
-    const total = cyr + lat;
-    if (total < 20) return null;
-    return lat / total;
-}
+const { detect } = require('./language.js');
 
 // последний текстовый блок последней записи заданного типа в transcript
 function lastMessageText(transcriptPath, type) {
@@ -73,20 +60,12 @@ function main() {
     const assistantText = lastMessageText(transcriptPath, 'assistant');
     if (!userText || !assistantText) return;
 
-    const userRatio = latinRatio(stripNonProse(userText));
-    const assistantRatio = latinRatio(stripNonProse(assistantText));
-    if (userRatio === null || assistantRatio === null) return;
-
-    const userIsCyrillic = userRatio <= 0.35;
-    const userIsLatin = userRatio >= 0.65;
-    const assistantIsCyrillic = assistantRatio <= 0.35;
-    const assistantIsLatin = assistantRatio >= 0.65;
-
-    // сравниваем только когда язык обоих сообщений однозначен (не смешанный текст) —
-    // на пограничных случаях (0.35..0.65) решение неоднозначно, лучше пропустить
-    const mismatch =
-        (userIsCyrillic && assistantIsLatin) || (userIsLatin && assistantIsCyrillic);
-    if (!mismatch) return;
+    const user = detect(userText);
+    const assistant = detect(assistantText);
+    // судить не о чем или письменность неоднозначна — пропускаем: ложная
+    // блокировка обходится дороже пропущенного расхождения
+    if (!user || !assistant) return;
+    if (user.script === assistant.script) return;
 
     console.log(JSON.stringify({
         decision: 'block',
