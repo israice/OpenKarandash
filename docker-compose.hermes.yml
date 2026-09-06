@@ -1,0 +1,94 @@
+# Hermes (в Docker) + Claude через host-side claude-bridge.
+#
+# Запуск из корня репозитория:
+#   ./hermes-start.sh
+# или вручную:
+#   docker compose -f hermes/docker-compose.yml -f docker-compose.hermes.yml up -d
+#
+# Базовый файл использует network_mode: host — это верно для чистого Linux, но
+# не работает под Docker Desktop: там «host» — сеть собственной VM Docker, а не
+# машины WSL/Windows, поэтому порт дашборда наружу не выходит, а бридж на хосте
+# недостижим. Поэтому здесь оба сервиса переведены на bridge-сеть с явным
+# пробросом портов, а до хоста они достают через host.docker.internal.
+# Сам бридж не может жить в контейнере — он управляет `claude` CLI, который
+# установлен на хосте (см. claude-bridge/README.md).
+services:
+  gateway:
+    build:
+      context: ./hermes
+    network_mode: bridge
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      # Опубликован здесь, потому что дашборд разделяет сетевое пространство
+      # этого контейнера. Только loopback — дашборд хранит учётные данные.
+      - "127.0.0.1:9119:9119"
+      # Собственный OpenAI-совместимый API Hermes. Консоль бриджа проксирует в
+      # него, чтобы страница говорила с АГЕНТОМ (инструменты, скиллы), а не с
+      # голой моделью. Только loopback, авторизация по ключу.
+      - "127.0.0.1:8642:8642"
+    volumes:
+      # Отдельный HERMES_HOME для этого клона: штатный compose монтирует
+      # ~/.hermes с настройками Anthropic-подключения оператора — этот клон их
+      # не должен ни читать, ни трогать.
+      !override
+      - ./hermes-home:/opt/data
+      # Сам проект смонтирован по ТОМУ ЖЕ абсолютному пути, что и на хосте.
+      # Без этого файловые/поисковые инструменты агента падают с «Path not
+      # found» — путь совпадает специально: бридж запускает `claude` на хосте
+      # с этим cwd, и путь с обеих сторон должен значить одно и то же.
+      - .:/mnt/c/0_PROJECTS/OpenKarandash
+    environment:
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+      - CLAUDE_BRIDGE_TOKEN=${CLAUDE_BRIDGE_TOKEN}
+      # Контейнер не достаёт до хоста по 127.0.0.1 под Docker Desktop
+      - CLAUDE_BRIDGE_URL=${CLAUDE_BRIDGE_URL:-http://host.docker.internal:8787/v1}
+      # 0.0.0.0 внутри контейнера; наружу опубликован только 127.0.0.1:8642
+      - API_SERVER_KEY=${API_SERVER_KEY}
+      - API_SERVER_HOST=${API_SERVER_HOST:-0.0.0.0}
+      - API_SERVER_PORT=${API_SERVER_PORT:-8642}
+      # Рабочая директория агента — смонтированный корень проекта.
+      # TERMINAL_CWD — то, что реально читает gateway для области видимости
+      # инструментов; HERMES_CWD покрывает только путь запуска TUI. Без
+      # TERMINAL_CWD агент работает из /opt/data, а правки улетают в hermes-home
+      - HERMES_CWD=/mnt/c/0_PROJECTS/OpenKarandash
+      - TERMINAL_CWD=/mnt/c/0_PROJECTS/OpenKarandash
+      # Правки разрешены только в этих префиксах (через os.pathsep). Образ сам
+      # по себе знает только /opt/data — без корня проекта здесь любая правка
+      # внутри смонтированного проекта отклоняется, а агент рапортует об успехе,
+      # хотя файл тихо ушёл в hermes-home
+      - HERMES_WRITE_SAFE_ROOT=/opt/data:/mnt/c/0_PROJECTS/OpenKarandash
+      # Дашборд отказывается слушать не-loopback без auth-провайдера, а внутри
+      # контейнера на bridge-сети опубликованный порт — как раз не-loopback bind.
+      # Логин/пароль — это собственные ворота Hermes, не обход этого требования
+      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME}
+      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}
+      - HERMES_DASHBOARD_BASIC_AUTH_SECRET=${HERMES_DASHBOARD_BASIC_AUTH_SECRET}
+
+  dashboard:
+    # Разделяет с gateway сеть И pid-пространство: дашборд определяет здоровье
+    # gateway по его PID и локальному health-урлу, а из отдельного контейнера не
+    # увидит ни того, ни другого — тогда сайдбар писал бы «Gateway: Stopped» при
+    # живом gateway. Поэтому проброс портов остаётся на gateway
+    network_mode: "service:gateway"
+    pid: "service:gateway"
+    command: ["dashboard", "--host", "0.0.0.0", "--no-open"]
+    volumes:
+      !override
+      - ./hermes-home:/opt/data
+      - .:/mnt/c/0_PROJECTS/OpenKarandash
+    environment:
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+      - CLAUDE_BRIDGE_TOKEN=${CLAUDE_BRIDGE_TOKEN}
+      - CLAUDE_BRIDGE_URL=${CLAUDE_BRIDGE_URL:-http://host.docker.internal:8787/v1}
+      - API_SERVER_KEY=${API_SERVER_KEY}
+      - API_SERVER_HOST=${API_SERVER_HOST:-0.0.0.0}
+      - API_SERVER_PORT=${API_SERVER_PORT:-8642}
+      - HERMES_CWD=/mnt/c/0_PROJECTS/OpenKarandash
+      - TERMINAL_CWD=/mnt/c/0_PROJECTS/OpenKarandash
+      - HERMES_WRITE_SAFE_ROOT=/opt/data:/mnt/c/0_PROJECTS/OpenKarandash
+      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME}
+      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}
+      - HERMES_DASHBOARD_BASIC_AUTH_SECRET=${HERMES_DASHBOARD_BASIC_AUTH_SECRET}
