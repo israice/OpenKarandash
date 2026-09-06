@@ -77,6 +77,12 @@ async function restoreOnLoad() {
         restoreServerConnection('opencode');
     }
 
+    const savedHermes = loadProviderState('hermes');
+    if (savedHermes?.installId) {
+        connections.set('hermes', savedHermes);
+        restoreServerConnection('hermes');
+    }
+
     renderObsConnection();
 
     // список сессий готов сразу при загрузке страницы

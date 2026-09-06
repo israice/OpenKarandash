@@ -419,6 +419,26 @@
         renderProviders();
     }
 
+    // у Hermes ровно одно окружение (Docker) — detect либо находит его, либо нет,
+    // выбор между несколькими environments тут не встаёт
+    async function connectHermes(install) {
+        const result = await api('/api/agent/connect', { agent: 'hermes', id: install.id });
+        if (!result.ok) {
+            showProviderError('hermes', result.error);
+            return;
+        }
+
+        App.connections.set('hermes', {
+            installId: result.id,
+            label: result.label,
+            version: result.version,
+            note: `${result.label} · ${result.version}`,
+        });
+        App.saveProviderState('hermes');
+        App.renderSessionBarControls();
+        renderProviders();
+    }
+
     // окно выбора открывается, только когда найдено больше одного окружения;
     // providerLabel уходит и в заголовок, и в подсказку — общий вид для Claude и OpenCode
     function pickInstall(installs, onPick, providerLabel = 'CLI') {
@@ -461,7 +481,7 @@
             if (id === 'claude') {
                 App.setChatSessionId(null);
                 App.saveClaudeState();
-            } else if (id === 'codex' || id === 'opencode') {
+            } else if (id === 'codex' || id === 'opencode' || id === 'hermes') {
                 App.setChatSessionId(null);
                 App.saveProviderState(id);
             }
@@ -534,6 +554,28 @@
             if (installs.length === 0) showNotFound('OpenCode CLI');
             else if (installs.length === 1) connectOpenCode(installs[0]);
             else pickInstall(installs, connectOpenCode, 'OpenCode CLI');
+            return;
+        }
+
+        // у Hermes подключение тоже настоящее: тот же поток detect → connect,
+        // но окружение всегда одно (Docker), выбор не встаёт
+        if (id === 'hermes') {
+            btn.disabled = true;
+            btn.textContent = 'Looking for Hermes...';
+
+            let installs = [];
+            try {
+                ({ installs = [] } = await api('/api/agent/detect', { agent: 'hermes' }));
+            } catch (err) {
+                renderProviders();
+                showProviderError(id, `Server unavailable: ${err.message}`);
+                return;
+            }
+
+            renderProviders();
+
+            if (installs.length === 0) showNotFound('Hermes (Docker)');
+            else connectHermes(installs[0]);
             return;
         }
 

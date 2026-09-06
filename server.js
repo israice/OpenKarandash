@@ -1417,6 +1417,119 @@ async function askCodex(_body, send) {
     send({ type: 'error', error: 'Codex chat is not implemented yet' });
 }
 
+// ---------- коннектор Hermes agent API ----------
+//
+// Hermes живёт не рядом на хосте, как остальные CLI, а в Docker
+// (docker-compose.hermes.yml) и сам отдаёт готовый OpenAI-совместимый API
+// полноценного агента — со своими инструментами, памятью и скиллами, а не
+// голой моделью. Поэтому коннектор не спавнит процесс, а ходит по HTTP тем же
+// путём, что уже проверен в hermes-using-claude. DOCS/decisions/026.
+const HERMES_API_URL = (process.env.HERMES_API_URL || 'http://127.0.0.1:8642/v1').replace(/\/+$/, '');
+const HERMES_API_KEY = process.env.HERMES_API_KEY || '';
+const HERMES_ASK_TIMEOUT_MS = Number(process.env.HERMES_ASK_TIMEOUT_MS) || 3_600_000;
+const HERMES_TARGETS = [{ id: 'hermes-docker', label: 'Docker', url: HERMES_API_URL }];
+
+let activeHermesTarget = null;
+
+function hermesAuthHeaders() {
+    return HERMES_API_KEY ? { Authorization: `Bearer ${HERMES_API_KEY}` } : {};
+}
+
+// один POST на /chat/completions без стриминга: у остальных коннекторов 'text'
+// приходит целыми блоками, а не токен за токеном (см. askClaude/askOpenCode),
+// поэтому нестримингового ответа Hermes достаточно — незачем городить разбор SSE
+// ради гранулярности, которую эта лента всё равно не показывает
+function runHermes(url, body, { timeoutMs, onSpawn } = {}) {
+    return new Promise((resolve, reject) => {
+        const payload = JSON.stringify(body);
+        const target = new URL(`${url}/chat/completions`);
+        const req = http.request({
+            hostname: target.hostname,
+            port: target.port || 80,
+            path: target.pathname,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...hermesAuthHeaders() },
+        });
+
+        // Stop гасит запрос тем же способом, что и дерево процессов у CLI:
+        // killProcessTree вызывает .kill() на этом объекте (child.pid тут нет —
+        // ветка taskkill для Windows у неё пропускается сама собой)
+        const fakeChild = { kill: () => req.destroy(new Error('Stopped by the user')), __stoppedByUser: false };
+        onSpawn?.(fakeChild);
+
+        let finished = false;
+        const timer = setTimeout(() => {
+            finished = true;
+            req.destroy(new Error(`Timed out (${Math.round(timeoutMs / 1000)}s)`));
+        }, timeoutMs);
+
+        const done = (err, value) => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            err ? reject(err) : resolve(value);
+        };
+
+        req.on('error', (err) => {
+            done(fakeChild.__stoppedByUser ? new Error('Stopped by the user') : err);
+        });
+
+        req.on('response', (res) => {
+            let body = '';
+            res.on('data', (chunk) => { body += chunk; });
+            res.on('end', () => {
+                if (res.statusCode >= 400) return done(new Error(body.trim() || `Hermes returned ${res.statusCode}`));
+                try { done(null, JSON.parse(body)); } catch { done(new Error('Hermes returned a non-JSON response')); }
+            });
+        });
+
+        req.end(payload);
+    });
+}
+
+async function detectHermesInstalls() {
+    const checks = await Promise.allSettled(
+        HERMES_TARGETS.map(async (target) => {
+            const res = await fetch(`${target.url}/models`, { headers: hermesAuthHeaders(), signal: AbortSignal.timeout(5000) });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return { id: target.id, label: target.label, version: 'agent API' };
+        })
+    );
+    return checks.filter((c) => c.status === 'fulfilled').map((c) => c.value);
+}
+
+// у Hermes нет своего «--resume»: разговор восстанавливаем из нашей базы и
+// отправляем целиком, обычным OpenAI messages[] — агент сам решает, что из
+// этого держать в собственной памяти
+async function askHermes({ prompt, sessionId, mode }, send) {
+    if (!activeHermesTarget) return send({ type: 'error', error: 'Hermes is not connected' });
+    const target = activeHermesTarget;
+    if (!prompt) return send({ type: 'error', error: 'Empty request' });
+
+    const history = sessionId
+        ? listMessages.all(sessionId).filter((m) => (m.role === 'user' || m.role === 'assistant') && m.text?.trim())
+        : [];
+    const messages = [...history.map((m) => ({ role: m.role, content: m.text })), { role: 'user', content: prompt }];
+
+    return runTurn({ target, prompt, sessionId, mode }, send, async (ctx) => {
+        const data = await runHermes(target.url, { model: 'hermes', messages, stream: false }, {
+            timeoutMs: HERMES_ASK_TIMEOUT_MS,
+            onSpawn: (fakeChild) => { ctx.run.child = fakeChild; },
+        });
+
+        const text = data.choices?.[0]?.message?.content || '';
+        if (!text) return ctx.fail('Hermes returned an empty answer');
+        ctx.answer = text;
+        if (ctx.session) ctx.assistantPosition = recordAssistantText(ctx.session, text, 'hermes', null, null);
+        ctx.emit({ type: 'text', text });
+
+        if (data.usage) {
+            ctx.meta.usage.inputTokens = data.usage.prompt_tokens || 0;
+            ctx.meta.usage.outputTokens = data.usage.completion_tokens || 0;
+        }
+    });
+}
+
 // ---------- хранилище сессий (SQLite) ----------
 
 // база лежит в DATA, а эту папку слежение за файлами не обходит,
@@ -1578,6 +1691,16 @@ const AGENTS = {
         activate: (target) => { activeCodexTarget = target; },
         connected: () => Boolean(activeCodexTarget),
         ask: askCodex,
+    },
+    hermes: {
+        targets: () => HERMES_TARGETS,
+        detect: () => detectHermesInstalls(),
+        version: (target) => detectHermesInstalls().then((installs) => installs.find((i) => i.id === target.id)?.version || 'agent API'),
+        // модель Hermes выбирает сам (свой конфиг) — на клиенте выбирать нечего
+        models: null,
+        activate: (target) => { activeHermesTarget = target; },
+        connected: () => Boolean(activeHermesTarget),
+        ask: askHermes,
     },
 };
 
