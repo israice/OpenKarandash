@@ -41,6 +41,25 @@
   email и org id владельца подписки. Бэкенд по умолчанию и рекомендованный —
   `cli`, ему этот каталог не нужен.
 
+## Проверено вживую
+
+Сквозной путь подтверждён реальным запросом: `curl` → agent API Hermes
+(`:8642`) → `claude-bridge` (`:8788`) → `claude` CLI → настоящий ответ модели.
+По ходу проверки всплыли два момента, которые иначе не увидеть по коду:
+
+- Штатный порт бриджа (`8787`) и статичные имена контейнеров (`hermes`,
+  `hermes-dashboard` — заданы в `hermes/docker-compose.yml`) конфликтуют,
+  если на той же машине уже стоит другой клон Hermes/claude-bridge (например,
+  прежний прототип `hermes-using-claude`, из которого сюда перенесён код).
+  Поэтому здесь свой порт бриджа по умолчанию — `8788`
+  (`claude-bridge/.env.example`, `docker-compose.hermes.yml`), и свои имена
+  контейнеров — `openkarandash-hermes` / `openkarandash-hermes-dashboard`.
+- Без `hermes-home/config.yaml` со `provider: claude-bridge` свежий Hermes
+  поднимается с `provider: auto` и не находит credentials — сообщения падают
+  с ошибкой ещё до бриджа. `hermes-start.sh` сам кладёт `config.yaml` из
+  `hermes-home.config.example.yaml` при первом запуске (файл в `hermes-home/`
+  не трогает, если он уже есть — не затирает ручные правки).
+
 ## Переменные окружения стека
 
 `claude-bridge/.env` — по образцу `claude-bridge/.env.example`. Корневой

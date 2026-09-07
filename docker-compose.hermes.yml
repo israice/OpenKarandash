@@ -16,6 +16,11 @@ services:
   gateway:
     build:
       context: ./hermes
+    # базовый compose называет контейнеры статично (hermes/hermes-dashboard) —
+    # у другого клона Hermes (не этого проекта) на этой же машине уже есть
+    # контейнеры с этими именами, пусть и остановленные; свои имена не дают
+    # столкнуться и не трогают чужие
+    container_name: openkarandash-hermes
     network_mode: bridge
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -43,7 +48,7 @@ services:
       - HERMES_GID=${HERMES_GID:-10000}
       - CLAUDE_BRIDGE_TOKEN=${CLAUDE_BRIDGE_TOKEN}
       # Контейнер не достаёт до хоста по 127.0.0.1 под Docker Desktop
-      - CLAUDE_BRIDGE_URL=${CLAUDE_BRIDGE_URL:-http://host.docker.internal:8787/v1}
+      - CLAUDE_BRIDGE_URL=${CLAUDE_BRIDGE_URL:-http://host.docker.internal:8788/v1}
       # 0.0.0.0 внутри контейнера; наружу опубликован только 127.0.0.1:8642
       - API_SERVER_KEY=${API_SERVER_KEY}
       - API_SERVER_HOST=${API_SERVER_HOST:-0.0.0.0}
@@ -71,6 +76,7 @@ services:
     # gateway по его PID и локальному health-урлу, а из отдельного контейнера не
     # увидит ни того, ни другого — тогда сайдбар писал бы «Gateway: Stopped» при
     # живом gateway. Поэтому проброс портов остаётся на gateway
+    container_name: openkarandash-hermes-dashboard
     network_mode: "service:gateway"
     pid: "service:gateway"
     command: ["dashboard", "--host", "0.0.0.0", "--no-open"]
@@ -82,7 +88,7 @@ services:
       - HERMES_UID=${HERMES_UID:-10000}
       - HERMES_GID=${HERMES_GID:-10000}
       - CLAUDE_BRIDGE_TOKEN=${CLAUDE_BRIDGE_TOKEN}
-      - CLAUDE_BRIDGE_URL=${CLAUDE_BRIDGE_URL:-http://host.docker.internal:8787/v1}
+      - CLAUDE_BRIDGE_URL=${CLAUDE_BRIDGE_URL:-http://host.docker.internal:8788/v1}
       - API_SERVER_KEY=${API_SERVER_KEY}
       - API_SERVER_HOST=${API_SERVER_HOST:-0.0.0.0}
       - API_SERVER_PORT=${API_SERVER_PORT:-8642}

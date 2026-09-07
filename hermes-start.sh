@@ -9,7 +9,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
-BRIDGE_PORT="${CLAUDE_BRIDGE_PORT:-8787}"
+# Порт бриджа берём из его собственного .env, а не хардкодим здесь: иначе при
+# смене CLAUDE_BRIDGE_PORT в claude-bridge/.env скрипт продолжал бы стучаться
+# в старый порт и — что хуже — решил бы, что бридж уже поднят, если на старом
+# порту случайно отвечает чужой процесс (см. DOCS/decisions/026)
+BRIDGE_PORT="${CLAUDE_BRIDGE_PORT:-}"
+if [ -z "$BRIDGE_PORT" ] && [ -f "$ROOT/claude-bridge/.env" ]; then
+  BRIDGE_PORT="$(grep -m1 '^CLAUDE_BRIDGE_PORT=' "$ROOT/claude-bridge/.env" | cut -d= -f2)"
+fi
+BRIDGE_PORT="${BRIDGE_PORT:-8788}"
 # Относительные пути специально: Docker Desktop переписывает абсолютные пути
 # WSL, переданные в --env-file, в кривые Windows-пути (/mnt/c/... -> C:\mnt\c\...).
 # Скрипт делает cd в $ROOT выше, поэтому относительные пути после этого целы.
@@ -37,6 +45,15 @@ fi
 log "здоровье бриджа: $(curl -s "http://127.0.0.1:${BRIDGE_PORT}/health")"
 
 # ── 2. Hermes (docker) ──────────────────────────────────────
+# без этого файла свежий hermes-home поднимается с provider: auto и не находит
+# credentials — переписать некому. Кладём его только при первом запуске, чтобы
+# не затирать правки, сделанные руками (hermes model, hermes config set, ...)
+if [ ! -f "$ROOT/hermes-home/config.yaml" ]; then
+  log "завожу hermes-home/config.yaml (provider: claude-bridge)"
+  mkdir -p "$ROOT/hermes-home"
+  cp "$ROOT/hermes-home.config.example.yaml" "$ROOT/hermes-home/config.yaml"
+fi
+
 docker info >/dev/null 2>&1 || die "Docker demon недоступен — сначала запусти Docker Desktop"
 log "запускаю контейнеры Hermes"
 HERMES_UID="$(id -u)" HERMES_GID="$(id -g)" "${COMPOSE[@]}" up -d
