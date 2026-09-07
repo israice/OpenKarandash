@@ -7,6 +7,7 @@
   "dependencies": {
     "beads-kanban-ui": "0.4.2",
     "eta": "3.5.0",
-    "htmx.org": "2.0.4"
+    "htmx.org": "2.0.4",
+    "three": "0.180.0"
   }
 }

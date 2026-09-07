@@ -114,7 +114,7 @@ function closeShotLightbox() {
     shotLightboxImg.src = '';
 }
 
-const BOARD_COLUMNS = ['New', 'In Progress', 'Checking', 'Validator', 'Done'];
+const BOARD_COLUMNS = ['New', 'In Progress', 'In Review', 'Validator', 'Done'];
 
 // сервер держит выбранное окружение в памяти и теряет его при перезапуске,
 // поэтому страница умеет восстановить подключение по сохранённому id —
@@ -183,6 +183,7 @@ function init() {
         kanban: document.getElementById('kanbanView'),
         book: document.getElementById('bookView'),
         chat: document.getElementById('chatView'),
+        telegram: document.getElementById('telegramView'),
     };
 
     // ширина нативного скроллбара нужна, чтобы composer/session-bar совпадали по ширине

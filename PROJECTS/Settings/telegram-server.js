@@ -10,6 +10,15 @@
 // поле не трогали и ключ в .env остаётся прежним.
 
 const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
+// ВРЕМЕННО: дневник опроса — понять, откуда берётся Conflict
+const fsDiag = require('fs');
+const diagStart = Date.now();
+function diag(text) {
+    try {
+        fsDiag.appendFileSync('DATA/telegram-poll.log',
+            `${new Date().toISOString()} pid=${process.pid} +${Math.round((Date.now() - diagStart) / 1000)}s ${text}\n`);
+    } catch { /* дневник не должен ронять мост */ }
+}
 
 const TOKEN_KEY = 'TELEGRAM_BOT_TOKEN';
 const USERS_KEY = 'TELEGRAM_USER_IDS';
@@ -18,8 +27,14 @@ const API = 'https://api.telegram.org/bot';
 const POLL_TIMEOUT_S = 50;      // длинный опрос: ответ приходит сразу, как только есть сообщение
 const POLL_RETRY_MS = 5000;     // сеть отвалилась — не долбим Telegram в цикле
 const CONFLICT_RETRY_MS = 2000; // пересменка: ключ отвоёвывается быстрее обычной ошибки
-const CONFLICT_GRACE_MS = 30000;// столько длится пересменка — столько молчим про драку
+// Пересменка длится ровно столько, сколько у Telegram живёт опрос прошлого
+// процесса: наш сторож гасит сервер на каждой правке *-server.js, а висевший
+// getUpdates Telegram отпускает не в момент смерти процесса, а по своему
+// таймауту — до POLL_TIMEOUT_S. Прежние 30 секунд были короче этого окна,
+// и обычный перезапуск успевал обвинить человека в чужом боте
+const CONFLICT_GRACE_MS = (POLL_TIMEOUT_S + 15) * 1000;
 const CONFLICT_IDLE_MS = 60000; // дальше не тянем ключ на себя каждые две секунды
+const RELEASE_TIMEOUT_MS = 3000; // отпускание опроса на выходе: перезапуск не ждёт недоступный Telegram
 const TEXT_LIMIT = 3500;        // у Telegram потолок 4096 на сообщение, остальное — заголовок
 const MESSAGE_MEMORY = 500;     // сколько наших сообщений помним для ответа reply
 
@@ -34,7 +49,13 @@ let token = '';
 let users = [];        // кому шлём и от кого принимаем — остальные для бота не существуют
 let botName = null;    // имя из getMe: им же подтверждается, что ключ рабочий
 let lastError = null;
-let offset = 0;
+// null — «хвост ещё не знаем»: пока он не выяснен, накопившееся за простой не
+// разгребаем. Раньше хвост узнавался отдельным запросом до цикла, и его провал
+// (а первый запрос после перезапуска как раз и упирается в Conflict) молча
+// оставлял offset = 0 — то есть весь бэклог старых сообщений, каждое из
+// которых запускало настоящий ход. Теперь этот запрос — такая же итерация
+// цикла, с общей обработкой ошибок и повтором
+let offset = null;
 
 // Опрос всегда ровно один: у Telegram на бота может висеть только один
 // getUpdates, второй обрывает первый ошибкой Conflict. Поэтому ключ опрос не
@@ -200,15 +221,24 @@ async function pollLoop(myRun) {
         try {
             const startedAt = Date.now();
             pollAbort = new AbortController();
+            // первый заход только узнаёт хвост очереди (offset: -1, без ожидания)
+            const skipping = offset === null;
             const updates = await callApi(
                 'getUpdates',
-                { offset, timeout: POLL_TIMEOUT_S, allowed_updates: ['message'] },
-                (POLL_TIMEOUT_S + 15) * 1000,
+                skipping
+                    ? { offset: -1, timeout: 0, allowed_updates: ['message'] }
+                    : { offset, timeout: POLL_TIMEOUT_S, allowed_updates: ['message'] },
+                skipping ? 15000 : (POLL_TIMEOUT_S + 15) * 1000,
                 pollAbort.signal,
             );
+            diag(`ok run=${myRun} skipping=${skipping} took=${Date.now() - startedAt}ms n=${updates?.length ?? 0}`);
             if (pollRun !== myRun) return; // опрос сменили, пока запрос висел
             conflictSince = null;
             lastError = null;
+            if (skipping) {
+                offset = updates?.length ? updates[updates.length - 1].update_id + 1 : 0;
+                continue;
+            }
             for (const update of updates || []) {
                 offset = update.update_id + 1;
                 // ход может идти часами — опрос его не ждёт, иначе следующие
@@ -220,6 +250,7 @@ async function pollLoop(myRun) {
             // без этой паузы цикл превратился бы в холостую молотилку
             if (Date.now() - startedAt < 1000) await sleep(1000);
         } catch (err) {
+            diag(`err run=${myRun} pollRun=${pollRun} msg=${err.message}`);
             if (pollRun !== myRun) return; // ключ сменили прямо во время запроса
             if (!/conflict/i.test(err.message)) {
                 conflictSince = null;
@@ -236,28 +267,26 @@ async function pollLoop(myRun) {
 }
 
 function stopPolling() {
+    diag(`stopPolling from ${new Error().stack.split('\n')[2].trim()}`);
     pollRun += 1;           // всё, что крутилось до этого, больше не наше
     pollAbort?.abort();
     pollAbort = null;
 }
 
 // накопившееся за время простоя не разгребаем: сессии тех сообщений давно
-// закончились, а отвечать на позавчерашнее «ок» новым ходом — сюрприз
-async function startPolling() {
+// закончились, а отвечать на позавчерашнее «ок» новым ходом — сюрприз.
+// Сам пропуск делает первая итерация цикла (offset = null)
+function startPolling() {
     stopPolling();
-    const myRun = pollRun;
-    offset = 0;
-    try {
-        const backlog = await callApi('getUpdates', { offset: -1, timeout: 0 });
-        if (backlog?.length) offset = backlog[backlog.length - 1].update_id + 1;
-    } catch { /* не вышло — начнём с того, что придёт дальше */ }
-    if (pollRun !== myRun) return;
-    pollLoop(myRun);
+    offset = null;
+    conflictSince = null; // новый опрос — новая пересменка, чужой счётчик ему не судья
+    pollLoop(pollRun);
 }
 
 // ---------- подключение ----------
 
 async function connect() {
+    diag('connect()');
     const me = await callApi('getMe');
     botName = me.username ? `@${me.username}` : me.first_name || 'bot';
     lastError = null;
@@ -346,4 +375,32 @@ function createRoutes() {
     };
 }
 
-module.exports = { init, createRoutes };
+// Уходящий процесс отпускает опрос сам (зовётся из confirmRestart в server.js).
+// Перезапуск тут не редкость: сторож поднимает сервер заново на каждой правке
+// серверного файла.
+//
+// Оборвать сокет мало. Telegram не считает getUpdates законченным оттого, что
+// клиент отвалился, — опрос живёт на его стороне до своего таймаута, то есть
+// ещё до POLL_TIMEOUT_S после смерти процесса. Всё это время следующий наш
+// запуск получает Conflict, и красная строка про «ключ опрашивает кто-то ещё»
+// оказывается рассказом о нас самих.
+//
+// Снять висящий опрос может только новый getUpdates на тот же ключ — он
+// обрывает предыдущий. Поэтому уходим не молча: шлём короткий запрос без
+// ожидания (timeout: 0), он рвёт наш же длинный опрос и возвращается сразу,
+// не оставляя очереди за собой. offset: -1 ничего не подтверждает — что делать
+// с накопившимся, решит следующий процесс (он его пропускает).
+//
+// Ждать ответа обязан тот, кто зовёт: без await процесс умрёт раньше запроса
+async function stop() {
+    stopPolling();
+    if (!token) return;
+    try {
+        await callApi('getUpdates', { offset: -1, timeout: 0 }, RELEASE_TIMEOUT_MS);
+    } catch (err) {
+        // уходящему процессу уже всё равно: не отпустили — переживём пересменку
+        console.error('Telegram release:', err.message);
+    }
+}
+
+module.exports = { init, createRoutes, stop };

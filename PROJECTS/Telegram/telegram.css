@@ -1,0 +1,21 @@
+/* Вкладка Telegram: пока только подпись раздела, разметку вставляет
+   PROJECTS/Telegram/telegram.js */
+
+.view--telegram {
+    display: block;
+    padding: calc(var(--topbar-height) + 16px) 16px 16px;
+}
+
+.telegram__title {
+    margin: 0 0 8px;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.telegram__note {
+    margin: 0;
+    max-width: 60ch;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #8b909a;
+}

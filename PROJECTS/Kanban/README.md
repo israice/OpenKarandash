@@ -34,8 +34,11 @@ Our server does — not the user, and not the package's own `bead-kanban` comman
    where the board was never opened. It first probes `BEADS_PORT` (from `.env`, `3008` by
    default): if something already answers `/api/health` there, that instance is reused;
 2. otherwise spawns the binary and waits up to 20 seconds for it to answer;
-3. registers this repository in it via its `POST /api/projects`, so the board opens on the
-   right project. Running again does not duplicate the entry;
+3. registers this repository in it via its `POST /api/projects` and remembers the project id,
+   so the frame opens straight at the board of this project (`/project?id=<id>` — its page
+   reads the id from the query string, there is no `/project/<id>` path) instead of the
+   project list, where the user would have to click the project card first. Running again
+   does not duplicate the entry;
 4. lets the binary outlive our own restarts: it is spawned `detached` and is not killed
    when we exit. Killing it used to cost more than it fixed — live reload restarts our
    server on every edit of a server file, and each restart killed the board and spawned a
@@ -78,9 +81,17 @@ belong to the board, and they are listed explicitly rather than taken as "anythi
   watch` — its API. The list comes from its own bundle and is disjoint from ours.
 
 Its client-side navigation (clicking a project) changes the frame's address to something like
-`/project/<id>`; such paths cannot be listed in advance, so they are picked up by a residual
-rule — a GET for an extensionless path we do not have on disk. Both previous contracts are
-intact: `/no-such-file.txt` is still 404, and
+`/project?id=<id>`; such paths cannot be listed in advance, so they are picked up by a residual
+rule — a GET for an extensionless path we do not have on disk.
+
+The root `/` is a case of its own: its **Back to projects** button points there, and that is
+our page's address. The link cannot be changed — the board is built without a `basePath` and
+writes every address from the root — so the root is split by who is asking rather than by the
+path (`ownsRoot`): a Next client navigation carries the `RSC` header, a reload of the frame
+itself carries `Sec-Fetch-Dest: iframe`, and a person opening our page carries neither and
+still gets `index.html`. Without this the button loaded our own interface into the frame.
+
+Both previous contracts are intact: `/no-such-file.txt` is still 404, and
 `POST /api/no-such-route` is still 404. With `BEADS_PORT=0` nothing is proxied at all.
 
 ## 🖼️ Why a frame
@@ -94,26 +105,112 @@ with no padding of ours. The reasoning in full — `DOCS/decisions/021`.
 The frame is created on the first visit to the tab (`MissionKanban.show()`, called from
 `tabs.js` the same way Book is) and is not reloaded on later visits.
 
-## ✏️ Karandash on this tab
+### What is removed from inside it
 
-The pencil points at beads-web's own elements — its buttons, cards, columns — not at one
-big rectangle covering the tab.
+The project list greets you with an `<h1>` — *Manage Your Beads Projects*. The tab is
+already labelled Kanban and the list is only reached through **Back to projects**, so the
+heading is gone. It takes two steps, and the first one is the one that matters.
 
-Two things had to be true for that. First, a foreign frame keeps mouse events to itself, so
-the mode went blind over the whole tab; while Karandash is on, iframes are transparent to the
-pointer (`body.karandash-mode iframe { pointer-events: none }`). Second, the board is served
-through **our** port at `/kanban-ui/`, so the frame is same-origin and its document can be
-read — on a foreign port `contentDocument` is null and there is no way in. `karandash.js`
-then hit-tests inside the frame, offsets the outline by the frame's position, and stops the
-wheel at the frame document's own `body`.
+It cannot be removed at the source: the board's markup is baked into the binary. Nor can it
+be cut out of the proxied HTML — React compares the document with its own tree while
+hydrating and would put the heading straight back; an injected `<style>` in `<head>` is
+unreliable for the same reason. And the heading arrives already rendered by the board's
+server, so anything that runs inside the frame runs too late: it can only touch the document
+after hydration, and the person watches the heading appear and vanish.
 
-The comment window names what you picked, e.g.
-`«Search projects...» input.flex.h-9 — section Kanban → embedded beads-web`.
+So the rule lives in the board's own stylesheet. `kanban-server.js` appends
+`main>h1.font-heading{display:none}` to every `/_next/static/css/*.css` it proxies
+(`EXTRA_CSS`): React never looks inside a CSS file, and a stylesheet blocks the first paint,
+so the heading is not visible for a single frame. `accept-encoding` is dropped for those
+requests — a compressed body has nothing to append to — and `content-length` is recomputed;
+a compressed answer passes through untouched.
 
-One thing stays true: beads-web's interface lives in a prebuilt binary, not in this
-repository, so a fix prompted by such a comment lands on our side — the frame, its size, what
-surrounds it — not on its sources. Pointing at its elements is how you say *where* the
-problem is.
+Freshness for those files is ours, not the board's. Next marks its static assets
+`immutable` for a year and the file name is hashed from *its* content, which does not change
+when `EXTRA_CSS` does — so with the upstream headers a browser that has the stylesheet would
+never ask for it again, and a new rule would reach nobody. The proxy therefore strips
+`if-none-match`/`if-modified-since` on the way up (no 304 to worry about) and replaces
+`cache-control` with `no-cache`, dropping `etag` and `last-modified` — they describe the
+board's body, not the one we send.
+
+The second step is `kanban.js`: on the frame's `load` event it removes the node itself
+(`BOARD_INTRO`), which is possible only after `hydrateRoot(document)` has run.
+A Next client navigation fires no `load`, so there the node stays in the document — hidden
+by the same rule.
+
+The line right under that heading — someone else's recommendation to use the *Beads
+Orchestration Skill*, with a link out to GitHub — is gone in exactly the same two steps: it
+has nothing to do with the work done here. `EXTRA_CSS` carries
+`main>p.text-center.text-zinc-400{display:none}` and `BOARD_INTRO` removes the node after
+`load`. There is nothing but utility classes to hold on to here — the paragraph has no role
+and no label — so the selector leans on its position (the only direct `<p>` of the project
+list) and its text colour.
+
+The board's quick-filter bar above the columns (search, type, statuses, *Today*, Memory,
+Agents) is dropped the same way — `EXTRA_CSS` also carries
+`[role="toolbar"][aria-label="Quick filters"]{display:none}`. Unlike the heading it is only
+hidden, never removed from the document: the bar is a live part of the React tree and its
+parent re-renders on every board update, so a hand-removed node would come back. The rule
+holds on to the role and the label rather than the utility classes — class lists follow the
+layout, the accessibility pair does not.
+
+The board's own floating *Start feedback mode* button goes the same way: commenting on the
+interface is Karandash's job here, and a second pencil on top of the board only gets in the
+way. `EXTRA_CSS` carries
+`[class*="toolbarContainer"],[title="Start feedback mode"]{display:none!important}` — it is
+hidden, not removed, for the same React reason. Its class is hashed by a CSS module inside
+the binary and will change when the package is updated, so the rule matches the stable part
+of the name and keeps the collapsed state's `title` as a fallback. `!important` is required:
+the button's own rule lives in a different stylesheet, and which one comes last is not up to
+us.
+
+One rule in `EXTRA_CSS` is not enough for it, though: the browser keeps the board's
+stylesheet in its cache and gets a `304` on reload — an answer with nothing appended to it.
+So `kanban.js` puts the same rule into a `<style>` of its own inside the frame's document on
+`load` (`hideFeedbackButton`), where the cache plays no part.
+
+The project list's **Search projects** field goes too — the board is registered with exactly
+one project, this repository, so there is nothing to search through. `EXTRA_CSS` carries
+`:has(>input[aria-label="Search projects"]){display:none}`: the rule hides the wrapper, not
+the `<input>` itself, because the magnifier icon sits beside the field in the same container
+and would otherwise stay hanging there alone. Hidden, not removed — the field's value is
+React state and its parent re-renders on the tag filters. The hook is the `aria-label`, not
+the utility classes.
+
+The strip at the bottom of the board with links to other people's repositories (*Beads
+Kanban UI*, *Beads CLI*) is gone as well: it has nothing to do with the work done here and
+only eats room at the foot of the tab. `EXTRA_CSS` carries `footer.mt-auto{display:none}` —
+hidden, not removed, for the same React reason as the rest. The strip has neither a role nor
+a label, so the hook is the `footer` tag itself plus its `mt-auto`: a tag with a class
+outweighs Tailwind's single-class utilities.
+
+The bar at the top of the project list — a sticky strip holding a single *Settings* gear —
+is dropped as well: the board's own settings (tags, PR options) are none of our business, and
+the strip only takes the top of the frame. `EXTRA_CSS` carries
+`nav:has(>div>a[aria-label="Settings"]){display:none}`: the whole `nav` goes, not the
+container inside it, because the strip has a background and a bottom border of its own and
+would otherwise stay as an empty line. Hidden, not removed, for the same React reason as the
+rest. The hook is the label of the link inside it, not the strip's utility classes.
+
+The row of board sections (*All*, *Epics*, *Tasks*, *Today*, *Memory*, *Agents*) keeps its
+padding to itself: its wrapper arrives with `px-4 pb-3`, and those bottom twelve pixels push
+the board away from its own tabs for no reason. `EXTRA_CSS` carries
+`div.flex.justify-center.px-4.pb-3{padding:0}`. Here there is nothing but utility classes to
+hold on to — no role, no label — so the selector uses four of them at once: that outweighs
+Tailwind's single-class utilities, and our rules are appended after theirs, so no
+`!important` is needed.
+
+The first column is called *New* here, not *Open*. The word is baked into the binary, and
+rewriting the text node by hand is pointless — the column heading is a live part of the React
+tree, so the next repaint would bring the old word back. So the label is not replaced but
+re-drawn: `::after` paints our word and the original is killed with a zero font size, leaving
+the node itself untouched, which is all React looks at. `EXTRA_CSS` carries
+`h2.font-semibold.text-sm.text-blue-400{font-size:0;line-height:1.25rem}` plus the matching
+`::after{content:"New";font-size:0.875rem}` — the line height is spelled out because a zero
+font size would collapse the line box and pull the column up. There is no role and no label
+to hold on to, only utility classes; `text-blue-400` is what tells this column from its
+neighbours. Like the feedback button, the rule also lives in `FRAME_CSS` (`kanban.js`),
+because a cached stylesheet answers `304` and comes back without our appendix.
 
 ## 🚀 How to use it
 
@@ -137,8 +234,8 @@ but with the old code.
 
 | File | What it does |
 |---|---|
-| `PROJECTS/Kanban/kanban.js` | Creates the frame with beads-web on the first visit, publishes `window.MissionKanban` |
-| `PROJECTS/Kanban/kanban-server.js` | Starts, reuses, registers and kills the beads-web binary; `/api/kanban/status` |
+| `PROJECTS/Kanban/kanban.js` | Creates the frame with beads-web on the first visit, hides its project-list heading, publishes `window.MissionKanban` |
+| `PROJECTS/Kanban/kanban-server.js` | Starts, reuses, registers and kills the beads-web binary; `/api/kanban/status`; appends the heading-hiding rule to its stylesheets |
 | `PROJECTS/Kanban/kanban.css` | The frame at full height and the "not available" note |
 | `PROJECTS/Karandash/karandash.css` | Makes iframes transparent to the pointer while the pencil is on |
 | `PROJECTS/Karandash/karandash.js` | Descends into same-origin frames: hit test, outline offset, wheel boundary |

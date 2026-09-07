@@ -77,6 +77,12 @@ async function restoreOnLoad() {
         restoreServerConnection('opencode');
     }
 
+    const savedPi = loadProviderState('pi');
+    if (savedPi?.installId) {
+        connections.set('pi', savedPi);
+        restoreServerConnection('pi');
+    }
+
     renderObsConnection();
 
     // список сессий готов сразу при загрузке страницы
@@ -86,7 +92,10 @@ async function restoreOnLoad() {
     // (кнопка chatButton) сразу показывал её, а не пустой экран. Если страницу
     // перезагрузили посреди работы той же сессии (например, dev-автообновление) —
     // ещё и переключаемся на вкладку сами, чтобы не терять индикатор в процессе
-    const saved = savedClaude?.sessionId ? savedClaude : (savedCodex?.sessionId ? savedCodex : savedOpenCode);
+    const saved = savedClaude?.sessionId ? savedClaude
+        : savedCodex?.sessionId ? savedCodex
+        : savedOpenCode?.sessionId ? savedOpenCode
+        : savedPi;
     const found = saved?.sessionId && sessions.find((s) => s.id === saved.sessionId);
     if (found) {
         await openSession(found.id, found.running);

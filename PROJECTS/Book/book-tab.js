@@ -97,12 +97,13 @@
     // ---------- карточки разделов ----------
 
     const SOURCE_IDS = [
-        'flowButton', 'kanbanButton', 'chatButton', 'homeButton',
+        'telegramButton', 'flowButton', 'kanbanButton', 'chatButton', 'homeButton',
         'bookButton', 'karandashButton', 'settingsButton',
     ];
 
     // короткое описание каждого раздела для карточки — по одному на кнопку тулбара
     const DESCRIPTIONS = {
+        telegramButton: 'Telegram bridge of the project',
         flowButton: 'Diagram of the project execution flow',
         kanbanButton: 'Task board in columns',
         chatButton: 'Chat with the assistant and the session list',
@@ -114,6 +115,7 @@
 
     // у каждой кнопки тулбара есть своя папка в PROJECTS/ с README.md
     const README = {
+        telegramButton: 'PROJECTS/Telegram/README.md',
         flowButton: 'PROJECTS/Flow/README.md',
         kanbanButton: 'PROJECTS/Kanban/README.md',
         chatButton: 'PROJECTS/Chat/README.md',

@@ -45,6 +45,67 @@
         board.append(note, button);
     }
 
+    // Заголовок «Manage Your Beads Projects» на списке проектов и строка под ним
+    // (чужая рекомендация поставить Beads Orchestration Skill) нам не нужны:
+    // вкладка и так подписана Kanban, а список открывается разве что кнопкой
+    // «назад к проектам», и чужая ссылка нашей работы не касается. Видимыми их не
+    // делает правило, дописанное к таблице стилей доски на нашем же прокси
+    // (EXTRA_CSS в kanban-server.js): только оно успевает сработать до первой
+    // отрисовки. Здесь — второй, поздний шаг: узлы вынимаются из документа совсем.
+    //
+    // Из исходников доски их не убрать: разметка вшита в бинарь, а вырезать узлы
+    // из проксируемого HTML нельзя — React сверяет документ со своим деревом при
+    // гидратации и вставит их обратно. Поэтому удаляем уже готовые узлы
+    // изнутри: кадр нашего origin, и его документ доступен (тем же путём в него
+    // заглядывает Karandash). Момент — событие load кадра: к нему
+    // hydrateRoot(document) отработал, и React узлы не вернёт. Раньше нельзя, и
+    // отсюда же деление обязанностей: до load их держит невидимыми стиль.
+    // Клиентский переход Next события load не даёт — там узлы так и останутся
+    // в документе, но скрытыми тем же правилом
+    const BOARD_INTRO = ['main > h1.font-heading', 'main > p.text-center.text-zinc-400'];
+
+    function dropBoardIntro(frame) {
+        const doc = frame.contentDocument;
+        if (!doc) return; // документ ещё не наш — заглянуть внутрь нечего
+        for (const selector of BOARD_INTRO) doc.querySelector(selector)?.remove();
+    }
+
+    // Плавающая кнопка «Start feedback mode» — свой карандаш beads-web: для
+    // комментариев к интерфейсу у нас есть Karandash, и вторая такая кнопка
+    // поверх доски только мешает. Прячет её правило в EXTRA_CSS (kanban-server.js),
+    // но одного его мало: таблицу стилей доски браузер держит в кэше и на
+    // перезагрузку получает 304 — ответ без нашей дописки. Поэтому то же правило
+    // кладём ещё и своим <style> внутрь документа кадра, где кэш ни при чём.
+    // Удалить сам узел, как заголовок, нельзя: кнопка — живая часть дерева React,
+    // её родитель перерисовывается и вернёт удалённое обратно.
+    //
+    // Класс у неё хэшированный (CSS-модуль внутри бинаря) и после обновления
+    // пакета сменится — цепляемся за неизменную часть имени плюс запасной
+    // селектор по title свёрнутого состояния. `!important` обязателен: своё
+    // правило кнопка держит в другой таблице стилей, и чья окажется позже — не от нас
+    //
+    // Тем же <style> подменяется и подпись колонки «Open» — у нас она «New».
+    // Слово вшито в бинарь; заголовок колонки — живая часть дерева React, и
+    // переписанный руками текст вернулся бы на первой же перерисовке. Поэтому
+    // своё слово рисует `::after`, а чужое гасится нулевым кеглем: узел остаётся
+    // на месте, React ничего не замечает. Высота строки задана явно — иначе от
+    // нулевого кегля строчный бокс схлопнется. Правило то же, что в EXTRA_CSS
+    const FRAME_CSS = '[class*="toolbarContainer"],[title="Start feedback mode"]{display:none!important}'
+        + 'h2.font-semibold.text-sm.text-blue-400{font-size:0;line-height:1.25rem}'
+        + 'h2.font-semibold.text-sm.text-blue-400::after{content:"New";font-size:0.875rem}'
+        + 'h2.font-semibold.text-sm.text-green-400{font-size:0;line-height:1.25rem}'
+        + 'h2.font-semibold.text-sm.text-green-400::after{content:"Done";font-size:0.875rem}';
+
+    function hideFeedbackButton(frame) {
+        const doc = frame.contentDocument;
+        if (!doc) return; // документ ещё не наш — заглянуть внутрь нечего
+        if (doc.getElementById('kanbanFrameCss')) return; // после клиентского перехода стиль уже стоит
+        const style = doc.createElement('style');
+        style.id = 'kanbanFrameCss';
+        style.textContent = FRAME_CSS;
+        doc.head.append(style);
+    }
+
     async function show(restored = false) {
         if (mounted) return; // кадр уже висит: перезагружать его при каждом заходе незачем
         await mount({ probe: restored });
@@ -69,6 +130,10 @@
         frame.className = 'board__frame';
         frame.src = url;
         frame.title = 'beads-web';
+        frame.addEventListener('load', () => {
+            dropBoardIntro(frame);
+            hideFeedbackButton(frame);
+        });
         board.append(frame);
         // подпись контейнера: когда карандашом выбирают сам кадр, а не элемент
         // внутри него, в окне комментария видно, что это встроенная доска

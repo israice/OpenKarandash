@@ -19,6 +19,14 @@
     // обрыв прежнего потока при новой подписке: иначе соединение прошлого
     // attach висело бы до конца того хода, даже когда его события уже не нужны
     let liveAbort = null;
+    // пока пользователь не выбрал сессию в списке руками, список сессий
+    // «следует» за самой свежей: как только появляется более новая (см.
+    // 'sessions-changed' ниже), канвас перестраивается на неё сам. Ручной
+    // выбор в select (в том числе возврат на плейсхолдер) это следование
+    // выключает — дальше решает только человек. select.value уже непустой
+    // на старте означало бы, что выбор сделан не этим кодом — тогда тоже
+    // не вмешиваемся (на практике select всегда стартует пустым)
+    let followingLatest = !select.value;
 
     async function rebuild(sessionId, flow, generation) {
         const { messages = [] } = await App.api('/api/sessions/messages', { id: sessionId });
@@ -130,22 +138,46 @@
         });
     }
 
-    (async () => {
-        const sessions = await reloadList();
-        if (select.value || !sessions.length) return;
+    // выбирает самую свежую сессию (createdOrder — порядок появления в БД,
+    // список отсортирован по updated_at, поэтому первый элемент не годится)
+    // и строит по ней канвас — как если бы пользователь выбрал её сам.
+    // Общая для первого захода на страницу и для 'sessions-changed' ниже:
+    // раньше это делалось только один раз при загрузке, и появившаяся уже
+    // после этого новая сессия не попадала ни в список, ни на канвас
+    async function followNewest(sessions) {
+        if (!followingLatest || select.hidden || !sessions.length) return;
         const newest = sessions.reduce((a, s) => (s.createdOrder > a.createdOrder ? s : a));
+        if (select.value === newest.id) return;
         select.value = newest.id;
         await flowReady;
         await whenFlowViewVisible();
-        // select скрыт — активен flow, которому список сессий не показывается
-        // (см. «321» в flow.js): молча перестраивать его канвас нельзя.
-        // Если пользователь успел выбрать сессию сам — его выбор главнее
-        if (select.hidden || select.value !== newest.id) return;
+        // пока ждали готовности канваса, следование могло выключиться (человек
+        // успел выбрать сессию сам) или select — скрыться (см. «321» в flow.js):
+        // молча перестраивать чужой канвас нельзя
+        if (!followingLatest || select.hidden || select.value !== newest.id) return;
         syncFromSession(newest.id);
+    }
+
+    (async () => {
+        const sessions = await reloadList();
+        await followNewest(sessions);
     })();
     select.addEventListener('change', () => {
+        // ручной выбор в select — человек решил сам, дальше автослежение за
+        // новыми сессиями (включая возврат на плейсхолдер) ему не указ
+        followingLatest = false;
         if (select.value) syncFromSession(select.value);
         else liveGeneration += 1; // сброс на плейсхолдер — за прежней сессией больше не следим
+    });
+
+    // список сессий обновился где-то на странице (Chat опрашивает сервер раз
+    // в 8с и шлёт это же событие сразу после своих действий — см. loadSessions
+    // в PROJECTS/Chat/chat-sessions.js). Раньше Flow это событие не слушал вовсе:
+    // список слева и канвас не узнавали о новой сессии, пока её не открывали
+    // тут вручную через mousedown на select
+    document.body.addEventListener('sessions-changed', async () => {
+        const sessions = await reloadList();
+        await followNewest(sessions);
     });
 
     // переход на пункт меню, которому список сессий показывается: граф строится

@@ -9,3 +9,17 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Beads task tracking (ephemeral)
+.beads/
+.mcp.json
+
+# то, что pi заводит в папке профиля работника сам (ключи и его сессии)
+/PROJECTS/Flow/profiles/*/auth.json
+/PROJECTS/Flow/profiles/*/sessions/
+/PROJECTS/Flow/profiles/*/npm/
+/PROJECTS/Flow/profiles/*/git/
+
+# git worktree'ы агентов — сами по себе отдельные git-репозитории, не часть дерева
+/.worktrees/
+/.claude/worktrees/

@@ -1,82 +1,172 @@
 {
-  "enabledPlugins": {
-    "typescript-lsp@claude-plugins-official": false
-  },
-  "hooks": {
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/syntax-check.js\"",
-            "timeout": 10,
-            "type": "command"
-          }
-        ],
-        "matcher": "Edit|Write"
-      }
-    ],
-    "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-bg-server.js\"",
-            "timeout": 10,
-            "type": "command"
-          }
-        ],
-        "matcher": "Bash"
-      }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-files-node.js\"",
-            "timeout": 10,
-            "type": "command"
-          }
+    "enabledPlugins": {
+        "typescript-lsp@claude-plugins-official": false
+    },
+    "permissions": {
+        "allow": [
+            "Bash(node --check *)",
+            "Bash(node PROJECTS/Graph/search.js *)",
+            "mcp__playwright__browser_take_screenshot",
+            "mcp__playwright__browser_console_messages",
+            "mcp__playwright__browser_snapshot"
         ]
-      },
-      {
-        "hooks": [
-          {
-            "command": "bd prime --hook-json",
-            "type": "command"
-          }
+    },
+    "hooks": {
+        "SessionStart": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-files-node.js\"",
+                        "timeout": 10
+                    }
+                ]
+            },
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\""
+                    }
+                ]
+            },
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "bd prime --hook-json"
+                    }
+                ]
+            }
         ],
-        "matcher": ""
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/language-check.js\"",
-            "timeout": 10,
-            "type": "command"
-          }
+        "UserPromptSubmit": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/language-reminder.js\"",
+                        "timeout": 10
+                    }
+                ]
+            },
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/clarify-vague-request.sh\""
+                    }
+                ]
+            }
+        ],
+        "PreToolUse": [
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-bg-server.js\"",
+                        "timeout": 10
+                    }
+                ]
+            },
+            {
+                "matcher": "Task",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-bead-for-supervisor.sh\""
+                    },
+                    {
+                        "type": "command",
+                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-sequential-dispatch.sh\""
+                    },
+                    {
+                        "type": "command",
+                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/remind-inprogress.sh\""
+                    },
+                    {
+                        "type": "command",
+                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/inject-discipline-reminder.sh\""
+                    }
+                ]
+            },
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/validate-epic-close.sh\""
+                    }
+                ]
+            }
+        ],
+        "PostToolUse": [
+            {
+                "matcher": "Edit|Write",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/syntax-check.js\"",
+                        "timeout": 10
+                    }
+                ]
+            },
+            {
+                "matcher": "Task",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-concise-response.sh\""
+                    },
+                    {
+                        "type": "command",
+                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-dispatch-prompt.sh\"",
+                        "timeout": 10
+                    }
+                ]
+            },
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory-capture.sh\"",
+                        "timeout": 10
+                    }
+                ]
+            }
+        ],
+        "Stop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/language-check.js\"",
+                        "timeout": 10
+                    }
+                ]
+            }
+        ],
+        "SubagentStop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/validate-completion.sh\""
+                    }
+                ]
+            }
+        ],
+        "PreCompact": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/nudge-claude-md-update.sh\""
+                    }
+                ]
+            }
         ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/language-reminder.js\"",
-            "timeout": 10,
-            "type": "command"
-          }
-        ]
-      }
-    ]
-  },
-  "permissions": {
-    "allow": [
-      "Bash(node --check *)",
-      "Bash(node PROJECTS/Graph/search.js *)",
-      "mcp__playwright__browser_take_screenshot",
-      "mcp__playwright__browser_console_messages",
-      "mcp__playwright__browser_snapshot"
-    ]
-  }
+    }
 }

@@ -103,8 +103,8 @@
                 `;
                 return del;
             }
-            // onRemove чистит связанное хранилище (кастомные flows/temps/minions) —
-            // у встроенных пунктов (колонки доски, дефолтные minion'ы) его
+            // onRemove чистит связанное хранилище (кастомные flows/temps/profiles) —
+            // у встроенных пунктов (колонки доски, дефолтные профили) его
             // нет, и клик просто убирает строку из DOM до перезагрузки страницы
             function wrapNavItem(item, onRemove) {
                 const row = document.createElement('div');
@@ -153,7 +153,7 @@
                 });
                 // строка должна лечь в конец своей группы (Flows), а не в конец
                 // всего меню — иначе клик по + после того, как отрисованы
-                // следующие группы (Temp/Minions), кидает новую строку под них
+                // следующие группы (Temp/Profiles), кидает новую строку под них
                 flowNav.insertBefore(row, flowNav.querySelector('[data-flow-group="temp"]'));
             }
             for (const title of loadCustomFlows()) {
@@ -220,18 +220,18 @@
                 addTempItem(name);
             });
 
-            // категория Minions — у каждого свой личный Flow (собственный
+            // категория Profiles — у каждого свой личный Flow (собственный
             // канвас с изолированными нодами/рёбрами, как у любого пункта меню)
             const agentsTitle = document.createElement('h2');
             agentsTitle.className = 'side-nav__title side-nav__title--nav side-nav__title--collapsible';
             agentsTitle.dataset.flowGroup = 'minions';
             const agentsTitleText = document.createElement('span');
-            agentsTitleText.textContent = 'Minions';
+            agentsTitleText.textContent = 'Profiles';
             const agentsAddBtn = document.createElement('button');
             agentsAddBtn.type = 'button';
             agentsAddBtn.className = 'side-nav__arrow side-nav__arrow--active';
             agentsAddBtn.textContent = '+';
-            agentsAddBtn.title = 'Add minion';
+            agentsAddBtn.title = 'Add profile';
             agentsTitle.append(agentsTitleText, agentsAddBtn);
             flowNav.append(agentsTitle);
 
@@ -244,7 +244,7 @@
             };
             const DEFAULT_AGENT_ICON = '🧩';
 
-            // кастомные minion'ы (заведённые кнопкой +) переживают перезагрузку
+            // кастомные профили (заведённые кнопкой +) переживают перезагрузку
             // отдельно от встроенных пяти — те всегда одни и те же
             const CUSTOM_AGENTS_KEY = 'flowCustomAgents';
             function loadCustomAgents() {
@@ -277,7 +277,7 @@
             }
 
             agentsAddBtn.addEventListener('click', () => {
-                const title = prompt('Name of the new minion:');
+                const title = prompt('Name of the new profile:');
                 if (!title || !title.trim()) return;
                 const name = title.trim();
                 const custom = loadCustomAgents();
@@ -410,12 +410,13 @@
                 }
 
                 canvas.addEventListener('wheel', (e) => {
-                    // внутри раскрытой секции ноды колесо листает её текст, а не зумит
-                    // канвас: иначе до конца длинного результата вызова не добраться.
-                    // Но только пока там есть что листать — над короткой секцией
-                    // колесо должно зумить, как и над всей остальной картой
-                    const fact = e.target.closest('.flow-node__fact-text');
-                    if (fact && fact.scrollHeight > fact.clientHeight) return;
+                    // внутри прокручиваемых частей ноды (текст раскрытой секции,
+                    // вертикальное меню личной ноды QA, списки её MCP и Soul) колесо листает их, а не зумит
+                    // канвас: иначе до конца длинного результата вызова и до нижних
+                    // кнопок меню не добраться. Но только пока там есть что листать —
+                    // над коротким содержимым колесо зумит, как и над всей картой
+                    const scrollable = e.target.closest('.flow-node__fact-text, .flow-node__menu, .flow-node__mcp-list, .flow-node__soul-list, .flow-node__prompt-list, .flow-node__thinking-list, .flow-node__permissions-list, .flow-node__tools-list, .flow-node__llm-list, .flow-node__skills-list, .flow-node__agents-list, .flow-node__memory-list');
+                    if (scrollable && scrollable.scrollHeight > scrollable.clientHeight) return;
                     e.preventDefault();
                     zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.1 : 1 / 1.1);
                 }, { passive: false });
@@ -562,7 +563,9 @@
                 function applyQuestions(n) {
                     const saved = loadQuestions()[n.id];
                     if (!saved) return;
+                    // у ноды может не быть блока вопросов вовсе (личная карточка миньона)
                     const group = n.querySelector('.flow-node__questions');
+                    if (!group) return;
                     const fields = [...group.querySelectorAll('.flow-node__question')];
                     saved.forEach((text, i) => {
                         if (fields[i]) fields[i].querySelector('.flow-node__question-text').textContent = text;
@@ -802,9 +805,11 @@
                     // построение графа, а ребро до тех пор ждёт (см. pendingEdges)
                     for (const id of Object.keys(flowById)) {
                         if (byId[id]) continue;
-                        const clone = nodeTemplate.content.firstElementChild.cloneNode(true);
+                        const clone = cloneNodeElement(id);
                         clone.id = id;
                         surface.append(clone);
+                        fitNodeMenu(clone);
+                        applyMenuOrder(clone);
                         attachAddBottom(clone);
                         attachAddRight(clone);
                         populateNodeAgentSelects(clone);
@@ -856,6 +861,12 @@
                         savePosition(startNode);
                     }
                     restoreGraph();
+                    // личная нода миньона должна стоять и тогда, когда страницу
+                    // перезагрузили прямо на его канвасе: setActiveFlow при таком
+                    // заходе не срабатывает. Общую заглушку здесь не заводим — на
+                    // канвасе сессии («321») она осталась бы лишней нодой рядом
+                    // с построенным графом
+                    if (PERSONAL_ROOTS[currentFlow]) ensureRootNode(currentFlow);
                     applyFlowVisibility(currentFlow);
                     drawEdge();
                 };
@@ -864,6 +875,264 @@
                 // разрезать надвое вставкой узла посередине
                 const edgesLayer = document.getElementById('flowEdges');
                 const nodeTemplate = document.getElementById('flowNodeTemplate');
+                // у миньона может быть своя стартовая нода — не общая заглушка
+                // ensureRootNode, а собственная карточка со своей разметкой.
+                // Id фиксированный: по нему же её узнаёт восстановление графа
+                // после перезагрузки и берёт тот же шаблон, а не общий
+                const PERSONAL_ROOTS = {
+                    'QA': { id: 'flowNodeQaRoot', template: 'flowNodeQaTemplate' },
+                };
+                const PERSONAL_ROOT_BY_ID = {};
+                for (const root of Object.values(PERSONAL_ROOTS)) PERSONAL_ROOT_BY_ID[root.id] = root;
+                // клон карточки под конкретный id: личной ноде — её шаблон, всем
+                // остальным — общий
+                function cloneNodeElement(id) {
+                    const personal = PERSONAL_ROOT_BY_ID[id];
+                    const tpl = personal ? document.getElementById(personal.template) : nodeTemplate;
+                    return (tpl || nodeTemplate).content.firstElementChild.cloneNode(true);
+                }
+                // ширина вертикального меню личной ноды — по самой длинной надписи
+                // кнопки. Набор кнопок ещё будет меняться, и держать число в CSS руками
+                // значит подгонять его после каждой правки: меряем max-content самого
+                // меню и отдаём результат карточке переменной --flow-node-menu, из
+                // которой считаются и ширина колонки, и место под неё (см. flow.css).
+                // Меню выведено из потока, поэтому на высоту карточки это не влияет
+                function fitNodeMenu(n) {
+                    const menu = n.querySelector('.flow-node__menu');
+                    if (!menu || n.style.getPropertyValue('--flow-node-menu')) return;
+                    menu.style.width = 'max-content';
+                    const width = menu.offsetWidth;
+                    menu.style.width = '';
+                    // ноль означает, что нода сейчас скрыта (чужой канвас) и померить
+                    // нечего — вернёмся к этому, когда её покажут (applyFlowVisibility)
+                    if (!width) return;
+                    n.style.setProperty('--flow-node-menu', width + 'px');
+                }
+
+                // MCP-серверы, которыми обычно пользуется тестировщик: пункт меню
+                // «MCP» личной ноды QA показывает вместо правой колонки этот список.
+                // Настоящего подключения за кнопкой пока нет — она только помечает
+                // сервер выбранным, отметки живут во flow_state (см. MCP_STATE_KEY)
+                const QA_MCPS = [
+                    { id: 'playwright', name: 'Playwright', hint: 'Browser: clicks, screenshots, traces' },
+                    { id: 'puppeteer', name: 'Puppeteer', hint: 'Headless Chrome automation' },
+                    { id: 'chrome-devtools', name: 'Chrome DevTools', hint: 'Console, network, performance' },
+                    { id: 'lighthouse', name: 'Lighthouse', hint: 'Performance and accessibility audits' },
+                    { id: 'axe', name: 'Axe a11y', hint: 'Accessibility rule checks' },
+                    { id: 'http', name: 'HTTP client', hint: 'REST calls and response checks' },
+                    { id: 'postman', name: 'Postman', hint: 'Collections and API test runs' },
+                    { id: 'k6', name: 'k6', hint: 'Load and stress scenarios' },
+                    { id: 'sqlite', name: 'SQLite', hint: 'Test data and fixtures' },
+                    { id: 'postgres', name: 'Postgres', hint: 'Queries against the app database' },
+                    { id: 'filesystem', name: 'Filesystem', hint: 'Reports, logs and artifacts' },
+                    { id: 'github', name: 'GitHub', hint: 'Issues, pull requests, checks' },
+                    { id: 'jira', name: 'Jira', hint: 'Bug tickets and test tasks' },
+                    { id: 'testrail', name: 'TestRail', hint: 'Test cases and runs' },
+                    { id: 'sentry', name: 'Sentry', hint: 'Errors from the running app' },
+                    { id: 'slack', name: 'Slack', hint: 'Reporting results to the team' },
+                ];
+                // отмеченные сервера — общие на все ноды QA: список один и тот же,
+                // держать его отдельно на каждой карточке смысла нет
+                const MCP_STATE_KEY = 'flowQaMcp';
+                // пока отметок не ставили, подключённым считается тот сервер, который
+                // и правда прописан в профиле (PROJECTS/Flow/profiles/QA/mcp.json)
+                const MCP_DEFAULT = ['playwright'];
+                function connectedMcps() {
+                    return flowGet(MCP_STATE_KEY, MCP_DEFAULT);
+                }
+                // кнопка рядом с сервером: подключает, а у подключённого — отключает
+                function setMcpButton(btn, connected) {
+                    btn.textContent = connected ? 'Disconnect' : 'Connect';
+                    btn.classList.toggle('flow-node__mcp-toggle--on', connected);
+                    btn.setAttribute('aria-pressed', connected ? 'true' : 'false');
+                }
+                function renderMcpPanel(n) {
+                    const list = n.querySelector('.flow-node__mcp-list');
+                    if (!list) return;
+                    const connected = connectedMcps();
+                    list.textContent = '';
+                    for (const mcp of QA_MCPS) {
+                        const row = document.createElement('div');
+                        row.className = 'flow-node__mcp';
+                        row.dataset.mcp = mcp.id;
+                        // поиск идёт и по названию, и по описанию — держим их одной
+                        // готовой строкой, чтобы не собирать её на каждый набранный символ
+                        row.dataset.search = (mcp.name + ' ' + mcp.hint).toLowerCase();
+                        const text = document.createElement('span');
+                        text.className = 'flow-node__mcp-text';
+                        const name = document.createElement('span');
+                        name.className = 'flow-node__mcp-name';
+                        name.textContent = mcp.name;
+                        const hint = document.createElement('span');
+                        hint.className = 'flow-node__mcp-hint';
+                        hint.textContent = mcp.hint;
+                        text.append(name, hint);
+                        const btn = document.createElement('button');
+                        btn.type = 'button';
+                        btn.className = 'flow-node__mcp-toggle';
+                        setMcpButton(btn, connected.includes(mcp.id));
+                        row.append(text, btn);
+                        list.append(row);
+                    }
+                }
+
+                // «Душа» тестировщика: пункт меню «Soul» показывает вместо правой
+                // колонки эти поля — кто он, какой у него характер, ценности и манера
+                // говорить. Пока это только описание для человека: в запрос к CLI
+                // текст ещё не уходит
+                const QA_SOUL = [
+                    { id: 'identity', label: 'Who am I', hint: 'Role, name and place in the flow', value: 'QA of this project: the last pair of eyes before work is called done. I check, I do not build.' },
+                    { id: 'personality', label: 'Personality', hint: 'Character traits and temper', value: 'Calm, literal, unhurried. I do not argue with the author and do not soften a finding.' },
+                    { id: 'values', label: 'Values', hint: 'What I never trade off', value: 'Evidence over opinion. A reproducible step beats a confident sentence. No evidence — no verdict.' },
+                    { id: 'style', label: 'Interaction style', hint: 'How I talk to the team', value: 'Short sentences, no praise. One question when the expected behaviour is truly unclear — otherwise I check and report.' },
+                ];
+                // как и отмеченные MCP, текст общий на все ноды QA — душа у миньона
+                // одна, а карточек с ней на канвасе может быть несколько
+                const SOUL_STATE_KEY = 'flowQaSoul';
+                // Системный промпт тестировщика: пункт меню «System Prompt» показывает
+                // вместо правой колонки эти поля — как агент должен себя вести, по каким
+                // правилам и принципам работает. Как и «душа», пока только описание для
+                // человека: в запрос к CLI текст ещё не уходит
+                const QA_PROMPT = [
+                    { id: 'behavior', label: 'How should I behave', hint: 'Basic instructions: what I do and what I never do', value: 'I reproduce the task the way a user would: open the live interface, run the commands from the README, walk the flow. I report differences — I never fix them.' },
+                    { id: 'rules', label: 'Rules', hint: 'Constraints I follow in every answer', value: 'Do not change project files. Do not start server.js — I use the one the user started. Do not call a check green just because nothing crashed.' },
+                    { id: 'principles', label: 'Principles', hint: 'How I decide when the rules are silent', value: 'Trust what I saw, not what is written. Check the edge case, not only the happy path. Say plainly what could not be checked and why.' },
+                    { id: 'output', label: 'Output format', hint: 'What my answer looks like', value: 'Findings first, one line each: expected / actual / how to repeat. Details after. Files as path:line.' },
+                ];
+                const PROMPT_STATE_KEY = 'flowQaPrompt';
+                // Глубина рассуждения тестировщика: пункт меню «Thinking» показывает
+                // вместо правой колонки эти поля — насколько подробно агент думает,
+                // сколько на это отводится и что из размышлений видно команде. Как и
+                // две панели выше, пока только описание для человека: в запрос к CLI
+                // текст не уходит (селектор effort в подвале ноды с ним не связан)
+                const QA_THINKING = [
+                    { id: 'depth', label: 'How deep do I think', hint: 'Reasoning level: from a quick answer to a long deliberation', value: 'Medium: enough to plan the checks and read the diff, not a long deliberation.' },
+                    { id: 'budget', label: 'Thinking budget', hint: 'How much reasoning a single answer may take', value: 'settings.json → defaultThinkingLevel: medium. One answer — one pass; I do not re-derive what is already known.' },
+                    { id: 'when', label: 'When to think longer', hint: 'Tasks worth spending the extra reasoning on', value: 'A bug that floats, a race, a finding that contradicts the code — there I think before I write.' },
+                    { id: 'visibility', label: 'Visible reasoning', hint: 'What of my thinking the team gets to see', value: 'The team sees the verdict and the steps. The reasoning behind it — on request.' },
+                ];
+                const THINKING_STATE_KEY = 'flowQaThinking';
+                // Инструменты тестировщика: пункт меню «Tools» показывает вместо
+                // правой колонки эти поля — что агент умеет делать сам, что пришло
+                // со стороны и как он выбирает инструмент. С панелью MCP это не
+                // одно и то же: там список серверов с кнопкой подключения, здесь —
+                // описание умений словами. Как и панели выше, пока только для
+                // человека: в запрос к CLI текст не уходит
+                const QA_TOOLS = [
+                    { id: 'builtin', label: 'What can I do', hint: 'Built-in tools: files, search, terminal, browser', value: 'read, grep, find, ls, bash, powershell — I read, search and run. write and edit are excluded on purpose.' },
+                    { id: 'connected', label: 'Connected tools', hint: 'What comes from outside: MCP servers and integrations', value: 'Playwright for the live interface (mcp.json). The rest of the MCP list stays off until a check needs it.' },
+                    { id: 'choice', label: 'How I choose', hint: 'Which tool I reach for on which task', value: 'grep and read to find the place, bash to run it and see the output, Playwright to look at the page the way a user does.' },
+                    { id: 'missing', label: 'What I lack', hint: 'Abilities I would need but do not have yet', value: 'No load runner and no store for traces: my evidence is the screenshot, the console and the command output.' },
+                ];
+                const TOOLS_STATE_KEY = 'flowQaTools';
+                // Права тестировщика: пункт меню «Permissions» показывает вместо правой
+                // колонки эти поля. Поля названы так, как разрешения устроены у pi, на
+                // котором строится профиль QA: режимов доступа, окон подтверждения и
+                // песочницы у него нет, есть список инструментов, состав сессии,
+                // доверие проекту и внешняя изоляция. Что за чем стоит — в
+                // PROJECTS/Flow/profiles/QA/README.md; сами значения живут там же в
+                // settings.json и extensions/permission-gate.ts, панель их не пишет
+                const QA_PERMISSIONS = [
+                    { id: 'tools', label: 'Tool allowlist', hint: 'settings.json → defaultTools; --tools / --exclude-tools override it for one run', value: 'read, grep, find, ls, bash, powershell. No write and no edit: the fix is someone else’s job.' },
+                    { id: 'session', label: 'What loads into the session', hint: 'Extensions, skills, context files: -e, --no-extensions, --no-skills, --no-context-files', value: 'The project’s context files, its skills and one extension of my own — permission-gate.ts.' },
+                    { id: 'trust', label: 'Project trust', hint: 'defaultProjectTrust and -a/--approve: whether .pi resources of the project are loaded at all', value: 'defaultProjectTrust: always — otherwise a headless run silently drops the project’s .pi resources.' },
+                    { id: 'gate', label: 'Blocked calls', hint: 'What extensions/permission-gate.ts refuses on tool_call', value: 'Recursive rm, sudo, chmod 777, git push/commit/reset --hard/clean -f, and node server.js — the user starts the server.' },
+                    { id: 'isolation', label: 'Isolation', hint: 'The only place with a network limit: host, Gondolin micro-VM, Docker', value: 'The host: I test the server the user is running on this machine. No micro-VM, so the gate above is the whole border.' },
+                ];
+                const PERMISSIONS_STATE_KEY = 'flowQaPermissions';
+                // Модель тестировщика: пункт меню «Model» показывает вместо правой
+                // колонки эти поля — чем агент думает. Настоящие значения лежат в
+                // settings.json профиля (defaultProvider/defaultModel), а селекторы в
+                // подвале карточки с панелью не связаны: как и панели выше, это пока
+                // описание для человека. Префикс классов — llm, а не model: класс
+                // .flow-node__model занят селектором модели в подвале
+                const QA_MODEL = [
+                    { id: 'model', label: 'What do I think with', hint: 'settings.json → defaultModel', value: 'openrouter/free — checking is reading and repeating, not writing code.' },
+                    { id: 'provider', label: 'Provider', hint: 'settings.json → defaultProvider; the key lives in auth.json next to it', value: 'openrouter; the key lies in auth.json next to settings.json.' },
+                    { id: 'why', label: 'Why this one', hint: 'What this model is better at than the others for my tasks', value: 'My answers are short and my runs are many: a free model keeps regression passes cheap.' },
+                    { id: 'fallback', label: 'Fallback', hint: 'What I switch to when this one is unavailable or too expensive', value: 'A paid model of the same provider when a finding needs real reading of the code.' },
+                ];
+                const MODEL_STATE_KEY = 'flowQaModel';
+                // Навыки тестировщика: пункт меню «Skills» показывает вместо правой
+                // колонки эти поля — какие специализированные умения у агента есть.
+                // У pi навыки лежат в .agents/skills проекта и грузятся только у
+                // доверенной папки (--skill / --no-skills); своего файла в профиле
+                // QA у них пока нет, панель хранит текст в состоянии Flow
+                const QA_SKILLS = [
+                    { id: 'skills', label: 'What special abilities do I have', hint: 'Skills loaded from .agents/skills', value: 'Whatever the project put in .agents/skills — today that is project search and the beads workflow.' },
+                    { id: 'when', label: 'When I reach for them', hint: 'Which task turns on which skill', value: 'Search when I hunt for the place a finding belongs to; beads when a finding becomes a ticket.' },
+                    { id: 'own', label: 'My own skills', hint: 'Instructions written for this agent alone', value: 'Walking the interface tab by tab, and reading a README as a checklist of promises to verify.' },
+                    { id: 'missing', label: 'What I lack', hint: 'Skills I would need but do not have yet', value: 'A written regression suite: today every pass is assembled by hand from the READMEs.' },
+                ];
+                const SKILLS_STATE_KEY = 'flowQaSkills';
+                // Помощники тестировщика: пункт меню «Agents» показывает вместо правой
+                // колонки эти поля — кого агент может позвать и по каким правилам.
+                // Файла в профиле у них тоже пока нет
+                const QA_AGENTS = [
+                    { id: 'available', label: 'Which agents can I call in', hint: 'Subagents available to me', value: 'Nobody yet: pi has no subagents. Next to me on the canvas stand the author of the change and the Secretary.' },
+                    { id: 'when', label: 'When I delegate', hint: 'Which work goes to someone else instead of me', value: 'The fix always goes back to the author — I hand over the finding, not the patch.' },
+                    { id: 'rules', label: 'Rules of use', hint: 'What I hand over and what I check on the way back', value: 'I hand over steps to repeat and the expected result; on the way back I repeat those same steps myself.' },
+                    { id: 'limits', label: 'What I never delegate', hint: 'Work I keep for myself', value: 'The verdict. Someone else’s word that it works is not a check.' },
+                ];
+                const AGENTS_STATE_KEY = 'flowQaAgents';
+                // Память тестировщика: пункт меню «Memory» показывает вместо правой
+                // колонки эти поля — что агент помнит между сессиями. Настоящая память
+                // проекта живёт в DATA/vault (см. AGENTS.md), панель с ней не связана
+                const QA_MEMORY = [
+                    { id: 'remember', label: 'What do I remember', hint: 'Facts and context kept between sessions', value: 'Which checks I have already run and what they found — the rest I re-read from the project each time.' },
+                    { id: 'preferences', label: 'Preferences', hint: 'What I have learned about the team and the project', value: 'The server is started by the user; there are no automated tests; the READMEs are the source of expected behaviour.' },
+                    { id: 'write', label: 'What I write down', hint: 'What is worth remembering and what is not', value: 'A bug that came back, and a step that is easy to get wrong. Not a one-off result — it is stale by the next commit.' },
+                    { id: 'forget', label: 'What I forget', hint: 'What stays inside one session only', value: 'Page state, ids, screenshots and the exact output of a run: they live as long as the session does.' },
+                ];
+                const MEMORY_STATE_KEY = 'flowQaMemory';
+                // потолок высоты поля панели: выше него поле не растёт, текст уходит
+                // под собственную прокрутку — иначе одно длинное поле вытягивает ноду
+                const FIELD_MAX_HEIGHT = 160;
+
+                // поле панели тянется под свой текст: сначала высота сбрасывается,
+                // иначе scrollHeight помнит прежнюю и поле только растёт
+                function autoGrowField(input) {
+                    input.style.height = 'auto';
+                    const full = input.scrollHeight;
+                    input.style.height = Math.min(full, FIELD_MAX_HEIGHT) + 'px';
+                    input.style.overflowY = full > FIELD_MAX_HEIGHT ? 'auto' : 'hidden';
+                }
+
+                // панели с короткими полями (Soul, System Prompt, Thinking) устроены
+                // одинаково: подписанные textarea, текст общий на все ноды QA. Разница
+                // только в наборе полей, ключе хранения и префиксе классов — их и
+                // передаём. Ключ лежит на самом поле (data-store), поэтому сохранение
+                // ниже одно на обе панели
+                function renderFieldPanel(n, prefix, fields, stateKey) {
+                    const list = n.querySelector('.flow-node__' + prefix + '-list');
+                    if (!list) return;
+                    const saved = flowGet(stateKey, {});
+                    list.textContent = '';
+                    for (const field of fields) {
+                        const row = document.createElement('label');
+                        row.className = 'flow-node__' + prefix;
+                        const name = document.createElement('span');
+                        name.className = 'flow-node__' + prefix + '-name';
+                        name.textContent = field.label;
+                        const input = document.createElement('textarea');
+                        input.className = 'flow-node__' + prefix + '-input';
+                        input.rows = 1;
+                        input.dataset.field = field.id;
+                        input.dataset.store = stateKey;
+                        input.placeholder = field.hint;
+                        // пока поле не трогали, показываем заготовку профиля QA (field.value):
+                        // карточка сразу описывает работника, а не стоит пустой. Стёртое
+                        // руками поле хранится как пустая строка — ?? её и бережёт,
+                        // иначе заготовка возвращалась бы после каждого открытия панели
+                        input.value = saved[field.id] ?? field.value ?? '';
+                        row.append(name, input);
+                        list.append(row);
+                        // высота считается уже в дереве страницы: у поля вне документа
+                        // scrollHeight нулевой
+                        autoGrowField(input);
+                    }
+                }
+
                 let nodeSeq = 0;
                 const edges = [];
                 // рёбра из сохранённого графа, чья нода сессии на канвасе ещё не появилась:
@@ -1502,6 +1771,221 @@
                     selectNode(e.target.closest('.flow-node'));
                 });
 
+                // пункт вертикального меню с data-panel показывает вместо правой
+                // колонки карточки одноимённую панель, повторный клик возвращает её
+                // назад. Высота карточки при этом меняется — зовём общий пересчёт
+                // раскладки и дуг, иначе соседние ноды наедут друг на друга
+                surface.addEventListener('click', (e) => {
+                    const item = e.target.closest('.flow-node__menu-item[data-panel]');
+                    if (!item) return;
+                    const n = item.closest('.flow-node');
+                    const panel = n.querySelector('.flow-node__panel--' + item.dataset.panel);
+                    if (!panel) return;
+                    const show = panel.hidden;
+                    for (const p of n.querySelectorAll('.flow-node__panel')) p.hidden = true;
+                    for (const b of n.querySelectorAll('.flow-node__menu-item[data-panel]')) {
+                        b.classList.remove('flow-node__menu-item--active');
+                        b.setAttribute('aria-pressed', 'false');
+                    }
+                    panel.hidden = !show;
+                    n.querySelector('.flow-node__main').hidden = show;
+                    item.classList.toggle('flow-node__menu-item--active', show);
+                    item.setAttribute('aria-pressed', show ? 'true' : 'false');
+                    if (show && item.dataset.panel === 'mcp') renderMcpPanel(n);
+                    if (show && item.dataset.panel === 'soul') renderFieldPanel(n, 'soul', QA_SOUL, SOUL_STATE_KEY);
+                    if (show && item.dataset.panel === 'prompt') renderFieldPanel(n, 'prompt', QA_PROMPT, PROMPT_STATE_KEY);
+                    if (show && item.dataset.panel === 'thinking') renderFieldPanel(n, 'thinking', QA_THINKING, THINKING_STATE_KEY);
+                    if (show && item.dataset.panel === 'tools') renderFieldPanel(n, 'tools', QA_TOOLS, TOOLS_STATE_KEY);
+                    if (show && item.dataset.panel === 'permissions') renderFieldPanel(n, 'permissions', QA_PERMISSIONS, PERMISSIONS_STATE_KEY);
+                    // у панели Model префикс классов llm: .flow-node__model — это
+                    // селектор модели в подвале карточки, занимать его нельзя
+                    if (show && item.dataset.panel === 'model') renderFieldPanel(n, 'llm', QA_MODEL, MODEL_STATE_KEY);
+                    if (show && item.dataset.panel === 'skills') renderFieldPanel(n, 'skills', QA_SKILLS, SKILLS_STATE_KEY);
+                    if (show && item.dataset.panel === 'agents') renderFieldPanel(n, 'agents', QA_AGENTS, AGENTS_STATE_KEY);
+                    if (show && item.dataset.panel === 'memory') renderFieldPanel(n, 'memory', QA_MEMORY, MEMORY_STATE_KEY);
+                    afterNodeChange();
+                });
+
+                // порядок кнопок вертикального меню — тот же приём, что у вопросов
+                // выше и у кнопок тулбара (SYSTEM/toolbar-reorder.js): долгое нажатие
+                // (>2с) включает «тряску», в которой кнопку можно перетащить на новое
+                // место, выход — Esc. Порядок общий на все ноды с таким меню и живёт
+                // во flow_state, поэтому переживает перезагрузку
+                const MENU_ORDER_KEY = 'flowQaMenuOrder';
+                const M_LONG_PRESS_MS = 2000;
+                const M_MOVE_CANCEL_PX = 8;
+                let mPressTimer = null;
+                let mPressStart = null;
+                let mActiveMenu = null;
+                let mDragItem = null;
+                let mJustDragged = false;
+
+                // ключ кнопки — её надпись: id у пунктов меню нет, а надпись в шаблоне
+                // уникальна и переживает смену иконки
+                function menuItemKey(btn) {
+                    return btn.querySelector('.flow-node__menu-label').textContent.trim();
+                }
+                function applyMenuOrder(n) {
+                    const order = flowGet(MENU_ORDER_KEY, null);
+                    const menu = n && n.querySelector('.flow-node__menu');
+                    if (!order || !menu) return;
+                    const byKey = new Map([...menu.children].map((b) => [menuItemKey(b), b]));
+                    // кнопки сохранённого порядка переставляем в хвост по очереди;
+                    // добавленную в шаблон новую кнопку порядок не знает — она просто
+                    // окажется выше сохранённых, а не потеряется
+                    for (const key of order) {
+                        const btn = byKey.get(key);
+                        if (btn) menu.appendChild(btn);
+                    }
+                }
+                function saveMenuOrder(menu) {
+                    flowSet(MENU_ORDER_KEY, [...menu.children].map(menuItemKey));
+                    // порядок общий на все карточки — остальные открытые ноды
+                    // выстраиваем тут же, а не после перезагрузки страницы
+                    for (const n of surface.querySelectorAll('.flow-node')) {
+                        if (!n.contains(menu)) applyMenuOrder(n);
+                    }
+                }
+                function clearMPress() {
+                    clearTimeout(mPressTimer);
+                    mPressTimer = null;
+                    mPressStart = null;
+                }
+                function enterMenuReorder(menu) {
+                    mActiveMenu = menu;
+                    menu.classList.add('flow-node__menu--reorder');
+                }
+                function exitMenuReorder() {
+                    if (!mActiveMenu) return;
+                    saveMenuOrder(mActiveMenu);
+                    mActiveMenu.classList.remove('flow-node__menu--reorder');
+                    mActiveMenu = null;
+                }
+                function startMenuDrag(item) {
+                    mDragItem = item;
+                    mJustDragged = true;
+                    item.classList.add('flow-node__menu-item--dragging');
+                }
+                function stopMenuDrag() {
+                    if (!mDragItem) return;
+                    mDragItem.classList.remove('flow-node__menu-item--dragging');
+                    mDragItem = null;
+                }
+                // меню вертикальное — соседей сравниваем по середине их высоты
+                function updateMenuDrag(clientY) {
+                    if (!mDragItem || !mActiveMenu) return;
+                    for (const sib of mActiveMenu.children) {
+                        if (sib === mDragItem) continue;
+                        const rect = sib.getBoundingClientRect();
+                        if (clientY < rect.top + rect.height / 2) {
+                            if (sib.previousElementSibling !== mDragItem) mActiveMenu.insertBefore(mDragItem, sib);
+                            return;
+                        }
+                    }
+                    if (mActiveMenu.lastElementChild !== mDragItem) mActiveMenu.appendChild(mDragItem);
+                }
+
+                surface.addEventListener('pointerdown', (e) => {
+                    const item = e.target.closest('.flow-node__menu-item');
+                    if (!item) return;
+                    const menu = item.closest('.flow-node__menu');
+
+                    if (mActiveMenu === menu) {
+                        e.preventDefault();
+                        startMenuDrag(item);
+                        return;
+                    }
+                    if (mActiveMenu) return;
+
+                    mPressStart = { x: e.clientX, y: e.clientY };
+                    mPressTimer = setTimeout(() => {
+                        mPressTimer = null;
+                        enterMenuReorder(menu);
+                        startMenuDrag(item);
+                    }, M_LONG_PRESS_MS);
+                });
+                surface.addEventListener('pointermove', (e) => {
+                    if (mPressTimer && mPressStart) {
+                        if (Math.hypot(e.clientX - mPressStart.x, e.clientY - mPressStart.y) > M_MOVE_CANCEL_PX) clearMPress();
+                        return;
+                    }
+                    if (mDragItem) {
+                        e.preventDefault();
+                        updateMenuDrag(e.clientY);
+                    }
+                });
+                surface.addEventListener('pointerup', () => {
+                    clearMPress();
+                    stopMenuDrag();
+                });
+                // долгое нажатие и перетаскивание не должны ещё и открывать панель
+                // кнопки: гасим клик, которым браузер завершает такой жест
+                surface.addEventListener('click', (e) => {
+                    if (!mJustDragged) return;
+                    mJustDragged = false;
+                    if (e.target.closest('.flow-node__menu-item')) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }
+                }, true);
+                window.addEventListener('keydown', (e) => {
+                    if (e.key !== 'Escape' || !mActiveMenu) return;
+                    stopMenuDrag();
+                    exitMenuReorder();
+                });
+
+                // подключение MCP: отметка общая на все ноды QA, поэтому кнопку
+                // перекрашиваем во всех открытых списках сразу. Перерисовывать список
+                // целиком нельзя — сбросился бы набранный в поиске фильтр
+                surface.addEventListener('click', (e) => {
+                    const btn = e.target.closest('.flow-node__mcp-toggle');
+                    if (!btn) return;
+                    const id = btn.closest('.flow-node__mcp').dataset.mcp;
+                    const connected = connectedMcps();
+                    const next = connected.includes(id) ? connected.filter((v) => v !== id) : [...connected, id];
+                    flowSet(MCP_STATE_KEY, next);
+                    for (const row of surface.querySelectorAll('.flow-node__mcp[data-mcp="' + id + '"]')) {
+                        setMcpButton(row.querySelector('.flow-node__mcp-toggle'), next.includes(id));
+                    }
+                });
+
+                // правка поля панели («душа», системный промпт): текст общий на все
+                // ноды QA, поэтому то же поле в остальных открытых панелях обновляем
+                // сразу, а не после перезагрузки. Панель, в которой печатают,
+                // пропускаем — иначе прыгает курсор
+                surface.addEventListener('input', (e) => {
+                    const input = e.target.closest('[data-store][data-field]');
+                    if (!input) return;
+                    const { store, field } = input.dataset;
+                    flowSet(store, { ...flowGet(store, {}), [field]: input.value });
+                    autoGrowField(input);
+                    for (const other of surface.querySelectorAll('[data-store="' + store + '"][data-field="' + field + '"]')) {
+                        if (other === input) continue;
+                        other.value = input.value;
+                        autoGrowField(other);
+                    }
+                });
+
+                // иконка md-файла у заголовка панели (Soul, MCP, System Prompt): открывает файл из
+                // data-file тем же окном редактора, что и ноды-документы. Путь живёт в
+                // разметке — так новой панели хватает своей кнопки, без правки flow.js.
+                // MissionFiles — внутри обработчика, чтобы порядок загрузки файлов
+                // ни на что не влиял
+                surface.addEventListener('click', (e) => {
+                    const btn = e.target.closest('.flow-node__panel-file');
+                    if (!btn) return;
+                    if (btn.dataset.file && window.MissionFiles) MissionFiles.openFileModal(btn.dataset.file);
+                });
+
+                // поиск над списком: прячет строки, не совпавшие с запросом
+                surface.addEventListener('input', (e) => {
+                    if (!e.target.matches('.flow-node__mcp-search')) return;
+                    const query = e.target.value.trim().toLowerCase();
+                    for (const row of e.target.closest('.flow-node__panel--mcp').querySelectorAll('.flow-node__mcp')) {
+                        row.hidden = Boolean(query) && !row.dataset.search.includes(query);
+                    }
+                });
+
                 // меню «кто видит узел»: один открытый экземпляр на канвас,
                 // клик по пункту красит кнопку выбранной иконкой и закрывает меню
                 surface.addEventListener('click', (e) => {
@@ -1656,9 +2140,37 @@
                     drawEdge();
                 }
 
+                // на канвасе миньона осталась общая заглушка от времён, когда своей
+                // ноды у него не было, — иначе точек входа станет две. Узнать её по
+                // заголовку нельзя: «Start» ставится только в момент создания и никуда
+                // не сохраняется, после перезагрузки restoreGraph клонирует общий
+                // шаблон и на карточке стоит его «New node». Признак — отсутствие
+                // связей: всё, что пользователь вырастил сам, создано плюсом и держится
+                // на ребре. Чистка разовая на канвас (список пройденных живёт в
+                // состоянии), чтобы правило не удаляло одинокие ноды и дальше
+                const PERSONAL_MIGRATED_KEY = 'flowPersonalRootsMigrated';
+                function dropLegacyStub(flow) {
+                    const done = flowGet(PERSONAL_MIGRATED_KEY, []);
+                    if (done.includes(flow)) return;
+                    for (const n of [...nodeFlow.keys()]) {
+                        if (nodeFlow.get(n) !== flow) continue;
+                        if (PERSONAL_ROOT_BY_ID[n.id] || n === node || n === startNode || n.dataset.session) continue;
+                        if (edges.some((e) => e.from === n || e.to === n)) continue;
+                        deleteNode(n);
+                    }
+                    flowSet(PERSONAL_MIGRATED_KEY, [...done, flow]);
+                }
+
                 // на пустом канвасе нечего показать и не от чего плюсовать — заводим
                 // одну ноду-заглушку по центру, чтобы с неё можно было расти
                 function ensureRootNode(flow, id, sessionId) {
+                    // у миньона со своей стартовой нодой заглушка не годится даже
+                    // на пустом канвасе: ищем и заводим именно его карточку по её id
+                    const personal = !id && PERSONAL_ROOTS[flow];
+                    if (personal) {
+                        id = personal.id;
+                        dropLegacyStub(flow);
+                    }
                     // с готовым id заглушка не годится: зовущий (buildSessionFlow) просит
                     // ноду именно под своё сообщение, а не любую уже стоящую на канвасе
                     if (!id) {
@@ -1673,11 +2185,14 @@
                             return n;
                         }
                     }
-                    const root = nodeTemplate.content.firstElementChild.cloneNode(true);
+                    const root = cloneNodeElement(id);
                     root.id = nextNodeId(id);
                     if (sessionId) root.dataset.session = sessionId;
-                    root.querySelector('.flow-node__title').textContent = 'Start';
+                    // у личной ноды заголовок свой, из её шаблона — не перебиваем
+                    if (!PERSONAL_ROOT_BY_ID[root.id]) root.querySelector('.flow-node__title').textContent = 'Start';
                     surface.append(root);
+                    fitNodeMenu(root);
+                    applyMenuOrder(root);
                     attachAddBottom(root);
                     attachAddRight(root);
                     populateNodeAgentSelects(root);
@@ -1695,6 +2210,9 @@
                 function applyFlowVisibility(flow) {
                     for (const n of surface.querySelectorAll('.flow-node')) {
                         n.style.display = nodeFlow.get(n) === flow ? '' : 'none';
+                        // нода, которую при создании померить не удалось (была скрыта),
+                        // получает ширину меню в момент, когда её наконец показали
+                        if (!n.style.display) fitNodeMenu(n);
                     }
                     for (const e of edges) {
                         const visible = nodeFlow.get(e.from) === flow;
@@ -1736,7 +2254,10 @@
                         drawEdge();
                         return;
                     }
+                    // личная нода миньона — точка входа его канваса, удалять её нечем:
+                    // без неё канвас пустой, и вырастить новую цепочку не от чего
                     if (!selectedNode || selectedNode === node || selectedNode === startNode) return;
+                    if (PERSONAL_ROOT_BY_ID[selectedNode.id]) return;
                     deleteNode(selectedNode);
                 });
 
@@ -1895,6 +2416,7 @@
                             item = document.createElement('details');
                             item.className = 'flow-node__fact';
                             item.dataset.label = label;
+                            if (label === 'What happened') item.open = true;
                             const summary = document.createElement('summary');
                             summary.className = 'flow-node__fact-summary';
                             summary.textContent = label;

@@ -34,6 +34,8 @@ function inlineJs(html) {
         if (!open) continue;
         const attrs = open[1] || '';
         if (/\ssrc\s*=/i.test(attrs)) continue; // внешний файл проверится сам по себе
+        // importmap и прочие JSON/текстовые блоки — не JS, node --check их не разберёт
+        if (/type\s*=\s*["']?(importmap|application\/json|text\/)/i.test(attrs)) continue;
         if (/type\s*=\s*["']?module/i.test(attrs)) module = true;
         inside = true;
     }
@@ -60,6 +62,19 @@ function main() {
     // чтобы не заводить временных файлов ради одной проверки
     let args = ['--check', resolved];
     let source;
+    if (ext === '.js') {
+        // ES-модуль (SYSTEM/app.js, PROJECTS/Chat/chat.js, PROJECTS/Flow/flow-minion.js)
+        // голый `node --check` считает ошибкой: package.json объявляет commonjs.
+        // Узнаём модуль по import/export в начале строки и разбираем через stdin
+        // с явным типом — как инлайновый <script type="module"> ниже
+        try {
+            source = fs.readFileSync(resolved, 'utf8');
+        } catch {
+            return; // файл уже унесли — проверять нечего
+        }
+        if (/^\s*(import|export)\b/m.test(source)) args = ['--check', '--input-type=module', '-'];
+        else source = undefined;
+    }
     if (ext === '.html') {
         let inline;
         try {

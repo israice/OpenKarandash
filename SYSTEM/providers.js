@@ -40,13 +40,28 @@ export const PROVIDERS = [
         models: [],
         defaultModel: undefined,
     },
+    {
+        id: 'pi',
+        name: 'pi',
+        note: 'many providers through one CLI',
+        paid: false,
+        // как у OpenCode, список моделей заранее не хардкодим: он зависит от
+        // того, куда залогинен сам CLI, и приходит ответом на connect
+        // (`pi --list-models`), см. connectPi в settings.js
+        models: [],
+        defaultModel: undefined,
+        // pi умеет уровень размышления флагом --thinking — те же значения,
+        // что и --effort у Claude
+        efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        defaultEffort: 'medium',
+    },
 ];
 
 // подключение переживает перезагрузку страницы: id окружения, модель и
 // сессию CLI держим в localStorage, само окружение восстанавливаем на сервере.
 // свой ключ и свой POST на восстановление — на провайдера, чтобы Claude и
 // OpenCode подключались независимо друг от друга
-const STORE_KEYS = { claude: 'noname.claude', codex: 'noname.codex', opencode: 'noname.opencode' };
+const STORE_KEYS = { claude: 'noname.claude', codex: 'noname.codex', opencode: 'noname.opencode', pi: 'noname.pi' };
 const STORE_KEY = STORE_KEYS.claude;
 
 // общий помощник сохранения/восстановления состояния провайдера —
@@ -85,6 +100,7 @@ export function saveAllProviderStates() {
     saveClaudeState();
     saveProviderState('codex');
     saveOpenCodeState();
+    saveProviderState('pi');
 }
 
 export const connections = new Map();
@@ -138,6 +154,7 @@ export function getActiveProviderId() {
     if (connections.has('claude')) return 'claude';
     if (connections.has('codex')) return 'codex';
     if (connections.has('opencode')) return 'opencode';
+    if (connections.has('pi')) return 'pi';
     return 'claude';
 }
 

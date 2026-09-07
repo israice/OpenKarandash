@@ -11,6 +11,12 @@
 // только внутри обработчиков, которые сработают уже после того, как app.js его определит.
 (function () {
 
+    // ключ OpenRouter для pi (только бесплатные модели по умолчанию) — держим
+    // на уровне модуля, а не в DOM-инпуте, потому что renderProviders() вызывается
+    // часто (при подключении/отключении любого провайдера) и каждый раз пересоздаёт
+    // разметку карточек заново
+    let piOpenRouterKey = '';
+
     // ---------- разметка: кнопка-шестерёнка и меню ----------
 
     const topbar = document.querySelector('.topbar');
@@ -239,6 +245,12 @@
             for (const provider of providers) {
                 const state = App.connections.get(provider.id);
 
+                // у pi до подключения Connect остаётся серой и некликабельной,
+                // пока не введён ключ OpenRouter (без него free router работать не сможет)
+                const isPiGated = provider.id === 'pi' && !state;
+                const piKeyFilled = Boolean(piOpenRouterKey.trim());
+                const connectAllowed = !isPiGated || piKeyFilled;
+
                 const item = document.createElement('li');
                 item.className = 'provider';
 
@@ -252,13 +264,35 @@
                     <div class="provider__actions">
                         ${state ? `<span class="provider__status">${state.note || 'Connected'}</span>` : ''}
                         <button type="button"
-                                class="provider__button ${state ? '' : 'provider__button--connect'}"
-                                data-provider="${provider.id}">
+                                class="provider__button ${state || !connectAllowed ? '' : 'provider__button--connect'}"
+                                data-provider="${provider.id}"
+                                ${isPiGated && !connectAllowed ? 'disabled' : ''}>
                             ${state ? 'Disconnect' : 'Connect'}
                         </button>
                     </div>
                 `;
                 item.append(row);
+
+                // поле ключа видно сразу под строкой pi, ещё до подключения —
+                // в отличие от Telegram, для него не нужна отдельная кнопка-раскрытие
+                if (isPiGated) {
+                    const keyRow = document.createElement('div');
+                    keyRow.className = 'provider__model';
+                    keyRow.innerHTML = `
+                        <input type="password" class="provider__input" id="piOpenRouterKeyInput"
+                               placeholder="OpenRouter API key (free models only)" autocomplete="off">
+                    `;
+                    const keyInput = keyRow.querySelector('#piOpenRouterKeyInput');
+                    keyInput.value = piOpenRouterKey;
+                    keyInput.addEventListener('input', () => {
+                        piOpenRouterKey = keyInput.value;
+                        const connectButton = row.querySelector('[data-provider="pi"]');
+                        const filled = Boolean(piOpenRouterKey.trim());
+                        connectButton.classList.toggle('provider__button--connect', filled);
+                        connectButton.disabled = !filled;
+                    });
+                    item.append(keyRow);
+                }
 
                 // выбор модели показываем только у подключённого провайдера
                 if (state) {
@@ -300,7 +334,8 @@
 
                     modelRow.append(label, select);
 
-                    // effort пока умеет только Claude CLI (--effort)
+                    // effort умеют Claude (--effort) и pi (--thinking); у кого его нет,
+                    // у того в PROVIDERS нет и поля efforts
                     if (provider.efforts) {
                         const effortSelect = document.createElement('select');
                         effortSelect.className = 'provider__select provider__select--effort';
@@ -419,6 +454,47 @@
         renderProviders();
     }
 
+    // у pi список моделей тоже приходит с сервера: он зависит от того, куда
+    // залогинен сам CLI (`pi --list-models`), и без логина приходит пустым —
+    // тогда карточка остаётся без строки выбора модели, как у OpenCode
+    async function connectPi(install) {
+        // подключение зовётся без await из обработчика клика, поэтому свою
+        // ошибку ловим здесь: иначе упавший запрос не оставил бы на карточке
+        // вообще никакого следа — ни «Disconnect», ни сообщения
+        let result;
+        try {
+            result = await api('/api/agent/connect', { agent: 'pi', id: install.id, openRouterKey: piOpenRouterKey.trim() });
+        } catch (err) {
+            showProviderError('pi', `Server unavailable: ${err.message}`);
+            return;
+        }
+        if (!result.ok) {
+            showProviderError('pi', result.error);
+            return;
+        }
+
+        const provider = App.PROVIDERS.find((p) => p.id === 'pi');
+        provider.models = result.models || [];
+        // подпись поля обещает бесплатные модели, а первой в списке от CLI
+        // обычно идёт платная — дефолтом берём именно бесплатную, если она есть
+        // (`openrouter/free` — сборный роутер бесплатных моделей, иначе любая с суффиксом `:free`)
+        provider.defaultModel = provider.models.find((m) => m === 'openrouter/openrouter/free')
+            || provider.models.find((m) => m.endsWith(':free'))
+            || provider.models[0];
+
+        App.connections.set('pi', {
+            installId: result.id,
+            label: result.label,
+            version: result.version,
+            model: App.connections.get('pi')?.model || provider.defaultModel,
+            effort: App.connections.get('pi')?.effort || provider.defaultEffort,
+            note: `${result.label} · CLI ${result.version}`,
+        });
+        App.saveProviderState('pi');
+        App.renderSessionBarControls();
+        renderProviders();
+    }
+
     // окно выбора открывается, только когда найдено больше одного окружения;
     // providerLabel уходит и в заголовок, и в подсказку — общий вид для Claude и OpenCode
     function pickInstall(installs, onPick, providerLabel = 'CLI') {
@@ -461,7 +537,7 @@
             if (id === 'claude') {
                 App.setChatSessionId(null);
                 App.saveClaudeState();
-            } else if (id === 'codex' || id === 'opencode') {
+            } else if (id === 'codex' || id === 'opencode' || id === 'pi') {
                 App.setChatSessionId(null);
                 App.saveProviderState(id);
             }
@@ -537,6 +613,29 @@
             return;
         }
 
+        // у pi поток тот же, что у OpenCode: detect -> connect, список моделей
+        // приходит в ответе connect
+        if (id === 'pi') {
+            btn.disabled = true;
+            btn.textContent = 'Looking for pi...';
+
+            let installs = [];
+            try {
+                ({ installs = [] } = await api('/api/agent/detect', { agent: 'pi' }));
+            } catch (err) {
+                renderProviders();
+                showProviderError(id, `Server unavailable: ${err.message}`);
+                return;
+            }
+
+            renderProviders();
+
+            if (installs.length === 0) showNotFound('pi CLI');
+            else if (installs.length === 1) connectPi(installs[0]);
+            else pickInstall(installs, connectPi, 'pi CLI');
+            return;
+        }
+
         // остальные провайдеры пока переключаются без реального подключения
         const provider = App.PROVIDERS.find((p) => p.id === id);
         App.connections.set(id, { model: provider.defaultModel });
@@ -550,7 +649,7 @@
             if (select.dataset.providerSelect === 'claude') {
                 App.saveClaudeState();
                 App.renderSessionBarControls();
-            } else if (select.dataset.providerSelect === 'codex' || select.dataset.providerSelect === 'opencode') {
+            } else if (['codex', 'opencode', 'pi'].includes(select.dataset.providerSelect)) {
                 App.saveProviderState(select.dataset.providerSelect);
                 App.renderSessionBarControls();
             }
@@ -559,11 +658,10 @@
 
         const effortSelect = e.target.closest('[data-provider-effort-select]');
         if (!effortSelect) return;
-        App.connections.get(effortSelect.dataset.providerEffortSelect).effort = effortSelect.value;
-        if (effortSelect.dataset.providerEffortSelect === 'claude') {
-            App.saveClaudeState();
-            App.renderSessionBarControls();
-        }
+        const effortProviderId = effortSelect.dataset.providerEffortSelect;
+        App.connections.get(effortProviderId).effort = effortSelect.value;
+        App.saveProviderState(effortProviderId);
+        App.renderSessionBarControls();
     });
 
     // ---------- экран для скриншотов Karandash ----------
@@ -685,6 +783,31 @@
         }));
     }
 
+    // «этот ключ опрашивает кто-то ещё» — временная штука на стороне сервера
+    // (пересменка после его же перезапуска), она гаснет сама за десятки секунд.
+    // Открытая карточка об этом не узнаёт: сервер меняет состояние в памяти,
+    // но никому его не шлёт, — поэтому спрашиваем сами, пока окно на экране
+    const TELEGRAM_REFRESH_MS = 4000;
+    let telegramRefreshTimer = null;
+
+    function startTelegramRefresh() {
+        clearInterval(telegramRefreshTimer);
+        telegramRefreshTimer = setInterval(() => {
+            api('/api/telegram/state').then(renderTelegram);
+        }, TELEGRAM_REFRESH_MS);
+    }
+
+    function stopTelegramRefresh() {
+        clearInterval(telegramRefreshTimer);
+        telegramRefreshTimer = null;
+    }
+
+    // App.closeModal общий на все окна и про Telegram не знает — ловим закрытие
+    // по смене атрибута hidden, а не заводим отдельный колбэк в app.js
+    new MutationObserver(() => {
+        if (settingsModal.hidden) stopTelegramRefresh();
+    }).observe(settingsModal, { attributes: true, attributeFilter: ['hidden'] });
+
     for (const input of [telegramTokenInput, telegramUsersInput]) {
         input.addEventListener('input', () => {
             if (input === telegramTokenInput) telegramTokenTouched = true;
@@ -718,6 +841,7 @@
         renderProviders();
         renderScreenshotScreen();
         api('/api/telegram/state').then(renderTelegram);
+        startTelegramRefresh();
         App.openModal(settingsModal);
     }
 

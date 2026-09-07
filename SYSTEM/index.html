@@ -23,6 +23,18 @@
     <link rel="stylesheet" href="PROJECTS/Graph/vendor/easymde/easymde.min.css">
     <!-- Вкладка Flow живёт целиком в PROJECTS/Flow: и стили, и скрипт. -->
     <link rel="stylesheet" href="PROJECTS/Flow/flow.css">
+    <!-- Карта импортов для three.js: 3D-персонаж в ноде QA (PROJECTS/Flow/flow-minion.js)
+         берёт библиотеку из node_modules голым специфером `three` — так же её
+         импортируют адресные модули самой библиотеки (GLTFLoader). Стоит раньше
+         любого <script type="module">, иначе браузер её не применит (DOCS/decisions/027). -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "/node_modules/three/build/three.module.js",
+            "three/addons/": "/node_modules/three/examples/jsm/"
+        }
+    }
+    </script>
     <!-- Вкладка Kanban живёт целиком в PROJECTS/Kanban: и стили, и скрипт. -->
     <link rel="stylesheet" href="PROJECTS/Kanban/kanban.css">
 
@@ -30,6 +42,8 @@
     <link rel="stylesheet" href="PROJECTS/Settings/settings.css">
     <!-- Вкладка Book живёт целиком в PROJECTS/Book: и стили, и скрипт. -->
     <link rel="stylesheet" href="PROJECTS/Book/book.css">
+    <!-- Вкладка Telegram живёт целиком в PROJECTS/Telegram: и стили, и скрипт. -->
+    <link rel="stylesheet" href="PROJECTS/Telegram/telegram.css">
     <link rel="stylesheet" href="SYSTEM/toolbar-menu.css">
 </head>
 <body>
@@ -56,6 +70,12 @@
         </div>
         <!-- Новая кнопка здесь — только с иконкой, ещё не занятой соседями по .btn-group__btn -->
         <div class="toolbar btn-group" role="toolbar" aria-label="System projects">
+            <button type="button" class="icon-button btn-group__btn" id="telegramButton" data-view="telegram" aria-pressed="false" aria-label="Telegram" title="Telegram">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 4 3 11l6 2 2 6z"></path>
+                    <path d="M9 13 21 4l-8 16-2-5z"></path>
+                </svg>
+            </button>
             <button type="button" class="icon-button btn-group__btn" id="flowButton" data-view="flow" aria-pressed="false" aria-label="Flow" title="Flow">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <rect x="3" y="3" width="7" height="6" rx="1.5"></rect>
@@ -314,6 +334,192 @@
                         <button type="button" class="flow-node__add-bottom" title="Add a node (or drag onto another node to connect)">+</button>
                         <button type="button" class="flow-node__add-right" title="Add a node (or drag onto another node to connect)">+</button>
                     </div>
+                    <!-- личная стартовая нода миньона QA: своя карточка, с которой
+                         начинается его канвас (см. PERSONAL_ROOTS в flow.js). Логики
+                         за ней пока нет — только разметка, её и улучшаем дальше -->
+                    <template id="flowNodeQaTemplate">
+                        <div class="flow-node flow-node--qa">
+                            <!-- вертикальное меню в левой части ноды: кнопки «иконка +
+                                 название» столбиком. Кнопка с data-panel показывает
+                                 вместо правой колонки одноимённую панель (flow.js),
+                                 у остальных обработчиков пока нет -->
+                            <nav class="flow-node__menu" aria-label="QA menu">
+                                <button type="button" class="flow-node__menu-item" data-panel="mcp" aria-pressed="false" title="MCP-серверы для тестировщика: выбери, какими пользоваться в этой сессии">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🔌</span>
+                                    <span class="flow-node__menu-label">MCP</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="prompt" aria-pressed="false" title="System Prompt — как я должен себя вести: основные инструкции, правила и принципы работы агента">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">📜</span>
+                                    <span class="flow-node__menu-label">System Prompt</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="soul" aria-pressed="false" title="Soul — кто я: личность, характер, ценности и стиль взаимодействия">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🫀</span>
+                                    <span class="flow-node__menu-label">Soul</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="model" aria-pressed="false" title="Model — чем я думаю: выбранная языковая модель и провайдер, через которых работает агент">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🤖</span>
+                                    <span class="flow-node__menu-label">Model</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="thinking" aria-pressed="false" title="Thinking — насколько глубоко я думаю: уровень рассуждения, reasoning/thinking budget и связанные параметры">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🧠</span>
+                                    <span class="flow-node__menu-label">Thinking</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="tools" aria-pressed="false" title="Tools — что я умею делать: доступные встроенные и подключённые инструменты для выполнения действий">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🧰</span>
+                                    <span class="flow-node__menu-label">Tools</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="skills" aria-pressed="false" title="Skills — какие специализированные способности у меня есть: набор инструкций и навыков под конкретные задачи">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🎓</span>
+                                    <span class="flow-node__menu-label">Skills</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="agents" aria-pressed="false" title="Agents — каких других агентов я могу привлечь: доступные субагенты и правила их использования">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">👥</span>
+                                    <span class="flow-node__menu-label">Agents</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="memory" aria-pressed="false" title="Memory — что я помню: сохраняемый контекст, факты, предпочтения и накопленные знания между сессиями">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">💾</span>
+                                    <span class="flow-node__menu-label">Memory</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="permissions" aria-pressed="false" title="Permissions — что мне разрешено: ограничения и политики доступа к файлам, shell, сети, внешним действиям и другим ресурсам">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🔐</span>
+                                    <span class="flow-node__menu-label">Permissions</span>
+                                </button>
+                            </nav>
+                            <!-- правая колонка: всё прежнее содержимое карточки. Обёртка
+                                 нужна только под раскладку в две колонки — селекторы
+                                 flow.js ищут потомков ноды и её переживают -->
+                            <div class="flow-node__main">
+                                <div class="flow-node__header">
+                                    <span class="flow-node__titles">
+                                        <span class="flow-node__title-row">
+                                            <span class="flow-node__title">QA</span>
+                                        </span>
+                                        <span class="flow-node__subtitle">Quality gate · Entry point</span>
+                                    </span>
+                                </div>
+                                <div class="flow-node__body">The starting point of the QA flow: everything the tester checks grows from this node.</div>
+                                <!-- те же провайдер/модель/effort, что у Секретаря и обычных
+                                     нод: классы общие, поэтому заполняет их та же
+                                     populateNodeAgentSelects в flow.js -->
+                                <div class="flow-node__footer flow-node__footer--controls">
+                                    <select class="chat__session-select flow-node__control flow-node__provider" aria-label="Provider"></select>
+                                    <select class="chat__session-select flow-node__control flow-node__model" aria-label="Model"></select>
+                                    <select class="chat__session-select flow-node__control flow-node__effort" aria-label="Effort"></select>
+                                </div>
+                            </div>
+                            <!-- правая колонка в режиме MCP: список серверов, которыми
+                                 обычно пользуется QA. Сами строки рисует flow.js по
+                                 списку QA_MCPS — здесь только оболочка с поиском -->
+                            <div class="flow-node__panel flow-node__panel--mcp" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>MCP servers</span>
+                                    <!-- иконка md-файла: открывает файл из data-file в
+                                         общем редакторе (обработчик — flow.js) -->
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/QA/mcp.json" title="Open mcp.json" aria-label="Open mcp.json">📄</button>
+                                </div>
+                                <input type="search" class="flow-node__mcp-search" placeholder="Search MCP…" aria-label="Search MCP">
+                                <div class="flow-node__mcp-list"></div>
+                            </div>
+                            <!-- правая колонка в режиме System Prompt: как агент
+                                 должен себя вести — инструкции, правила, принципы. Поля
+                                 рисует flow.js по списку QA_PROMPT — здесь только оболочка -->
+                            <div class="flow-node__panel flow-node__panel--prompt" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>System Prompt</span>
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/QA/SYSTEM.md" title="Open SYSTEM.md" aria-label="Open SYSTEM.md">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">How should I behave: basic instructions, rules and working principles of the agent.</div>
+                                <div class="flow-node__prompt-list"></div>
+                            </div>
+                            <!-- правая колонка в режиме Soul: кто этот агент —
+                                 личность, характер, ценности, стиль. Поля рисует
+                                 flow.js по списку QA_SOUL — здесь только оболочка -->
+                            <div class="flow-node__panel flow-node__panel--soul" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Soul</span>
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/QA/APPEND_SYSTEM.md" title="Open APPEND_SYSTEM.md" aria-label="Open APPEND_SYSTEM.md">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">Who am I: personality, character, values and interaction style.</div>
+                                <div class="flow-node__soul-list"></div>
+                            </div>
+                            <!-- правая колонка в режиме Thinking: насколько глубоко
+                                 агент рассуждает — уровень рассуждения, бюджет
+                                 размышлений и связанные параметры. Поля рисует flow.js
+                                 по списку QA_THINKING — здесь только оболочка -->
+                            <div class="flow-node__panel flow-node__panel--thinking" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Thinking</span>
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/QA/settings.json" title="Open settings.json" aria-label="Open settings.json">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">How deep do I think: reasoning level, thinking budget and related parameters.</div>
+                                <div class="flow-node__thinking-list"></div>
+                            </div>
+                            <!-- правая колонка в режиме Tools: что агент умеет
+                                 делать — встроенные и подключённые инструменты для
+                                 действий. Поля рисует flow.js по списку QA_TOOLS — здесь
+                                 только оболочка -->
+                            <div class="flow-node__panel flow-node__panel--tools" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Tools</span>
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/QA/settings.json" title="Open settings.json" aria-label="Open settings.json">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">What can I do: the built-in and connected tools available for taking actions.</div>
+                                <div class="flow-node__tools-list"></div>
+                            </div>
+                            <!-- правая колонка в режиме Permissions: границы агента в
+                                 терминах pi — список инструментов, состав сессии,
+                                 доверие проекту, гейт вызовов и изоляция. Поля рисует
+                                 flow.js по списку QA_PERMISSIONS, иконка ведёт в сам
+                                 гейт профиля (PROJECTS/Flow/profiles/QA) -->
+                            <div class="flow-node__panel flow-node__panel--permissions" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Permissions</span>
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/QA/extensions/permission-gate.ts" title="Open permission-gate.ts" aria-label="Open permission-gate.ts">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">What am I allowed to do. pi has no permission modes and no sandbox: the limits are the tool allowlist, what loads into the session, project trust, the tool_call gate and outside isolation.</div>
+                                <div class="flow-node__permissions-list"></div>
+                            </div>
+                            <!-- правая колонка в режиме Model: чем агент думает —
+                                 провайдер и модель. Внутренний префикс классов здесь
+                                 llm, а не model: класс .flow-node__model уже занят
+                                 селектором модели в подвале карточки. Поля рисует
+                                 flow.js по списку QA_MODEL -->
+                            <div class="flow-node__panel flow-node__panel--model" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Model</span>
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/QA/settings.json" title="Open settings.json" aria-label="Open settings.json">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">What do I think with: the language model and the provider the agent runs through.</div>
+                                <div class="flow-node__llm-list"></div>
+                            </div>
+                            <!-- правая колонка в режиме Skills: специализированные
+                                 навыки агента. Своего файла в профиле у них пока нет
+                                 (у pi навыки лежат в .agents/skills проекта), поэтому
+                                 заголовок без иконки 📄 -->
+                            <div class="flow-node__panel flow-node__panel--skills" hidden>
+                                <div class="flow-node__panel-title">Skills</div>
+                                <div class="flow-node__panel-hint">What special abilities do I have: sets of instructions and skills for particular tasks.</div>
+                                <div class="flow-node__skills-list"></div>
+                            </div>
+                            <!-- правая колонка в режиме Agents: кого агент может
+                                 позвать себе на помощь. Файла в профиле тоже пока
+                                 нет — только описание словами -->
+                            <div class="flow-node__panel flow-node__panel--agents" hidden>
+                                <div class="flow-node__panel-title">Agents</div>
+                                <div class="flow-node__panel-hint">Which other agents can I call in: the subagents available and the rules for using them.</div>
+                                <div class="flow-node__agents-list"></div>
+                            </div>
+                            <!-- правая колонка в режиме Memory: что агент помнит между
+                                 сессиями. Файла в профиле тоже пока нет -->
+                            <div class="flow-node__panel flow-node__panel--memory" hidden>
+                                <div class="flow-node__panel-title">Memory</div>
+                                <div class="flow-node__panel-hint">What do I remember: the context, facts and preferences kept between sessions.</div>
+                                <div class="flow-node__memory-list"></div>
+                            </div>
+                            <button type="button" class="flow-node__add-bottom" title="Add a node (or drag onto another node to connect)">+</button>
+                            <button type="button" class="flow-node__add-right" title="Add a node (or drag onto another node to connect)">+</button>
+                        </div>
+                    </template>
                     <template id="flowNodeTemplate">
                         <div class="flow-node">
                             <div class="flow-node__footer flow-node__footer--controls">
@@ -322,6 +528,7 @@
                                     <option value="action" style="color:#4caf50">Action</option>
                                     <option value="ask_human" style="color:#ff9800">Ask Human</option>
                                     <option value="system" style="color:#c084fc">System</option>
+                                    <option value="agent" style="color:#26c6da">Agent</option>
                                 </select>
                                 <button type="button" class="flow-node__control flow-node__context-toggle" aria-pressed="true" aria-label="Context: on">
                                     <span class="flow-node__context-toggle-track"><span class="flow-node__context-toggle-thumb">C</span></span>
@@ -497,6 +704,8 @@
     <script src="PROJECTS/Settings/settings.js" defer></script>
     <!-- book-tab.js раньше app.js: тот на старте ищет #bookView в DOM -->
     <script src="PROJECTS/Book/book-tab.js" defer></script>
+    <!-- telegram.js раньше app.js: тот на старте ищет #telegramView в DOM -->
+    <script src="PROJECTS/Telegram/telegram.js" defer></script>
     <!-- ядро и вкладка Chat — модули (DOCS/decisions/022): app.js импортирует
          SYSTEM/providers.js, chat.js — свои ./chat-*.js. Модульные скрипты без
          async выполняются в порядке документа наравне с defer, поэтому цепочка
@@ -507,6 +716,8 @@
     <script src="PROJECTS/Graph/vendor/easymde/easymde.min.js" defer></script>
     <script src="PROJECTS/Graph/md-editors.js" defer></script>
     <script src="PROJECTS/Flow/flow.js" defer></script>
+    <!-- 3D-персонаж в ноде QA: ES-модуль (import three), поэтому type="module" -->
+    <script src="PROJECTS/Flow/flow-minion.js" type="module"></script>
     <script src="PROJECTS/Flow/flow-session-sync.js" defer></script>
     <script src="PROJECTS/Kanban/kanban.js" defer></script>
     <script src="PROJECTS/Karandash/karandash.js" defer></script>

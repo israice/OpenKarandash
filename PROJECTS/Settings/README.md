@@ -15,9 +15,9 @@ There are two levels of settings in the project, and it matters not to confuse t
 
 ## 🎛 What can be configured
 
-- **The provider.** The dialog has three cards: **Claude** (Anthropic), **Codex** (OpenAI), **OpenCode** (local and third-party models). Each has a "Connect" / "Disconnect" button.
-- **The model.** A connected provider gets a selection row: the list of models, with the default one marked `(default)`. For Claude these are `claude-opus-5`, `claude-sonnet-5` (default), `claude-fable-5`, `claude-haiku-4-5`.
-- **The effort.** Claude only — `low`, `medium` (default), `high`, `xhigh`, `max`. It goes to the CLI as the `--effort` flag; for the other providers the select is simply not shown.
+- **The provider.** The dialog has four cards, split into **Paid** (**Claude** — Anthropic, **Codex** — OpenAI) and **Free** (**OpenCode** — local and third-party models, **pi** — many providers through one CLI). Each has a "Connect" / "Disconnect" button.
+- **The model.** A connected provider gets a selection row: the list of models, with the default one marked `(default)`. For Claude these are `claude-opus-5`, `claude-sonnet-5` (default), `claude-fable-5`, `claude-haiku-4-5`. OpenCode and pi have no hard-coded list at all: the server asks the CLI itself on connect (`opencode models`, `pi --list-models`), so what you see is whatever that CLI is logged into — and if it is logged into nothing, the row is not shown.
+- **The effort.** Claude and pi — `low`, `medium` (default), `high`, `xhigh`, `max`. It goes to the CLI as `--effort` (Claude) or `--thinking` (pi); for the other providers the select is simply not shown.
 - **Subscription limits.** For a connected Claude, the usage of the **5-hour** and **7-day** windows is shown right above the model selection — the percentage and the reset time. The data arrives with every CLI answer, so before the first request it honestly says "Data will appear after the first request".
 - **The toolbar button order.** A long press (2 seconds) on any `.toolbar` button enables "wobble" mode — the buttons can be dragged with the mouse, `Esc` exits, and the order is saved. The gear does not take part in this: it sits outside `.toolbar`.
 - **The session panel width** — also an appearance setting, and it also survives a reload (see the storage table).
@@ -118,7 +118,7 @@ Still stubs — honestly, with no embellishment:
 
 - **The dropdown menu entries.** `settings.js` creates the `#settingsMenu` menu with two "Placeholder_2" entries, a separator and a "Settings" entry. The styles and the closing handlers (click outside, `Esc`) are in place, but there is nothing to open it with: the `open()` function in `settings.js` is never called, and a click on the gear opens the settings dialog directly. The menu is groundwork for the future.
 - **The Codex provider's chat.** Its "Connect" button is real now — same detect (Windows/WSL) → pick → connect flow as Claude — but sending a message to it returns a stub error ("Codex chat is not implemented yet"): the actual CLI invocation isn't wired up.
-- **The "Provider" select** inside a connected provider's row, and the identical select in the session header, route real requests to Claude/OpenCode/Codex's `/api/agent/*` — Codex just has nothing to answer with yet (see above).
+- **The "Provider" select** inside a connected provider's row, and the identical select in the session header, route real requests to Claude/OpenCode/pi/Codex's `/api/agent/*` — Codex just has nothing to answer with yet (see above).
 
 ## 📁 Files
 

@@ -1,0 +1,8 @@
+{
+  "defaultProvider": "openrouter",
+  "defaultModel": "openrouter/free",
+  "defaultThinkingLevel": "medium",
+  "defaultProjectTrust": "always",
+  "defaultTools": ["read", "grep", "find", "ls", "bash", "powershell"],
+  "packages": ["npm:pi-mcp-adapter"]
+}

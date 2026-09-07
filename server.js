@@ -218,6 +218,41 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
     return; // код ниже выполняется только в дочернем процессе
 }
 
+// ---------- замок от параллельного запуска ----------
+// Порт-гвард ниже (server.on('error', ...)) ловит вторую копию только на том
+// же порту. Если у копий разные PORT в .env (например, Windows и WSL запущены
+// одновременно с разными портами) или .env вовсе разные — обе поднимаются
+// молча и дерутся за общие DATA/sessions.db, vault и телеграм-токен (Conflict
+// от getUpdates). Порт тут не судья, а вот файл в DATA/ виден обеим сторонам
+// одинаково — на нём и делаем общий замок, независимый от PORT.
+//
+// PID в замке не помогает: Windows и WSL — разные пространства процессов,
+// чужой PID в них ничего не значит. Вместо этого держим «пульс» — раз в
+// HEARTBEAT_MS обновляем время правки файла. Свежий пульс при старте значит
+// «кто-то уже работает» — отказываем. Пульс не обновлялся дольше STALE_MS —
+// прошлый процесс упал, не подчистив за собой, замок можно перехватить
+const LOCK_FILE = path.join(ROOT, 'DATA', 'server.lock');
+const HEARTBEAT_MS = 3000;
+const STALE_MS = HEARTBEAT_MS * 4;
+
+function acquireLock() {
+    try {
+        const age = Date.now() - fs.statSync(LOCK_FILE).mtimeMs;
+        if (age < STALE_MS) {
+            console.error(`Another OpenKarandash server is already holding ${LOCK_FILE} (last heartbeat ${Math.round(age / 1000)}s ago).`);
+            console.error('Stop that instance first — running two at once fights over the database, the vault and the Telegram bot token.');
+            process.exit(1);
+        }
+    } catch { /* замка ещё нет — первый запуск */ }
+    fs.mkdirSync(path.dirname(LOCK_FILE), { recursive: true });
+    fs.writeFileSync(LOCK_FILE, String(process.pid));
+    setInterval(() => {
+        try { fs.utimesSync(LOCK_FILE, new Date(), new Date()); } catch { /* пропустим удар — догоним следующим */ }
+    }, HEARTBEAT_MS).unref();
+}
+
+acquireLock();
+
 // исключение вне обработчика запроса (таймер пересборки карты, колбэк процесса CLI)
 // иначе гасит сервер без следа: сторож видит только код выхода, а стек уходит
 // в закрытое окно терминала
@@ -262,6 +297,7 @@ const MIME = {
     '.jpg': 'image/jpeg',
     '.svg': 'image/svg+xml',
     '.ico': 'image/x-icon',
+    '.glb': 'model/gltf-binary', // 3D-модели (персонаж в ноде QA на Flow)
 };
 
 // ---------- live reload ----------
@@ -641,9 +677,22 @@ function broadcast(sessionId, event) {
 let restartRequested = false;
 let stopping = false; // ответ сторожу уже отправлен: процесса вот-вот не станет
 
-function confirmRestart() {
+async function confirmRestart() {
     if (!restartRequested || stopping || running > 0) return;
     stopping = true;
+    // опрос телеграма отпускаем до смерти процесса и ждём, пока он отпустится:
+    // Telegram держит getUpdates своим таймаутом, а не смертью клиента, и снять
+    // его может только наш же прощальный запрос. Не дождавшись, мы бы убили его
+    // вместе с процессом, и следующий запуск встретил бы Conflict вместо
+    // сообщений (require кэширован — это тот же модуль, что ниже). Ожидание
+    // ограничено внутри самого stop(): недоступный Telegram перезапуск не держит.
+    // Зовут нас без await, поэтому своей ошибкой отсюда наружу выходить нельзя —
+    // необработанный отказ гасит сервер целиком (обработчик выше)
+    try {
+        await require('./PROJECTS/Settings/telegram-server.js').stop();
+    } catch (err) {
+        console.error('Telegram release on restart:', err.message);
+    }
     process.send({ readyToRestart: true }, () => {}); // колбэк: закрытый канал не должен ронять сервер
 }
 
@@ -1417,6 +1466,277 @@ async function askCodex(_body, send) {
     send({ type: 'error', error: 'Codex chat is not implemented yet' });
 }
 
+// ---------- коннектор pi CLI ----------
+//
+// pi (@earendil-works/pi-coding-agent) — четвёртый CLI на тех же правах, что
+// Claude/OpenCode/Codex: своя цель запуска, свой detect и свой разбор потока.
+// Ход идёт через `-p --mode json`: NDJSON, где первая строка — заголовок сессии
+// с её id, а дальше события агента (описаны в docs/json.md внутри пакета).
+// Промежуточные message_update намеренно не разбираем — это дельты без
+// накопленного текста, а итог того же сообщения целиком приходит в message_end.
+
+const PI_BIN = process.env.PI_BIN;
+
+// глобальная установка pi на Windows — это .cmd-обёртка npm, а её spawn запустить
+// не может: с Node 20.12 .bat/.cmd без shell отвечают EINVAL, а shell здесь
+// недопустим — промпт многострочный, и cmd.exe его не переживёт. Поэтому ищем не
+// обёртку, а сам вход пакета (bin в его package.json) и запускаем его тем же node,
+// на котором работает сервер. Проверено вживую: без этого Windows-окружение просто
+// не находилось, и окно выбора Windows/WSL не открывалось
+const PI_ENTRY_PARTS = ['node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'bundle', 'cli.js'];
+
+function resolvePiEntry() {
+    const candidates = [];
+    try {
+        // where печатает все найденные обёртки (pi, pi.cmd, pi.ps1) — пакет лежит
+        // рядом с ними, в node_modules той же папки
+        const shims = execFileSync('where', ['pi'], { encoding: 'utf8' }).split('\n').map((line) => line.trim());
+        for (const shim of shims.filter(Boolean)) candidates.push(path.join(path.dirname(shim), ...PI_ENTRY_PARTS));
+    } catch {
+        // pi нет в PATH — остаётся стандартное место глобальных пакетов npm
+    }
+    if (process.env.APPDATA) candidates.push(path.join(process.env.APPDATA, 'npm', ...PI_ENTRY_PARTS));
+    return candidates.find((file) => fs.existsSync(file)) || null;
+}
+
+const PI_WINDOWS_ENTRY = process.platform === 'win32' ? resolvePiEntry() : null;
+
+const PI_TARGETS = PI_BIN
+    ? [{ id: 'pi-custom', label: 'PI_BIN', cmd: PI_BIN, args: [] }]
+    : process.platform === 'win32'
+        ? [
+            // вход не нашёлся — Windows-окружения просто нет в списке, а не
+            // числится найденным и падает при первом запуске
+            ...(PI_WINDOWS_ENTRY ? [{ id: 'pi-windows', label: 'Windows', cmd: process.execPath, args: [PI_WINDOWS_ENTRY] }] : []),
+            { id: 'pi-wsl', label: 'WSL', cmd: 'wsl.exe', args: ['bash', '-lc'], viaShell: true },
+          ]
+        : [
+            { id: 'pi-wsl', label: 'WSL', cmd: 'pi', args: [] },
+            { id: 'pi-windows', label: 'Windows', cmd: 'pi.exe', args: [] },
+          ];
+
+let activePiTarget = null; // своя переменная на провайдера — подключения не затирают друг друга
+
+const PI_ASK_TIMEOUT_MS = Number(process.env.PI_ASK_TIMEOUT_MS) || 3_600_000;
+
+// runPi — аналог runOpenCode: промпт идёт позиционным аргументом, stdin CLI не
+// читает. Отличие одно: свои сообщения об ошибке (нет ключа, неизвестная модель)
+// pi печатает в stdout обычным текстом, а не в stderr, поэтому непрочитанные
+// строки потока копим отдельно — иначе от упавшего хода осталось бы только
+// «exited with code 1»
+function runPi(target, cliArgs, { timeoutMs, onLine, onSpawn } = {}) {
+    return new Promise((resolve, reject) => {
+        const args = target.viaShell
+            ? [...target.args, shellLaunch(['pi', ...cliArgs].map(shQuote).join(' '))]
+            : [...target.args, ...cliArgs];
+
+        const child = spawn(target.cmd, args, { windowsHide: true });
+        onSpawn?.(child);
+
+        let stdout = '';
+        let stderr = '';
+        let noise = ''; // строки stdout, которые не являются событиями потока
+        let finished = false;
+
+        const timer = setTimeout(() => {
+            finished = true;
+            killProcessTree(child, target);
+            reject(new Error(`Timed out (${Math.round(timeoutMs / 1000)}s)`));
+        }, timeoutMs);
+
+        const done = (err, value) => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            err ? reject(err) : resolve(value);
+        };
+
+        child.on('error', (err) => {
+            done(new Error(err.code === 'ENOENT' ? `${target.cmd} not found` : err.message));
+        });
+
+        let tail = '';
+        child.stdout.on('data', (chunk) => {
+            if (!onLine) {
+                stdout += chunk;
+                return;
+            }
+            tail += chunk;
+            const lines = tail.split('\n');
+            tail = lines.pop();
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                if (line.startsWith('{')) onLine(line);
+                else if (noise.length < 500) noise += line.trim() + '\n';
+            }
+        });
+        child.stderr.on('data', (chunk) => { stderr += takeRemotePid(child, String(chunk)); });
+
+        child.on('close', (code) => {
+            if (code === 0) done(null, stdout);
+            else done(new Error(child.__stoppedByUser
+                ? 'Stopped by the user'
+                : (stderr.trim() || noise.trim() || `CLI exited with code ${code}`)));
+        });
+
+        child.stdin.on('error', () => {});
+        child.stdin.end();
+    });
+}
+
+async function detectPiInstalls() {
+    const checks = await Promise.allSettled(
+        PI_TARGETS.map(async (target) => ({
+            id: target.id,
+            label: target.label,
+            version: parseVersion(await runPi(target, ['--version'], { timeoutMs: 15000 })),
+        }))
+    );
+
+    return checks.filter((c) => c.status === 'fulfilled').map((c) => c.value);
+}
+
+// список моделей у pi зависит от того, куда человек залогинен, — как у OpenCode,
+// спрашиваем сам CLI. `--list-models` печатает таблицу с заголовком
+// «provider  model  context  max-out  thinking  images», колонки разделены
+// двумя и более пробелами; без логина вместо таблицы идёт подсказка про /login
+async function fetchPiModels(target) {
+    // список моделей — приятное дополнение, а не условие подключения: если CLI
+    // ответил ошибкой (нет сети, сломанный каталог), карточка всё равно должна
+    // подключиться, просто без строки выбора модели
+    const stdout = await runPi(target, ['--list-models'], { timeoutMs: 20000 }).catch(() => '');
+    const lines = stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean);
+    if (!lines.length || !lines[0].startsWith('provider')) return [];
+    return lines.slice(1)
+        .map((line) => line.split(/\s{2,}/))
+        .filter((columns) => columns.length >= 2)
+        // именно «provider/model»: в таком виде их принимает обратно флаг --model
+        .map(([provider, model]) => `${provider}/${model}`);
+}
+
+// у pi нет режимов разрешений вроде --permission-mode: обсуждение получается
+// строгим списком инструментов. Из встроенных (read, bash, powershell, edit,
+// write, grep, find, ls) оставляем только читающие, и этот же список гасит
+// расширения — --tools у pi является allowlist'ом для всех инструментов сразу
+const PI_CHAT_TOOLS = 'read,grep,find,ls';
+
+// ключ OpenRouter из Settings кладём туда же, откуда его читает сам pi —
+// ~/.pi/agent/auth.json. Файл может уже нести чужой oauth-ключ (`pi login`),
+// поэтому не перезаписываем его целиком, а трогаем только секцию openrouter
+const PI_AUTH_FILE = path.join(os.homedir(), '.pi', 'agent', 'auth.json');
+
+function savePiOpenRouterKey(key) {
+    let auth = {};
+    try {
+        auth = JSON.parse(fs.readFileSync(PI_AUTH_FILE, 'utf8'));
+    } catch {
+        // файла ещё нет или он битый — заводим заново
+    }
+    auth.openrouter = { type: 'api_key', key };
+    fs.mkdirSync(path.dirname(PI_AUTH_FILE), { recursive: true });
+    fs.writeFileSync(PI_AUTH_FILE, JSON.stringify(auth, null, 2));
+}
+
+async function askPi({ prompt, model, effort, sessionId, mode }, send) {
+    if (!activePiTarget) return send({ type: 'error', error: 'pi is not connected' });
+    const target = activePiTarget;
+    if (!prompt) return send({ type: 'error', error: 'Empty request' });
+    if (effort && !EFFORT_LEVELS.includes(effort)) {
+        return send({ type: 'error', error: `Unknown effort level: ${effort}` });
+    }
+
+    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id);
+
+    const args = ['-p', '--mode', 'json'];
+    if (model) args.push('--model', model);
+    if (effort) args.push('--thinking', effort);
+    if (resumeId) args.push('--session', resumeId);
+    if (mode === 'Chat') args.push('--tools', PI_CHAT_TOOLS);
+
+    const input = handoff + (mode === 'Chat' ? CHAT_PREAMBLE + prompt : prompt);
+    // `--` обязателен: без него промпт, начинающийся с дефиса, ушёл бы в разбор флагов
+    args.push('--', input);
+
+    return runTurn({ target, prompt, sessionId, model, effort, mode }, send, async (ctx) => {
+        // toolCallId -> позиция строки шага: вызов инструмента приходит дважды
+        // (start и end), результат дописывается в ту же строку
+        const toolPositions = new Map();
+
+        const onLine = (line) => {
+            let event;
+            try {
+                event = JSON.parse(line);
+            } catch {
+                return; // не JSON — служебный вывод CLI
+            }
+
+            // первая строка потока: id сессии самого pi, нужный для его же «--session»
+            if (event.type === 'session' && event.id) {
+                ctx.begin(event.id);
+                if (input !== prompt) setMessageInputSent.run(input, ctx.session, ctx.userPosition);
+                return;
+            }
+
+            if (event.type === 'tool_execution_start' && ctx.session) {
+                const toolArgs = event.args || {};
+                const detail = toolArgs.path || toolArgs.file_path || toolArgs.command || toolArgs.pattern || '';
+                const step = { type: 'tool', name: event.toolName || 'tool', detail: String(detail).slice(0, 120) };
+                const position = recordStep(ctx.session, `${step.name} ${step.detail}`.trim(), step.name, toolArgs, event.toolCallId, null, null);
+                toolPositions.set(event.toolCallId, position);
+                ctx.emit(step);
+                return;
+            }
+
+            if (event.type === 'tool_execution_end' && ctx.session) {
+                const position = toolPositions.get(event.toolCallId);
+                if (position === undefined) return;
+                const output = typeof event.result === 'string' ? event.result : JSON.stringify(event.result ?? '');
+                setMessageToolResult.run(clip(output), event.isError ? 1 : 0, null, ctx.session, position);
+                return;
+            }
+
+            // message_end — законченный ответ одного вызова модели: текст,
+            // размышления и usage лежат в нём целиком
+            if (event.type === 'message_end' && event.message?.role === 'assistant') {
+                const message = event.message;
+                const usage = message.usage || {};
+                ctx.meta.usage.inputTokens += usage.input || 0;
+                ctx.meta.usage.outputTokens += usage.output || 0;
+                ctx.meta.usage.cacheReadTokens += usage.cacheRead || 0;
+                ctx.meta.usage.cacheCreationTokens += usage.cacheWrite || 0;
+                // заполнение окна — не накопительная величина: сколько лежит в
+                // контексте сейчас, показывает последний вызов модели
+                ctx.meta.lastRequestTokens = (usage.input || 0) + (usage.cacheRead || 0) + (usage.cacheWrite || 0);
+                if (typeof usage.cost?.total === 'number') ctx.meta.costUsd = (ctx.meta.costUsd || 0) + usage.cost.total;
+                if (message.stopReason) ctx.meta.stopReason = message.stopReason;
+                // модель мог выбрать сам CLI (флаг --model не передали)
+                if (!ctx.meta.model && message.model) ctx.meta.model = message.model;
+
+                for (const part of message.content || []) {
+                    if (part.type === 'text' && part.text?.trim()) {
+                        ctx.answer = part.text;
+                        if (ctx.session) ctx.assistantPosition = recordAssistantText(ctx.session, part.text, ctx.meta.model, ctx.meta.effort, null);
+                        ctx.emit({ type: 'text', text: part.text });
+                    } else if (part.type === 'thinking' && part.thinking?.trim() && ctx.session) {
+                        recordThinking(ctx.session, part.thinking, part.thinkingSignature);
+                    }
+                    // part.type === 'toolCall' пропускаем: свою строку шаг уже
+                    // получил на tool_execution_start, с результатом в придачу
+                }
+
+                // ошибка вызова модели приходит полем сообщения, а не кодом возврата
+                if (message.errorMessage) ctx.fail(message.errorMessage);
+                return;
+            }
+        };
+
+        await runPi(target, args, {
+            timeoutMs: PI_ASK_TIMEOUT_MS, onLine,
+            onSpawn: (child) => { ctx.run.child = child; },
+        });
+    });
+}
+
 // ---------- хранилище сессий (SQLite) ----------
 
 // база лежит в DATA, а эту папку слежение за файлами не обходит,
@@ -1568,6 +1888,16 @@ const AGENTS = {
         activate: (target) => { activeOpenCodeTarget = target; },
         connected: () => Boolean(activeOpenCodeTarget),
         ask: askOpenCode,
+    },
+    pi: {
+        targets: () => PI_TARGETS,
+        detect: () => detectPiInstalls(),
+        version: (target) => runPi(target, ['--version'], { timeoutMs: 15000 }).then(parseVersion),
+        // список моделей зависит от логина — спрашиваем CLI, как у OpenCode
+        models: (target) => fetchPiModels(target),
+        activate: (target) => { activePiTarget = target; },
+        connected: () => Boolean(activePiTarget),
+        ask: askPi,
     },
     codex: {
         targets: () => CODEX_TARGETS,
@@ -2031,13 +2361,17 @@ async function handleApi(req, res, urlPath) {
         }
 
         if (urlPath === '/api/agent/connect') {
-            const { agent, id } = await readJson(req);
+            const { agent, id, openRouterKey } = await readJson(req);
             const adapter = agentByName(agent);
             const target = adapter.targets().find((t) => t.id === id);
             if (!target) {
                 sendJson(res, { ok: false, error: `Unknown environment: ${id}` });
                 return;
             }
+
+            // ключ из карточки pi в Settings: pi сам не читает его из тела запроса,
+            // поэтому кладём его туда же, откуда берёт сам CLI, до первого запуска версии
+            if (agent === 'pi' && openRouterKey) savePiOpenRouterKey(openRouterKey);
 
             const version = await adapter.version(target);
             const models = adapter.models ? await adapter.models(target) : undefined;
@@ -2242,8 +2576,9 @@ const server = http.createServer((req, res) => {
     }
 
     // адреса встроенной доски (её разметка, /_next/* и её собственные разделы API)
-    // уходят на её бинарь. Список разделов явный — наши маршруты она не перехватывает
-    if (kanban.owns(urlPath)) {
+    // уходят на её бинарь. Список разделов явный — наши маршруты она не перехватывает.
+    // Корень `/` делится на двоих: кадру доски он отдаётся, человеку — наша страница
+    if (kanban.owns(req, urlPath)) {
         kanban.proxy(req, res, urlPath);
         return;
     }
