@@ -1,0 +1,30 @@
+# Стартовый config.yaml для hermes-home/ (сама папка в git не попадает —
+# рантайм-данные конкретного запуска). hermes-start.sh копирует этот файл
+# туда сам при первом запуске, если его ещё нет.
+#
+# Без этого файла свежий Hermes поднимается с provider: auto и не найдёт
+# никаких credentials — писать некому. Этот файл явно указывает единственный
+# путь к модели в этом проекте: через claude-bridge, без Anthropic API-ключа
+# и без OAuth. DOCS/decisions/029.
+model:
+  default: claude-bridge-sonnet
+  provider: claude-bridge
+fallback_providers: []
+
+providers:
+  claude-bridge:
+    # Бридж живёт на ХОСТЕ рядом с claude CLI, поэтому адрес разный у разных
+    # вызывающих: контейнер видит его как host.docker.internal (Docker Desktop
+    # поднимает контейнеры в своей VM — network_mode: host — это сеть VM,
+    # а не хоста WSL), процесс на хосте — как 127.0.0.1.
+    # docker-compose.hermes.yml прокидывает CLAUDE_BRIDGE_URL в контейнер —
+    # порт бриджа задаётся там же (по умолчанию 8788, см. .env.example).
+    base_url: "${CLAUDE_BRIDGE_URL:-http://127.0.0.1:8788/v1}"
+    api_mode: chat_completions
+    model: claude-bridge-sonnet
+    # Значим только когда порт бриджа выходит за loopback; пустой токен бридж
+    # трактует как «авторизация выключена»
+    key_env: "CLAUDE_BRIDGE_TOKEN"
+
+toolsets:
+  - hermes-cli

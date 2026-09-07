@@ -55,13 +55,23 @@ export const PROVIDERS = [
         efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
         defaultEffort: 'medium',
     },
+    {
+        id: 'hermes',
+        name: 'Hermes',
+        note: 'agent in Docker, via Claude',
+        paid: true,
+        // модель выбирает сам Hermes (свой конфиг) — выбирать на клиенте нечего,
+        // как и у OpenCode до подключения
+        models: [],
+        defaultModel: undefined,
+    },
 ];
 
 // подключение переживает перезагрузку страницы: id окружения, модель и
 // сессию CLI держим в localStorage, само окружение восстанавливаем на сервере.
 // свой ключ и свой POST на восстановление — на провайдера, чтобы Claude и
 // OpenCode подключались независимо друг от друга
-const STORE_KEYS = { claude: 'noname.claude', codex: 'noname.codex', opencode: 'noname.opencode', pi: 'noname.pi' };
+const STORE_KEYS = { claude: 'noname.claude', codex: 'noname.codex', opencode: 'noname.opencode', pi: 'noname.pi', hermes: 'noname.hermes' };
 const STORE_KEY = STORE_KEYS.claude;
 
 // общий помощник сохранения/восстановления состояния провайдера —
@@ -101,6 +111,7 @@ export function saveAllProviderStates() {
     saveProviderState('codex');
     saveOpenCodeState();
     saveProviderState('pi');
+    saveProviderState('hermes');
 }
 
 export const connections = new Map();
@@ -155,6 +166,7 @@ export function getActiveProviderId() {
     if (connections.has('codex')) return 'codex';
     if (connections.has('opencode')) return 'opencode';
     if (connections.has('pi')) return 'pi';
+    if (connections.has('hermes')) return 'hermes';
     return 'claude';
 }
 
