@@ -12,8 +12,10 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
@@ -89,13 +91,15 @@ def _describe_tool_calls(msg: dict) -> str:
 
     Without this, a tool result in the history has nothing to refer back to and
     the model cannot tell which call produced it.
+
+    Rendered in the SAME shape the protocol asks the model to emit (the
+    ``{"tool_calls": [...]}`` object), not as a human-readable
+    ``Tool call: name(args)`` line. The model treats its own earlier turns as
+    examples: after two tool rounds rendered as prose it answered the third
+    round with ``Tool call: terminal({...})`` text, which the parser rejected,
+    and the turn ended with tool requests delivered to the user as the answer.
     """
-    rendered = []
-    for call in msg.get("tool_calls") or []:
-        fn = call.get("function") or {}
-        if fn.get("name"):
-            rendered.append(f'{fn["name"]}({fn.get("arguments") or "{}"})')
-    return "Tool call: " + "; ".join(rendered) if rendered else ""
+    return tool_protocol.render_tool_calls(msg.get("tool_calls") or [])
 
 
 def build_turn(messages: list[dict]) -> tuple[str, str, list[dict]]:
@@ -166,20 +170,63 @@ class BridgeResult:
     # fraction. Summing them into prompt_tokens hides which backend is cheaper.
     cache_read: int = 0
     cache_write: int = 0
+    # Размышления модели: Claude шлёт их отдельными блоками, а не текстом
+    # ответа. Без них лента показывает только шаги, и между действиями агента
+    # видна пустота — непонятно, чем он занят и почему выбрал именно это.
+    reasoning: str = ""
 
 
-def build_argv(cfg: BridgeConfig, model: str, system_prompt: str) -> list[str]:
+HOST_WIN = os.name == "nt"
+
+
+def to_target_path(path: str, cfg: BridgeConfig) -> str:
+    """Rewrite a host path so the CLI on the OTHER side of WSL interop can open it.
+
+    Windows host driving the WSL claude: C:\\x\\y -> /mnt/c/x/y.
+    WSL host driving claude.exe:        /mnt/c/x/y -> C:\\x\\y.
+    Same side: unchanged.
+    """
+    if HOST_WIN and cfg.target == "wsl":
+        m = re.match(r"^([A-Za-z]):[\\/](.*)$", path)
+        if m:
+            return f"/mnt/{m.group(1).lower()}/{m.group(2).replace(chr(92), '/')}"
+    if not HOST_WIN and cfg.target == "windows":
+        m = re.match(r"^/mnt/([a-z])/(.*)$", path)
+        if m:
+            return f"{m.group(1).upper()}:\\{m.group(2).replace('/', chr(92))}"
+    return path
+
+
+def launch_prefix(cfg: BridgeConfig) -> list[str]:
+    """How to start `claude` for the target the user connected in Settings.
+
+    The bridge drives whichever installation OpenKarandash's Settings points
+    at — the same one the server itself uses — so from a Windows host the WSL
+    copy is reached exactly like server.js does it: wsl.exe + login bash
+    (plain `wsl -e claude` has no ~/.local/bin in PATH). wsl.exe starts in the
+    translated cwd by itself; the remaining args are passed through "$@".
+    """
+    if HOST_WIN and cfg.target == "wsl":
+        return ["wsl.exe", "-e", "bash", "-lc", 'exec claude "$@"', "claude"]
+    return [cfg.resolve_binary()]
+
+
+def build_argv(cfg: BridgeConfig, model: str, system_prompt_file: str) -> list[str]:
     """Argv for one headless turn, configured to be a MODEL rather than an agent.
 
-    --system-prompt REPLACES Claude Code's own agent preamble instead of
+    --system-prompt-file REPLACES Claude Code's own agent preamble instead of
     appending to it: Hermes ships its own system prompt and its own toolbox, so
     the CLI's identity would be dead weight billed on every single turn.
+    A FILE rather than --system-prompt <text>: Hermes' prompt plus the tool
+    schemas runs to tens of thousands of characters, and on Windows the whole
+    command line is capped at ~32k — claude.exe then fails to spawn with
+    "[WinError 206] The filename or extension is too long".
     --setting-sources= and --strict-mcp-config keep the host user's settings,
     skills and MCP servers out of the session, so the bridge answers the same
     way regardless of local machine state.
     """
     return [
-        cfg.resolve_binary(), "-p",
+        *launch_prefix(cfg), "-p",
         "--input-format", "stream-json",
         "--output-format", "stream-json",
         "--include-partial-messages",
@@ -190,8 +237,23 @@ def build_argv(cfg: BridgeConfig, model: str, system_prompt: str) -> list[str]:
         "--setting-sources", "",
         "--strict-mcp-config",
         "--no-session-persistence",
-        "--system-prompt", system_prompt or DEFAULT_SYSTEM_PROMPT,
+        "--system-prompt-file", to_target_path(system_prompt_file, cfg),
     ]
+
+
+def _write_system_prompt(text: str, cfg: BridgeConfig) -> str:
+    """Persist the system prompt to a file the CLI can read; caller unlinks.
+
+    Not the system temp dir: with WSL interop the CLI may live on the other
+    side (C:\\Users\\...\\Temp is invisible to a WSL claude, /tmp to claude.exe).
+    The project's DATA/ folder is on the shared drive and seen by both.
+    """
+    tmp_dir = os.path.join(cfg.cwd, "DATA", "bridge-tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+    fd, path = tempfile.mkstemp(prefix="sys-", suffix=".md", dir=tmp_dir, text=True)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text or DEFAULT_SYSTEM_PROMPT)
+    return path
 
 
 def _result_from_payload(payload: dict, model: str) -> BridgeResult:
@@ -221,7 +283,7 @@ def _result_from_payload(payload: dict, model: str) -> BridgeResult:
 
 
 def _prepare(cfg: BridgeConfig, messages: list[dict], model: str,
-             tools: list[dict] | None, tool_choice: Any) -> tuple[list[str], str]:
+             tools: list[dict] | None, tool_choice: Any) -> tuple[list[str], str, str]:
     system_prompt, transcript, images = build_turn(messages)
     tool_section = tool_protocol.render_tools(tools or [], tool_choice)
     if tool_section:
@@ -230,19 +292,32 @@ def _prepare(cfg: BridgeConfig, messages: list[dict], model: str,
         # its own agent framing, and a protocol stated only in the system prompt
         # loses to that framing — the model answers "I have no weather tool"
         # instead of requesting one.
-        transcript = f"{transcript}\n\n{tool_protocol.REMINDER}"
-    argv = build_argv(cfg, model, system_prompt)
+        #
+        # BEFORE the trailing "Assistant:" cue, not after it. With the reminder
+        # placed after the cue the model re-emitted the cue itself and answered
+        # ``Assistant: {"tool_calls": ...}`` (seen live), which the parser then
+        # took for prose — the turn ended with a raw call delivered as the answer.
+        transcript = tool_protocol.insert_reminder(transcript)
+    prompt_file = _write_system_prompt(system_prompt, cfg)
+    argv = build_argv(cfg, model, prompt_file)
     if cfg.debug:
         logger.info("spawn: model=%s images=%d tools=%d cwd=%s",
                     model, len(images), len(tools or []), cfg.cwd)
-    return argv, build_stdin(transcript, images)
+    return argv, build_stdin(transcript, images), prompt_file
 
 
-def _spawn(cfg: BridgeConfig, argv: list[str], stdin_payload: str) -> subprocess.Popen:
-    proc = subprocess.Popen(
-        argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, bufsize=1, cwd=cfg.cwd,
-    )
+def _spawn(cfg: BridgeConfig, argv: list[str], stdin_payload: str, prompt_file: str = "") -> subprocess.Popen:
+    try:
+        proc = subprocess.Popen(
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            # claude пишет UTF-8; без явной кодировки Windows-Python читает в cp1251/
+            # cp1252 и падает на русском тексте: «'charmap' codec can't decode»
+            text=True, encoding="utf-8", errors="replace", bufsize=1, cwd=cfg.cwd,
+        )
+    except Exception:
+        _unlink(prompt_file)
+        raise
+    proc.prompt_file = prompt_file  # removed in _finish, once the CLI has read it
     # Closing stdin tells the CLI the conversation is complete. The payload can
     # be large (base64 images), so it is written before stdout is drained only
     # because the CLI reads its whole input before emitting a turn.
@@ -268,26 +343,42 @@ def _events(proc: subprocess.Popen) -> Iterator[tuple[str, Any]]:
                 delta = inner.get("delta") or {}
                 if delta.get("type") == "text_delta" and delta.get("text"):
                     yield ("delta", delta["text"])
+                # размышление приходит своим типом блока и своим полем
+                elif delta.get("type") == "thinking_delta" and delta.get("thinking"):
+                    yield ("reasoning", delta["thinking"])
         elif kind == "result":
             yield ("result", ev)
+
+
+def _unlink(path: str) -> None:
+    if path:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 def _finish(proc: subprocess.Popen) -> tuple[int, str]:
     proc.stdout.close()
     stderr = proc.stderr.read() if proc.stderr else ""
     proc.stderr.close()
-    return proc.wait(), stderr
+    code = proc.wait()
+    _unlink(getattr(proc, "prompt_file", ""))
+    return code, stderr
 
 
 def run_turn(cfg: BridgeConfig, messages: list[dict], model: str,
              tools: list[dict] | None = None, tool_choice: Any = None) -> BridgeResult:
     """Run one headless turn, returning text or parsed tool calls."""
-    argv, stdin_payload = _prepare(cfg, messages, model, tools, tool_choice)
-    proc = _spawn(cfg, argv, stdin_payload)
+    argv, stdin_payload, prompt_file = _prepare(cfg, messages, model, tools, tool_choice)
+    proc = _spawn(cfg, argv, stdin_payload, prompt_file)
     final: BridgeResult | None = None
     try:
+        reasoning: list[str] = []
         for kind, value in _events(proc):
-            if kind == "result":
+            if kind == "reasoning":
+                reasoning.append(value)
+            elif kind == "result":
                 # The last result wins: extra turns would only appear if the
                 # CLI split the input, and the closing one is the answer.
                 final = _result_from_payload(value, model)
@@ -296,6 +387,7 @@ def run_turn(cfg: BridgeConfig, messages: list[dict], model: str,
 
     if final is None:
         raise RuntimeError(f"claude produced no result (exit {code}): {stderr.strip()[:300]}")
+    final.reasoning = "".join(reasoning).strip()
     return _attach_tool_calls(final, tools)
 
 
@@ -307,15 +399,18 @@ def stream_turn(cfg: BridgeConfig, messages: list[dict], model: str,
     tool call arrives as JSON that Hermes must receive as `tool_calls`, not as
     assistant text, and whether the reply is a call is only known once it ends.
     """
-    argv, stdin_payload = _prepare(cfg, messages, model, tools, tool_choice)
+    argv, stdin_payload, prompt_file = _prepare(cfg, messages, model, tools, tool_choice)
     buffering = bool(tools)
-    proc = _spawn(cfg, argv, stdin_payload)
+    proc = _spawn(cfg, argv, stdin_payload, prompt_file)
     final: BridgeResult | None = None
     try:
+        reasoning: list[str] = []
         for kind, value in _events(proc):
             if kind == "delta":
                 if not buffering:
                     yield ("delta", value)
+            elif kind == "reasoning":
+                reasoning.append(value)
             elif kind == "result":
                 final = _result_from_payload(value, model)
     finally:
@@ -324,6 +419,7 @@ def stream_turn(cfg: BridgeConfig, messages: list[dict], model: str,
     if final is None:
         raise RuntimeError(f"claude stream ended without a result (exit {code}): {stderr.strip()[:300]}")
 
+    final.reasoning = "".join(reasoning).strip()
     final = _attach_tool_calls(final, tools)
     if buffering and not final.tool_calls and final.text:
         yield ("delta", final.text)  # plain answer held back by the tool buffer
@@ -331,12 +427,21 @@ def stream_turn(cfg: BridgeConfig, messages: list[dict], model: str,
 
 
 def _attach_tool_calls(result: BridgeResult, tools: list[dict] | None) -> BridgeResult:
-    """Promote a tool-call JSON reply into structured tool_calls."""
+    """Promote a tool-call JSON reply into structured tool_calls.
+
+    A short line of prose in front of the object is kept as the message content:
+    an OpenAI assistant message carries text and tool_calls together, and
+    dropping the text used to end the turn on an announcement instead of work."""
     if not tools:
         return result
-    calls = tool_protocol.parse_tool_calls(result.text, tool_protocol.tool_names(tools))
+    names = tool_protocol.tool_names(tools)
+    prose, calls, note = tool_protocol.split_reply(result.text, names)
     if calls:
         result.tool_calls = calls
-        result.text = ""
+        result.text = prose
         result.stop_reason = "tool_use"
+    elif note:
+        # инструмента нет: ошибку возвращаем модели словами, а не сырым
+        # объектом человеку — иначе ход кончается ничем и вызов повторяется
+        result.text = f"{prose}\n\n{note}" if prose else note
     return result

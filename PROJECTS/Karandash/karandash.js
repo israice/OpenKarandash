@@ -36,6 +36,12 @@
     popover.innerHTML = `
         <div class="comment-popover__target" id="commentTarget"></div>
         <textarea class="comment-popover__field" id="commentField" placeholder="Comment on element..."></textarea>
+        <div class="segmented" id="commentMode" role="radiogroup" aria-label="Send mode" data-active="Action">
+            <span class="segmented__thumb" aria-hidden="true"></span>
+            <button type="button" class="segmented__option" role="radio" aria-checked="false" data-mode="Chat" tabindex="-1">Chat</button>
+            <button type="button" class="segmented__option" role="radio" aria-checked="true" data-mode="Action" tabindex="0">Action</button>
+            <button type="button" class="segmented__option segmented__option--soon" role="radio" aria-checked="false" data-mode="Loop" tabindex="-1" disabled title="Coming Soon">Loop</button>
+        </div>
         <div class="comment-popover__actions">
             <button type="button" class="comment-popover__button" id="commentCancel">Cancel</button>
             <button type="button" class="comment-popover__button comment-popover__button--primary" id="commentSave">Save</button>
@@ -48,6 +54,36 @@
     const field = popover.querySelector('#commentField');
     const commentCancel = popover.querySelector('#commentCancel');
     const commentSave = popover.querySelector('#commentSave');
+
+    // режим отправки комментария: те же Chat/Action/Loop, что и в композере вкладки
+    // Chat (SYSTEM/styles/chat.css, .segmented) — переиспользуем те же классы,
+    // чтобы не заводить отдельный компонент под тот же переключатель
+    const commentMode = popover.querySelector('#commentMode');
+    const commentModeOptions = [...commentMode.querySelectorAll('.segmented__option')].filter((o) => !o.disabled);
+
+    function setCommentMode(mode) {
+        commentMode.dataset.active = mode;
+        for (const option of commentModeOptions) {
+            const active = option.dataset.mode === mode;
+            option.setAttribute('aria-checked', String(active));
+            option.tabIndex = active ? 0 : -1;
+        }
+    }
+
+    commentMode.addEventListener('click', (e) => {
+        const option = e.target.closest('.segmented__option');
+        if (option) setCommentMode(option.dataset.mode);
+    });
+
+    // стрелками переключаемся между опциями, как в обычной группе радиокнопок
+    commentMode.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        const current = commentModeOptions.findIndex((o) => o.dataset.mode === commentMode.dataset.active);
+        const next = commentModeOptions[(current + (e.key === 'ArrowRight' ? 1 : -1) + commentModeOptions.length) % commentModeOptions.length];
+        setCommentMode(next.dataset.mode);
+        next.focus();
+    });
 
     // ---------- режим комментариев ----------
 
@@ -151,10 +187,10 @@
 
     // ---------- спуск в свои кадры ----------
     //
-    // Вкладка Kanban показывает beads-web отдельным <iframe>. Пока он был чужого
-    // origin, внутрь заглянуть было нечем, и рамка накрывала доску целиком. Теперь
-    // доска отдаётся с нашего порта (PROJECTS/Kanban/kanban-server.js), её документ
-    // читается, и указывать можно на её же кнопки и карточки.
+    // Общая поддержка кадров своего origin — на случай, если где-то на странице
+    // снова появится <iframe> (сейчас на всей странице их нет: вкладка Kanban
+    // больше не встраивает beads-web отдельным кадром, DOCS/decisions/030). Пока
+    // кадра нет, весь код ниже простаивает и не влияет на обычные элементы.
     //
     // Сам кадр при этом прозрачен для указателя (karandash.css) — иначе он забирает
     // события мыши себе и режим над ним слепнет. Поэтому elementFromPoint кадр не
@@ -277,6 +313,7 @@
         drawFrame(el);
         popoverTarget.textContent = describe(el);
         field.value = '';
+        setCommentMode('Action'); // каждое новое открытие начинается с режима по умолчанию
         popover.hidden = false;
         placePopover(el, popover);
         field.focus();
@@ -445,6 +482,7 @@
         // запустить переход в чат раньше, чем первый снимок успеет отработать
         commentSave.disabled = true;
         const prompt = buildCommentPrompt(picked, comment);
+        const mode = commentMode.dataset.active; // Chat — обсудить место, Action — внести правку
 
         // окно комментария закрывается сразу, а рамка на элементе остаётся —
         // так в скриншот попадает выбранный элемент, но не сам попап
@@ -453,7 +491,7 @@
         commentSave.disabled = false;
 
         exitKarandash(); // снимает рамку и выходит из режима Karandash
-        App.startCommentSession(prompt, thumb);
+        App.startCommentSession(prompt, thumb, mode);
     });
 
     // ---------- кнопка ----------

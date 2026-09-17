@@ -19,7 +19,10 @@ providers:
     # а не хоста WSL), процесс на хосте — как 127.0.0.1.
     # docker-compose.hermes.yml прокидывает CLAUDE_BRIDGE_URL в контейнер —
     # порт бриджа задаётся там же (по умолчанию 8788, см. .env.example).
-    base_url: "${CLAUDE_BRIDGE_URL:-http://127.0.0.1:8788/v1}"
+    # Только ${ИМЯ}: shell-синтаксис ${ИМЯ:-значение} Hermes не разворачивает
+    # и оставляет строку как есть — тогда провайдер молча становится «custom»
+    # с несуществующим адресом и отвечает «Connection error»
+    base_url: "${CLAUDE_BRIDGE_URL}"
     api_mode: chat_completions
     model: claude-bridge-sonnet
     # Значим только когда порт бриджа выходит за loopback; пустой токен бридж

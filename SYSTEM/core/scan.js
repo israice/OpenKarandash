@@ -4,6 +4,9 @@
 // Папка данных добавляется каждым из них к себе: её имя берётся из DATA_DIR
 // и не обязано совпадать с 'DATA'.
 
-const SKIP_NAMES = ['node_modules', '.git', 'DATA'];
+// hermes/ — чужой submodule (12 тысяч файлов), hermes-home/ и logs/ — рантайм
+// Hermes-стека, worktrees — копии проекта у агентов: без этих исключений
+// сборка карты при старте длится минуты и выглядит как зависание сервера
+const SKIP_NAMES = ['node_modules', '.git', 'DATA', 'hermes', 'hermes-home', 'logs', '.worktrees', 'worktrees'];
 
 module.exports = { SKIP_NAMES };

@@ -124,6 +124,36 @@
     gap: 3px;
 }
 
+/* ход, оборвавшийся без ответа: видно прямо, и продолжение — одно нажатие */
+.chat__message--interrupted {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #b98b4a;
+}
+
+.chat__continue {
+    padding: 3px 10px;
+    border: 1px solid currentColor;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.chat__continue:hover { background: rgba(185, 139, 74, 0.12); }
+
+/* сколько уже длится пауза до следующего шага: без этой подписи живая работа
+   с долгими паузами (у Hermes на большой переписке — до минуты) неотличима
+   от оборванной */
+.chat__pending-note {
+    margin-left: 8px;
+    font-size: 12px;
+    opacity: 0.75;
+}
+
 .chat__typing span {
     width: 4px;
     height: 4px;
@@ -147,6 +177,16 @@
     color: #6a6f78;
     font-size: 0.8rem;
     padding: 6px 14px;
+}
+
+/* тег имени инструмента (read_file, search_files, skill_view, Bash, …) —
+   цвет считает toolTagHue в chat-feed.js по хэшу имени, здесь только форма */
+.chat__tool-tag {
+    display: inline-block;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-weight: 600;
+    font-size: 0.78em;
 }
 
 /* рассуждение модели (event.type === 'thinking') — визуально рядом с шагами

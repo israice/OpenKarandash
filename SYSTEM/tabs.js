@@ -37,13 +37,15 @@
                 // пока chatView скрыт, scrollHeight не считается — лента грузится
                 // ещё до открытия вкладки, поэтому довернуть скролл вниз при показе
                 if (name === 'chat') App.chatMessages.scrollTop = App.chatMessages.scrollHeight;
+                // как и с chatView: пока telegramView скрыт, scrollHeight не считается —
+                // опрос ленты (load, every 5s) мог довинтить скролл ещё при hidden=true,
+                // когда scrollHeight/clientHeight были 0. Довинчиваем вручную при показе
+                if (name === 'telegram') {
+                    const telegramMessages = document.getElementById('telegramMessages');
+                    if (telegramMessages) telegramMessages.scrollTop = telegramMessages.scrollHeight;
+                }
                 if (name === 'flow') MissionFlow.center();
                 if (name === 'book') MissionBookTab.show();
-                // Kanban поднимает сторонний бинарь beads-web, поэтому восстановление
-                // вкладки ему передаётся отдельно: после `node server.js` страница
-                // перезагружается сама, и молчаливый запуск чужого процесса выглядел
-                // бы так, будто сервер завёл его сам (DOCS/decisions/021)
-                if (name === 'kanban') MissionKanban.show(restored);
                 saveLastView(name);
             }
 

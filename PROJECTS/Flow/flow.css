@@ -703,7 +703,6 @@ textarea.node-modal__field {
     /* ширина — по самой длинной надписи кнопки, её считает fitNodeMenu */
     width: var(--flow-node-menu, 132px);
     padding: 14px 8px;
-    border-right: 1px solid #4a2c1c;
     /* кнопок больше, чем влезает в эту высоту: до остальных добираются
        прокруткой самой колонки (колесо над ней не зумит канвас — см. обработчик
        wheel в flow.js), а не растягиванием ноды. Саму полосу прокрутки прячем:
@@ -711,10 +710,35 @@ textarea.node-modal__field {
     overflow-y: auto;
     scrollbar-width: none;
     -ms-overflow-style: none;
+    /* цвет полосы меню зависит от роли карточки — переопределяется
+       переменной ниже, у QA работает то же значение через fallback */
+    border-right: 1px solid var(--flow-node-accent, #4a2c1c);
 }
 
 .flow-node__menu::-webkit-scrollbar {
     display: none;
+}
+
+/* --- личная стартовая нода бэкенд-разработчика (шаблон #flowNodeBackendTemplate,
+   DOCS/decisions/033) --- та же двухколоночная раскладка и тот же фон, что у
+   QA: обе личные ноды — точка входа профиля, а не разные семейства карточек,
+   поэтому фон/рамка/полоса меню — общие правила .flow-node--qa, а не свой цвет */
+.flow-node--backend {
+    background: linear-gradient(180deg, #2a1a12, #20130d);
+    border-color: #4a2c1c;
+    width: calc(254px + var(--flow-node-menu, 132px));
+    padding-left: var(--flow-node-menu, 132px);
+}
+
+/* --- личная стартовая нода Secretary/UI developer/HR (шаблон
+   #flowNodeProfileTemplate) --- те же правила, что у .flow-node--qa и
+   .flow-node--backend: все личные ноды — один и тот же визуальный вход в
+   профиль, разным должно быть только содержимое панелей, не цвет карточки */
+.flow-node--profile {
+    background: linear-gradient(180deg, #2a1a12, #20130d);
+    border-color: #4a2c1c;
+    width: calc(254px + var(--flow-node-menu, 132px));
+    padding-left: var(--flow-node-menu, 132px);
 }
 
 /* вращающийся 3D-персонаж в шапке ноды QA, слева от заголовка

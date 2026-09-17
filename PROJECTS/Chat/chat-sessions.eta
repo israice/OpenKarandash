@@ -19,7 +19,14 @@
                 <% } %>
                 <span class="session-item__body">
                     <span class="session-item__title"><%= session.title %></span>
-                    <span class="session-item__meta"><%= session.meta %></span>
+                    <% if (session.live) { %>
+                        <% /* сессия активна прямо сейчас — data-started/data-base-ms дают клиенту
+                            (chat-sessions.js, tickLiveDurations) всё нужное, чтобы досчитывать
+                            секунды между подменами фрагмента, а не ждать следующего опроса */ %>
+                        <span class="session-item__meta session-item__meta--live" data-tokens="<%= session.tokensText %>" data-base-ms="<%= session.baseMs %>" data-started="<%= session.startedAt %>"><%= session.meta %></span>
+                    <% } else { %>
+                        <span class="session-item__meta"><%= session.meta %></span>
+                    <% } %>
                 </span>
             </button>
             <button type="button" class="session-copy" data-copy-id="<%= session.id %>" title="Copy session id" aria-label="Copy session id: <%= session.title %>">

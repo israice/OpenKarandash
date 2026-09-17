@@ -99,6 +99,48 @@
     color: #8b909a;
 }
 
+/* окно настроек не центрируется по вертикали — иначе смена вкладки на менее
+   высокую (Router/Network/Sandglass) утягивает весь диалог вниз вслед за
+   центровкой; верх диалога всегда стоит сразу под топбаром */
+.modal--top-align {
+    align-items: flex-start;
+}
+
+/* ---------- панель табов окна настроек ---------- */
+
+.settings-tabs {
+    display: flex;
+    gap: 4px;
+    margin: -4px -4px 14px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #2e3138;
+}
+
+.settings-tabs__item {
+    padding: 7px 12px;
+    border: 0;
+    border-radius: 7px 7px 0 0;
+    background: none;
+    font: inherit;
+    font-size: 0.82rem;
+    color: #8b909a;
+    cursor: pointer;
+}
+
+.settings-tabs__item:hover { color: #c3c7ce; background: #1f2126; }
+
+.settings-tabs__item[aria-selected="true"] {
+    color: #f2f2f4;
+    background: #22252b;
+}
+
+.settings-tabs__item:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: -2px;
+}
+
+.settings-tab-content[hidden] { display: none; }
+
 /* ---------- список провайдеров ---------- */
 
 .provider-list {

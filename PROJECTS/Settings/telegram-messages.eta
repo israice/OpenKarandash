@@ -1,0 +1,16 @@
+<% /* Лента вкладки Telegram: те же сообщения, что мост отправил человеку
+    notifyTurnFinished'ом — последний ответ каждой завершившейся сессии.
+    Два независимых oob-блока (тот же приём, что в home-observation.eta):
+    подсказка «Сообщений пока нет» скрывается, когда сообщения есть, а не
+    заменяется — иначе дубль id при пустом списке. */ %>
+<p class="telegram__empty" id="telegramEmpty" hx-swap-oob="true"<% if (it.messages.length) { %> hidden<% } %>>Сообщений пока нет</p>
+
+<div class="telegram__list<% if (!it.messages.length) { %> telegram__list--empty<% } %>" id="telegramList" hx-swap-oob="true">
+    <% it.messages.forEach((m) => { %>
+        <div class="telegram__msg" data-session-id="<%= m.sessionId %>">
+            <div class="telegram__msg-head"><%= m.head %></div>
+            <div class="telegram__msg-body"><%= m.body %></div>
+            <div class="telegram__msg-time"><%= m.when %></div>
+        </div>
+    <% }) %>
+</div>

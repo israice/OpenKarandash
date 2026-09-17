@@ -232,11 +232,45 @@ export function setComposerBusy(busy) {
     state.chatSend.textContent = busy ? 'Stop' : 'Send';
 }
 
+// длительность активной сессии в панели — не статичный текст «running…»,
+// а тикающий счётчик: сервер (chat-server.js) отдаёт data-started (когда
+// начался текущий ход) и data-base-ms (сколько уже накопили завершённые
+// ходы той же сессии) при каждой подмене фрагмента, а секунды между
+// подменами (фрагмент опрашивается раз в 5с) досчитывает браузер — иначе
+// цифра менялась бы раз в 5 секунд, а не «живо». Копия форматирования из
+// SYSTEM/core/format.js: тот модуль CommonJS и не годится браузеру напрямую
+function formatLiveDuration(ms) {
+    const totalSeconds = Math.round((Number(ms) || 0) / 1000);
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (minutes < 60) return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
+
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return mins ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+// запрашивает актуальные узлы прямо из document, а не через state.sessionList:
+// htmx подменяет #sessionList целиком (раз в 5с или по sessions-changed), и
+// держать константную ссылку между тиками нельзя (см. комментарий у sessionList
+// в chat-state.js) — переспрашивать проще, чем переподхватывать по oobAfterSwap
+function tickLiveDurations() {
+    for (const el of document.querySelectorAll('.session-item__meta--live')) {
+        const startedAt = Number(el.dataset.started);
+        if (!startedAt) continue;
+        const baseMs = Number(el.dataset.baseMs) || 0;
+        el.textContent = `${el.dataset.tokens} · ${formatLiveDuration(baseMs + (Date.now() - startedAt))}`;
+    }
+}
+
 // узлы панели и подхват подмен htmx — зовёт init() в chat.js, когда общие
 // узлы вкладки (state.sessionList, state.sessionsPanel) уже найдены
 export function initSessionsPanel() {
     runningCountEl = document.getElementById('runningCount');
     obsConnectionText = document.getElementById('obsConnectionText');
+    setInterval(tickLiveDurations, 1000);
 
     // htmx подменяет #sessionList целиком (hx-swap-oob) — старый узел живой
     // ссылке, которую держат остальные функции файла, больше не принадлежит,

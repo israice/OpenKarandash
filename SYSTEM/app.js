@@ -211,6 +211,7 @@ function init() {
         openModal,
         confirmModal,
         closeModal,
+        escapeHtml,
     };
 }
 

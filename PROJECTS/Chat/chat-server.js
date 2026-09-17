@@ -10,25 +10,45 @@
 
 const { Eta } = require('eta');
 const { sendHtml } = require('../../SYSTEM/core/http.js');
-const { formatWhen } = require('../../SYSTEM/core/format.js');
+const { formatTokens, formatDuration } = require('../../SYSTEM/core/format.js');
 
 // свой экземпляр Eta со своей папкой шаблонов: так фича не зависит от того, где
 // держит шаблоны сосед. cache:false — правка .eta подхватывается без перезапуска
 const eta = new Eta({ views: __dirname, cache: false });
 
-// sessions() отдаёт сводку по сессиям из ядра: заголовок уже почищен, running посчитан
-function createRoutes({ sessions }) {
+// sessions() отдаёт сводку по сессиям из ядра: заголовок уже почищен, running посчитан.
+// usage(id) — сводка sumSessionUsage из server.js: суммарные токены и суммарная
+// длительность (duration_ms) по всем ходам сессии сразу, без пересчёта по сообщениям
+function createRoutes({ sessions, usage, activeStartedAt }) {
     return {
         '/api/fragment/chat-sessions': (req, res) => {
-            const list = sessions().map((session) => ({
-                id: session.id,
-                title: session.title,
-                thumb: session.thumb,
-                running: session.running,
-                meta: session.running
-                    ? 'running…'
-                    : `${formatWhen(session.updatedAt)} · ${session.messageCount} msg`,
-            }));
+            const list = sessions().map((session) => {
+                const u = usage(session.id) || {};
+                const totalTokens = (u.inputTokens || 0) + (u.outputTokens || 0)
+                    + (u.cacheReadTokens || 0) + (u.cacheCreationTokens || 0);
+                const tokensText = formatTokens(totalTokens);
+                // активная сессия: длительность не статичный текст «running…», а
+                // тикающий счётчик — baseMs (сумма duration_ms уже завершённых
+                // ходов) плюс время с начала текущего хода. Здесь только начальное
+                // значение для первого показа/для браузера без JS; секунды между
+                // подменами фрагмента (раз в 5с) досчитывает клиент — см.
+                // data-started/data-base-ms в chat-sessions.eta и tickLiveDurations
+                // в chat-sessions.js
+                const startedAt = session.running ? activeStartedAt(session.id) : null;
+                const baseMs = u.durationMs || 0;
+                const liveMs = startedAt ? baseMs + (Date.now() - startedAt) : baseMs;
+                return {
+                    id: session.id,
+                    title: session.title,
+                    thumb: session.thumb,
+                    running: session.running,
+                    live: Boolean(startedAt),
+                    tokensText,
+                    startedAt,
+                    baseMs,
+                    meta: `${tokensText} · ${formatDuration(liveMs)}`,
+                };
+            });
             sendHtml(res, eta.render('chat-sessions', { sessions: list }));
         },
     };

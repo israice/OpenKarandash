@@ -1,11 +1,7 @@
-/* Вкладка Kanban: в неё встроен интерфейс beads-web (npm-пакет beads-kanban-ui).
-   Своей доски здесь нет — есть кадр на всю вкладку, в котором работает он,
-   поэтому от прежних стилей колонок и карточек не осталось ничего: их больше
-   некому рисовать (Flow берёт из App только BOARD_COLUMNS, но не эти классы). */
+/* Вкладка Kanban — чистая UI-заготовка (DOCS/decisions/032): пять пустых
+   колонок статуса, никаких карточек с данными и никакой модалки — их стиль
+   появится вместе с самой логикой, когда она будет описана по шагам. */
 
-
-/* отступов вокруг кадра нет, кроме места под топбар: beads-web — целое
-   приложение со своей вёрсткой, и лишние 16 пикселей у него отнимают экран */
 .view--board {
     display: block;
     height: 100vh;
@@ -15,39 +11,53 @@
 
 .board {
     height: 100%;
-}
-
-/* кадр с beads-web занимает вкладку целиком: свой интерфейс он рисует сам */
-.board__frame {
-    display: block;
-    width: 100%;
-    height: 100%;
-    border: 0;
-    background: #0a0a0a; /* фон beads-web: чтобы не мигало белым, пока грузится */
-}
-
-/* beads-web не поднялся — вместо кадра причина */
-.board__note {
-    margin: 0;
+    overflow: auto;
     padding: 16px;
-    font-size: 0.85rem;
-    color: #8b909a;
 }
 
-/* доска — сторонний процесс, поэтому после перезагрузки страницы её не поднимают
-   молча: вкладка предлагает кнопку, и решает человек */
-.board__start {
-    margin: 0 16px;
-    padding: 6px 14px;
+.board__columns {
+    display: flex;
+    gap: 14px;
+    height: 100%;
+    align-items: flex-start;
+}
+
+.board__column {
+    flex: 1 0 220px;
+    min-width: 220px;
+    max-width: 320px;
+    display: flex;
+    flex-direction: column;
+    background: #131417;
     border: 1px solid #2e3138;
-    border-radius: 8px;
-    background: #22252b;
-    color: #e6e8eb;
-    font-size: 0.8rem;
-    cursor: pointer;
+    border-radius: 12px;
+    max-height: 100%;
 }
 
-.board__start:hover {
-    border-color: #3a3e46;
-    background: #2e3138;
+.board__column-title {
+    margin: 0;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #c7c9cf;
+    border-bottom: 1px solid #2e3138;
+}
+
+.board__column-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.board__column-empty {
+    margin: 8px 0;
+    font-size: 0.78rem;
+    color: #6a6f78;
+    text-align: center;
 }

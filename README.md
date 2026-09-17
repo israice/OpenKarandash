@@ -25,21 +25,37 @@ in the `AGENTS` table.
 
 ## Requirements
 
-Node.js (tested on v22) and an installed Claude Code CLI.
-
-There are two dependencies — `eta` (templates for the server fragments) and `htmx.org` (the client
-half of the same fragments), so after cloning run:
-
-```powershell
-npm install
-```
+Only Node.js 22.5+ has to be there beforehand — it runs the start command itself. Everything else
+is checked on start and installed when missing (`SYSTEM/core/host-deps.js`): git, Python 3.10+,
+Docker (Docker Desktop via winget on Windows, `apt` engine or the Windows Docker Desktop through
+WSL integration in WSL), the Claude Code CLI through its official installer, and if the CLI is not
+signed in, `claude auth login` runs right in that terminal. Installers use the platform's own
+tools (winget / apt with sudo), so a UAC window or a sudo password prompt may appear on the first
+run. The CLI checked is the one selected in Settings (WSL or Windows), by default the host's own;
+the server then connects it automatically, so a fresh clone works without opening Settings.
+`HOST_DEPS=0` in `.env` skips this check. Docker Desktop on Windows may require signing out and
+back in after its installation — the server says so and starts without Hermes until then.
 
 ## Running
+
+One command from the project root, the same in PowerShell and in WSL:
 
 ```powershell
 cd C:\0_PROJECTS\OpenKarandash
 node server.js
 ```
+
+Before starting the server the watchdog brings the whole stack into shape (`SYSTEM/core/hermes-stack.js`):
+installs or updates what is missing (npm packages per `package.json`; `hermes/` — the upstream
+[hermes-agent](https://github.com/NousResearch/hermes-agent) is not kept in this repo but cloned on
+the first run and fast-forwarded to the latest `main` on every later run, `HERMES_REPO`/`HERMES_REF`
+in `.env` override the source; the Hermes Docker image when its sources changed), adds the missing keys and
+generated secrets to `.env` and `claude-bridge/.env`, then starts `claude-bridge` on the host
+(python) and Hermes in Docker (`docker compose up -d gateway`, no dashboard) alongside the server.
+`Ctrl+C` stops everything: the server, the Hermes container and the bridge. If Docker or python
+could not be installed or started, the server still starts and says so — only Hermes is unavailable then.
+`HERMES_STACK=0` in `.env` turns the whole stack off (the command then starts just the server).
+The full key list is in `.env.example` — nothing there has to be filled in by hand.
 
 On the first run the server creates a `.env` at the project root with port 3001 and starts on it:
 

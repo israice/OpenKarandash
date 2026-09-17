@@ -4,10 +4,17 @@
   "version": "0.0.7",
   "description": "Локальный оркестратор агентных CLI: сервер на Node + веб-интерфейс",
   "type": "commonjs",
+  "scripts": {
+    "check": "node SYSTEM/checks.js"
+  },
   "dependencies": {
-    "beads-kanban-ui": "0.4.2",
     "eta": "3.5.0",
     "htmx.org": "2.0.4",
     "three": "0.180.0"
+  },
+  "devDependencies": {
+    "eslint": "10.10.0",
+    "globals": "16.5.0",
+    "madge": "8.0.0"
   }
 }

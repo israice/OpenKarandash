@@ -55,23 +55,16 @@ export const PROVIDERS = [
         efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
         defaultEffort: 'medium',
     },
-    {
-        id: 'hermes',
-        name: 'Hermes',
-        note: 'agent in Docker, via Claude',
-        paid: true,
-        // модель выбирает сам Hermes (свой конфиг) — выбирать на клиенте нечего,
-        // как и у OpenCode до подключения
-        models: [],
-        defaultModel: undefined,
-    },
 ];
+// Hermes в этом списке нет намеренно: он работает под капотом — сервер сам
+// ведёт запросы к Claude через агента Hermes, когда тот поднят, а Hermes
+// пользуется тем claude, что подключён здесь (DOCS/decisions/029)
 
 // подключение переживает перезагрузку страницы: id окружения, модель и
 // сессию CLI держим в localStorage, само окружение восстанавливаем на сервере.
 // свой ключ и свой POST на восстановление — на провайдера, чтобы Claude и
 // OpenCode подключались независимо друг от друга
-const STORE_KEYS = { claude: 'noname.claude', codex: 'noname.codex', opencode: 'noname.opencode', pi: 'noname.pi', hermes: 'noname.hermes' };
+const STORE_KEYS = { claude: 'noname.claude', codex: 'noname.codex', opencode: 'noname.opencode', pi: 'noname.pi' };
 const STORE_KEY = STORE_KEYS.claude;
 
 // общий помощник сохранения/восстановления состояния провайдера —
@@ -111,7 +104,6 @@ export function saveAllProviderStates() {
     saveProviderState('codex');
     saveOpenCodeState();
     saveProviderState('pi');
-    saveProviderState('hermes');
 }
 
 export const connections = new Map();
@@ -158,16 +150,17 @@ export function renderSessionModelEffort(provider, state) {
     }
 }
 
+// провайдер по умолчанию — первый подключённый в этом порядке
+const DEFAULT_ORDER = ['claude', 'codex', 'opencode', 'pi'];
+export function defaultProviderId() {
+    return DEFAULT_ORDER.find((id) => connections.has(id)) || 'claude';
+}
+
 // отдаёт провайдера, с которым сейчас реально ведётся диалог: то, что выбрано
-// в строке шапки сессии, а до её появления — первый подключённый провайдер
+// в строке шапки сессии, а до её появления — провайдер по умолчанию
 export function getActiveProviderId() {
     if (!chatState.chatSessionBar.hidden && chatState.chatSessionProviderSelect.value) return chatState.chatSessionProviderSelect.value;
-    if (connections.has('claude')) return 'claude';
-    if (connections.has('codex')) return 'codex';
-    if (connections.has('opencode')) return 'opencode';
-    if (connections.has('pi')) return 'pi';
-    if (connections.has('hermes')) return 'hermes';
-    return 'claude';
+    return defaultProviderId();
 }
 
 export function renderSessionBarControls() {
@@ -181,17 +174,17 @@ export function renderSessionBarControls() {
     chatState.chatSessionEffortSelect.innerHTML = '';
     if (connectedProviders.length === 0) return;
 
-    const defaultProviderId = connections.has('claude') ? 'claude' : connectedProviders[0].id;
+    const chosenId = defaultProviderId();
     for (const provider of connectedProviders) {
         const option = document.createElement('option');
         option.value = provider.id;
         option.textContent = provider.name;
-        option.selected = provider.id === defaultProviderId;
+        option.selected = provider.id === chosenId;
         chatState.chatSessionProviderSelect.append(option);
     }
 
-    const activeProvider = connectedProviders.find((p) => p.id === defaultProviderId);
-    renderSessionModelEffort(activeProvider, connections.get(defaultProviderId));
+    const activeProvider = connectedProviders.find((p) => p.id === chosenId);
+    renderSessionModelEffort(activeProvider, connections.get(chosenId));
 }
 
 export function formatResetTime(unixSeconds) {

@@ -8,7 +8,13 @@
 
 .modal {
     position: fixed;
-    inset: 0;
+    /* не inset: 0 — верхняя панель (.topbar) стоит поверх модалки (z-index 9000
+       против 1100 здесь) и иначе перекрывает начало диалога; область центрирования
+       начинается ниже неё, как и тело остальных видов (views.css, --topbar-height) */
+    top: var(--topbar-height);
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 1100;
     display: flex;
     align-items: center;

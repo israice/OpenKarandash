@@ -4,10 +4,11 @@
 // three.js на маленьком канвасе, модель медленно крутится вокруг оси Y, видна
 // со всех сторон. Здесь он стоит первым в шапке ноды QA, слева от заголовка.
 //
-// Модуль ничего не знает о flow.js: ноды клонируются из шаблона
-// #flowNodeQaTemplate, поэтому он просто следит за появлением `.flow-node--qa`
-// на странице (MutationObserver) и сам вставляет канвас в шапку. Так его
-// правка не трогает граф, а поломка не гасит вкладку целиком (DOCS/decisions/014).
+// Модуль ничего не знает о flow.js: ноды клонируются из шаблонов
+// #flowNodeQaTemplate/#flowNodeBackendTemplate, поэтому он просто следит за
+// появлением `.flow-node--qa`/`.flow-node--backend` на странице
+// (MutationObserver) и сам вставляет канвас в шапку. Так его правка не трогает
+// граф, а поломка не гасит вкладку целиком (DOCS/decisions/014).
 //
 // Модель `assets/traveler.glb` — та же, что у жителей острова в island-sim:
 // статичная (без скелета и клипов), конверсия из OBJ, поэтому вместо
@@ -127,10 +128,15 @@ function unmount(canvas) {
     }
 }
 
+// личных нод с этим персонажем уже несколько (QA и Backend developer) —
+// один селектор на обе, чтобы новый профиль с той же карточкой не требовал
+// правки этого файла
+const PERSONAL_ROOT_SELECTOR = '.flow-node--qa, .flow-node--backend, .flow-node--profile';
+
 function scanAdded(root) {
     if (root.nodeType !== 1) return;
-    if (root.matches('.flow-node--qa')) mount(root);
-    for (const node of root.querySelectorAll('.flow-node--qa')) mount(node);
+    if (root.matches(PERSONAL_ROOT_SELECTOR)) mount(root);
+    for (const node of root.querySelectorAll(PERSONAL_ROOT_SELECTOR)) mount(node);
 }
 
 function scanRemoved(root) {
@@ -139,7 +145,7 @@ function scanRemoved(root) {
     for (const canvas of root.querySelectorAll(`.${CANVAS_CLASS}`)) unmount(canvas);
 }
 
-// ноды QA уже могли появиться до загрузки модуля — подхватываем и их
+// ноды QA/Backend уже могли появиться до загрузки модуля — подхватываем и их
 scanAdded(document.body);
 new MutationObserver((records) => {
     for (const r of records) {

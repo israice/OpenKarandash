@@ -89,6 +89,11 @@ def _completion_envelope(result: cli_backend.BridgeResult, model: str) -> dict:
     message: dict = {"role": "assistant", "content": result.text or None}
     if result.tool_calls:
         message["tool_calls"] = result.tool_calls
+    # Размышления моделью пишутся отдельными блоками, а не текстом ответа.
+    # `reasoning_content` — то поле, под которым их ждут OpenAI-совместимые
+    # клиенты, Hermes в том числе; без него между шагами агента в ленте пусто.
+    if result.reasoning:
+        message["reasoning_content"] = result.reasoning
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
         "object": "chat.completion",
@@ -333,6 +338,8 @@ class Handler(BaseHTTPRequestHandler):
                 if kind == "delta":
                     self._sse(_chunk_envelope(cid, label, created, {"content": value}))
                 elif kind == "done":
+                    if value.reasoning:
+                        self._sse(_chunk_envelope(cid, label, created, {"reasoning_content": value.reasoning}))
                     if value.tool_calls:
                         # OpenAI streams tool calls as indexed delta fragments;
                         # sending each complete in one delta is valid and is what

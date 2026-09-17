@@ -1,7 +1,8 @@
 # Hermes (в Docker) + Claude через host-side claude-bridge.
 #
 # Запуск из корня репозитория:
-#   ./hermes-start.sh
+#   node server.js          (сторож поднимает стек сам, SYSTEM/core/hermes-stack.js)
+#   ./hermes-start.sh       (вручную, только Hermes и бридж)
 # или вручную:
 #   docker compose -f hermes/docker-compose.yml -f docker-compose.hermes.yml up -d
 #
@@ -25,8 +26,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      # Опубликован здесь, потому что дашборд разделяет сетевое пространство
-      # этого контейнера. Только loopback — дашборд хранит учётные данные.
+      # Порт дашборда: он разделяет сетевое пространство этого контейнера.
+      # Сам сервис dashboard штатно не поднимается (hermes-start.sh делает
+      # `up -d gateway`) — интерфейсом служит наш сервер; порт оставлен на
+      # случай ручного `up -d dashboard`. Только loopback.
       - "127.0.0.1:9119:9119"
       # Собственный OpenAI-совместимый API Hermes. Консоль бриджа проксирует в
       # него, чтобы страница говорила с АГЕНТОМ (инструменты, скиллы), а не с
@@ -38,6 +41,11 @@ services:
       # не должен ни читать, ни трогать.
       !override
       - ./hermes-home:/opt/data
+      # Провайдер claude-bridge — наш плагин Hermes. Лежит в репозитории, а не в
+      # hermes/ (тот клон переставляется на апстрим при каждом старте и всё
+      # своё в нём теряется); монтируется в штатное место пользовательских
+      # провайдеров $HERMES_HOME/plugins/model-providers/<имя>
+      - ./hermes-plugins/model-providers/claude-bridge:/opt/data/plugins/model-providers/claude-bridge:ro
       # Сам проект смонтирован по ТОМУ ЖЕ абсолютному пути, что и на хосте.
       # Без этого файловые/поисковые инструменты агента падают с «Path not
       # found» — путь совпадает специально: бридж запускает `claude` на хосте
@@ -67,9 +75,9 @@ services:
       # Дашборд отказывается слушать не-loopback без auth-провайдера, а внутри
       # контейнера на bridge-сети опубликованный порт — как раз не-loopback bind.
       # Логин/пароль — это собственные ворота Hermes, не обход этого требования
-      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME}
-      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}
-      - HERMES_DASHBOARD_BASIC_AUTH_SECRET=${HERMES_DASHBOARD_BASIC_AUTH_SECRET}
+      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-}
+      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-}
+      - HERMES_DASHBOARD_BASIC_AUTH_SECRET=${HERMES_DASHBOARD_BASIC_AUTH_SECRET:-}
 
   dashboard:
     # Разделяет с gateway сеть И pid-пространство: дашборд определяет здоровье
@@ -83,6 +91,7 @@ services:
     volumes:
       !override
       - ./hermes-home:/opt/data
+      - ./hermes-plugins/model-providers/claude-bridge:/opt/data/plugins/model-providers/claude-bridge:ro
       - .:/mnt/c/0_PROJECTS/OpenKarandash
     environment:
       - HERMES_UID=${HERMES_UID:-10000}
@@ -95,6 +104,6 @@ services:
       - HERMES_CWD=/mnt/c/0_PROJECTS/OpenKarandash
       - TERMINAL_CWD=/mnt/c/0_PROJECTS/OpenKarandash
       - HERMES_WRITE_SAFE_ROOT=/opt/data:/mnt/c/0_PROJECTS/OpenKarandash
-      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME}
-      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}
-      - HERMES_DASHBOARD_BASIC_AUTH_SECRET=${HERMES_DASHBOARD_BASIC_AUTH_SECRET}
+      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-}
+      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-}
+      - HERMES_DASHBOARD_BASIC_AUTH_SECRET=${HERMES_DASHBOARD_BASIC_AUTH_SECRET:-}

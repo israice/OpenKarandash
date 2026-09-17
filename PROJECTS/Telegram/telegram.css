@@ -1,21 +1,156 @@
-/* Вкладка Telegram: пока только подпись раздела, разметку вставляет
-   PROJECTS/Telegram/telegram.js */
+/* Вкладка Telegram: чат-интерфейс телеграм-моста — лента сверху, поле ввода
+   снизу, без боковой панели сессий (мост общий, не по сессиям).
+   Разметку вставляет PROJECTS/Telegram/telegram.js */
 
 .view--telegram {
-    display: block;
-    padding: calc(var(--topbar-height) + 16px) 16px 16px;
+    display: flex;
+    height: 100vh;
 }
 
-.telegram__title {
-    margin: 0 0 8px;
-    font-size: 1rem;
-    font-weight: 600;
+.telegram {
+    display: flex;
+    flex: 1;
+    min-width: 0;
 }
 
-.telegram__note {
-    margin: 0;
-    max-width: 60ch;
+.telegram__main {
+    --telegram-content-width: 720px;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    /* правый отступ учитывает значок версии (position: fixed, .app-version в base.css) */
+    padding: calc(var(--topbar-height) + 4px) 90px 16px 16px;
+}
+
+.telegram__messages {
+    flex: 1;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    display: flex;
+    flex-direction: column;
+    scrollbar-width: none;
+}
+
+.telegram__messages::-webkit-scrollbar {
+    display: none;
+}
+
+.telegram__empty {
+    margin: auto 0;
+    text-align: center;
     font-size: 0.85rem;
-    line-height: 1.5;
-    color: #8b909a;
+    color: #6a6f78;
+}
+
+/* опрос фрагмента не дошёл до сервера (перезапуск, правка server.js, сеть) —
+   без этого лента молча остаётся прежней, неотличимо от «сообщений нет» */
+.telegram__error {
+    margin: 0 0 10px;
+    padding: 8px 12px;
+    border: 1px solid #6a3a3a;
+    border-radius: 8px;
+    background: #2a1a1a;
+    text-align: center;
+    font-size: 0.8rem;
+    color: #d98c8c;
+}
+
+.telegram__list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: calc(100% - var(--sbw, 0px));
+    max-width: var(--telegram-content-width);
+    margin: 0 auto;
+}
+
+/* пустая лента: список пуст, показана только подсказка telegram__empty.
+   Не через [hidden] — display: flex выше перебил бы его как более
+   специфичный author-стиль */
+.telegram__list--empty {
+    display: none;
+}
+
+/* карточка одного отправленного уведомления — тот же ответ, что ушёл человеку
+   в личку по завершении сессии (telegram-messages.eta) */
+.telegram__msg {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid #2e3138;
+    border-radius: 12px;
+    background: #1a1c21;
+}
+
+.telegram__msg-head {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #e9e9ec;
+}
+
+.telegram__msg-body {
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: #c7c9cf;
+    white-space: pre-wrap;
+}
+
+.telegram__msg-time {
+    align-self: flex-end;
+    font-size: 0.72rem;
+    color: #6a6f78;
+}
+
+.telegram__composer {
+    --composer-control-height: 38px;
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    width: calc(100% - var(--sbw, 0px));
+    max-width: var(--telegram-content-width);
+    margin: 12px auto 0;
+    padding: 10px;
+    border: 1px solid #2e3138;
+    border-radius: 12px;
+    background: #1a1c21;
+}
+
+.telegram__input {
+    flex: 1;
+    min-height: var(--composer-control-height);
+    max-height: 160px;
+    padding: 8px 10px;
+    line-height: 22px;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 0.88rem;
+    color: #e9e9ec;
+    resize: none;
+    overflow-y: hidden;
+}
+
+.telegram__input::placeholder { color: #6a6f78; }
+.telegram__input:focus { outline: none; }
+
+.telegram__send {
+    height: var(--composer-control-height);
+    padding: 0 16px;
+    border: 1px solid #3b6ea8;
+    border-radius: 8px;
+    background: #2b4d78;
+    font: inherit;
+    font-size: 0.82rem;
+    color: #f2f2f4;
+    cursor: pointer;
+}
+
+.telegram__send:hover { background: #33598a; }
+
+.telegram__send:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: 2px;
 }

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Поднять весь стек: claude-bridge на хосте, Hermes в Docker.
+# Ручной запуск claude-bridge на хосте и Hermes в Docker (только WSL/bash).
+# Штатно это делает сам сторож server.js (SYSTEM/core/hermes-stack.js) при
+# `node server.js`; этот скрипт — когда нужен только Hermes без сервера.
 #
 # Бридж НЕ МОЖЕТ жить в контейнере: он управляет `claude` CLI, который стоит на
-# хосте. Compose-файл Hermes использует network_mode: host, поэтому контейнер
-# достаёт до бриджа обычным loopback.
+# хосте. Контейнер достаёт до него через host.docker.internal — см.
+# docker-compose.hermes.yml, почему не network_mode: host.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -55,11 +57,13 @@ if [ ! -f "$ROOT/hermes-home/config.yaml" ]; then
 fi
 
 docker info >/dev/null 2>&1 || die "Docker demon недоступен — сначала запусти Docker Desktop"
-log "запускаю контейнеры Hermes"
-HERMES_UID="$(id -u)" HERMES_GID="$(id -g)" "${COMPOSE[@]}" up -d
+# только gateway: дашборд Hermes (сервис dashboard, :9119) в этом проекте не
+# нужен — интерфейсом служит наш сервер, а Hermes ему отдаёт agent API :8642
+log "запускаю контейнер Hermes"
+HERMES_UID="$(id -u)" HERMES_GID="$(id -g)" "${COMPOSE[@]}" up -d gateway
 
 log "готово"
 echo
-echo "  дашборд : http://127.0.0.1:9119"
+echo "  agent API: http://127.0.0.1:8642/v1"
 echo "  бридж   : http://127.0.0.1:${BRIDGE_PORT}/health"
 echo "  логи    : logs/bridge.log  |  ${COMPOSE[*]} logs -f"

@@ -188,12 +188,38 @@ function renderMarkdown(text) {
     return out.join('').replace(/⁣(\d+)⁣/g, (_, i) => codeBlocks[i]);
 }
 
-// строка шага: что Claude сделал (Read index.html, Bash npm test)
+// цвет тега инструмента считаем от имени хэшем — одно и то же имя (read_file,
+// search_files, skill_view, Bash, …) всегда получает один и тот же оттенок,
+// а разные имена визуально различаются, без ручного списка всех инструментов
+// всех CLI (Claude/OpenCode/Codex/pi/Hermes)
+function toolTagHue(name) {
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+    return hash % 360;
+}
+
+// строка шага: что Claude сделал (Read index.html, Bash npm test).
+// text приходит уже склеенным «имя деталь» (см. toolLabel/hermesToolDetail
+// на сервере) — имя инструмента выделяем цветным тегом, разбирая первое слово
 export function addStep(text, before) {
     const stick = isChatNearBottom();
     const step = document.createElement('div');
     step.className = 'chat__message chat__message--tool';
-    step.textContent = text;
+
+    const match = String(text).match(/^(\S+)(\s+([\s\S]*))?$/);
+    if (match) {
+        const hue = toolTagHue(match[1]);
+        const tag = document.createElement('span');
+        tag.className = 'chat__tool-tag';
+        tag.style.color = `hsl(${hue}, 70%, 68%)`;
+        tag.style.background = `hsl(${hue}, 45%, 18%)`;
+        tag.textContent = match[1];
+        step.append(tag);
+        if (match[3]) step.append(document.createTextNode(` ${match[3]}`));
+    } else {
+        step.textContent = text;
+    }
+
     if (before && before.parentNode === state.chatList) state.chatList.insertBefore(step, before);
     else state.chatList.append(step);
     if (stick) scrollChatToBottom();
@@ -237,12 +263,91 @@ export function addPendingStatus() {
     if (existing) {
         existing.hidden = false;
         state.chatList.append(existing);
+        startPendingClock(existing);
         return existing;
     }
     const status = addMessage('', 'assistant');
     status.classList.add('chat__message--pending');
-    status.innerHTML = '<span class="chat__typing"><span></span><span></span><span></span></span>';
+    status.innerHTML = PENDING_HTML;
+    startPendingClock(status);
     return status;
+}
+
+const PENDING_HTML = '<span class="chat__typing"><span></span><span></span><span></span></span>'
+    + '<span class="chat__pending-note"></span>';
+
+// Часы ожидания на строке с точками. Между шагами агент молчит десятки секунд
+// (у Hermes на большой переписке — до минуты), и без счётчика живая работа
+// неотличима от оборванной: человек не знает, ждать или подтолкнуть.
+function startPendingClock(status) {
+    stopPendingClock(status);
+    let note = status.querySelector('.chat__pending-note');
+    if (!note) {
+        note = document.createElement('span');
+        note.className = 'chat__pending-note';
+        status.append(note);
+    }
+    const started = Date.now();
+    const tick = () => {
+        const seconds = Math.round((Date.now() - started) / 1000);
+        // первые секунды не подписываем: короткий шаг не должен мигать цифрой
+        note.textContent = seconds < 3 ? '' : `думает ${formatWait(seconds)}`;
+    };
+    tick();
+    status.__pendingTimer = setInterval(tick, 1000);
+}
+
+function formatWait(seconds) {
+    if (seconds < 60) return `${seconds} с`;
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes} мин ${String(seconds % 60).padStart(2, '0')} с`;
+}
+
+function stopPendingClock(status) {
+    if (status?.__pendingTimer) {
+        clearInterval(status.__pendingTimer);
+        status.__pendingTimer = null;
+    }
+}
+
+// шаг выполнен — ожидание началось заново, счётчик считает паузу до
+// следующего действия, а не всё время хода
+export function markPendingActivity(status) {
+    if (status?.isConnected) startPendingClock(status);
+}
+
+// снять строку ожидания вместе с её часами: без этого таймер продолжал бы
+// тикать на выброшенном узле до конца жизни страницы
+export function removePendingStatus(status) {
+    stopPendingClock(status);
+    status?.remove();
+}
+
+// Плашка «ход прерван» с кнопкой продолжения.
+//
+// Ход может кончиться ничем: сервер погасили посреди работы, запрос отменили,
+// агент ответил так, что ответ не удалось разобрать. В ленте это выглядело
+// просто как оборванный список шагов — непонятно, ждать или подтолкнуть.
+// Теперь видно прямо, и продолжение — одно нажатие вместо ручного «продолжай».
+export function addInterruptedNotice(onContinue) {
+    const notice = addMessage('', 'assistant');
+    notice.classList.add('chat__message--interrupted');
+
+    const text = document.createElement('span');
+    text.textContent = 'Ход прерван, не доведён до ответа.';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'chat__continue';
+    button.textContent = 'Продолжить';
+    button.addEventListener('click', () => {
+        notice.remove();
+        onContinue();
+    });
+
+    notice.append(text, button);
+    scrollChatToBottom();
+    return notice;
 }
 
 // подсказка по исполнителю на карточках демо-раскладки — узлы берутся здесь,

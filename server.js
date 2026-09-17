@@ -8,6 +8,9 @@ const graph = require('./PROJECTS/Graph/graph-server.js');
 const { readJson, escapeHtml, sendJson, sendHtml } = require('./SYSTEM/core/http.js');
 const scan = require('./SYSTEM/core/scan.js');
 const { reloadEvents } = require('./SYSTEM/core/reload.js');
+const hermesStack = require('./SYSTEM/core/hermes-stack.js');
+const hermesHistoryModule = require('./SYSTEM/core/hermes-history.js');
+const hostDeps = require('./SYSTEM/core/host-deps.js');
 
 const ROOT = __dirname;
 
@@ -31,10 +34,12 @@ const ENV_FILE = path.join(ROOT, '.env');
 const ENV_TEMPLATE = `# Project settings and secrets. Not tracked by git — edit it right here.
 PORT=3001
 # The screen the Karandash button captures (index in the monitor list, starting
-# from zero) — can also be changed from Settings in the interface
+from zero) — can also be changed from Settings in the interface
 SCREENSHOT_SCREEN=0
-# Port for the embedded beads-web board on the Kanban tab (0 turns it off)
-BEADS_PORT=3008
+# Hermes stack (claude-bridge + Hermes in Docker) started by the watchdog; 0 turns it off
+HERMES_STACK=1
+# Host dependencies checked/installed by the watchdog (git, python, Docker, claude CLI + login); 0 turns it off
+HOST_DEPS=1
 
 # Telegram bridge: the bot token and the ids of the users allowed to talk to it
 # (comma separated). Both are filled from Settings in the interface
@@ -95,6 +100,8 @@ const LIVE_RELOAD = process.env.NO_RELOAD !== '1';
 const CLAUDE_ASK_TIMEOUT_MS = Number(process.env.CLAUDE_ASK_TIMEOUT_MS) || 3_600_000;
 const POLL_MS = 400; // как часто сверяем время изменения файлов
 const EXIT_PORT_BUSY = 3; // код выхода дочернего процесса, по которому сторож уходит следом
+const EXIT_LOCK_HELD = 4; // то же для занятого замка DATA/server.lock: другая копия уже работает
+const LOCK_FILE = path.join(ROOT, 'DATA', 'server.lock');
 
 // ---------- перезапуск при изменении самого server.js ----------
 // Node читает файл один раз при старте, поэтому сервер работает в дочернем процессе,
@@ -162,9 +169,24 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
         // отправленный в неё, умирал вместе с процессом
         child.on('message', (message) => {
             if (message && message.readyToRestart) child.kill();
+            // сервер слушает порт — только теперь поднимаем Hermes и мост: если
+            // сервер не стартовал (замок, порт), незачем оставлять после себя
+            // контейнер и мост. Один раз: при перезапусках по правке файлов
+            // стек уже поднят
+            if (message && message.listening && stack && !stackStarted) { stackStarted = true; hermesStack.startAsync(stack); }
+            // Settings → Claude → Connect: мост Hermes должен гонять тот же claude
+            if (message && message.claudeTarget) hermesStack.setClaudeTarget(message.claudeTarget);
         });
 
         child.on('exit', (code, signal) => {
+            // На Windows kill() — это TerminateProcess: сервер не успевает ничего
+            // подчистить, и его замок DATA/server.lock лежит ещё STALE_MS. Запуск
+            // следом в эти секунды отказывал «другая копия уже работает». Ребёнок
+            // мёртв — значит, его замок заведомо ничей, снимаем его сами (только
+            // свой: в файле лежит pid держателя)
+            try {
+                if (fs.readFileSync(LOCK_FILE, 'utf8').trim() === String(child.pid)) fs.unlinkSync(LOCK_FILE);
+            } catch { /* замка нет или он чужой — не трогаем */ }
             child = null;
             logExit(`child exited: code=${code} signal=${signal} restarting=${restarting}`);
             if (restarting) {
@@ -172,11 +194,11 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
                 start();
                 return;
             }
-            if (signal || code === 0) process.exit(0); // остановлен снаружи или завершился штатно
+            if (signal || code === 0) { hermesStack.stop(); process.exit(0); } // остановлен снаружи или завершился штатно
             // порт занят: правкой server.js это не лечится, ждать нечего. иначе сторож
             // жил бы вечно — крутил опрос файлов и держал cwd проекта, из-за чего папку
             // проекта нельзя переименовать, пока процесс не убьют вручную
-            if (code === EXIT_PORT_BUSY) process.exit(EXIT_PORT_BUSY);
+            if (code === EXIT_PORT_BUSY || code === EXIT_LOCK_HELD) { hermesStack.stop(); process.exit(code); }
             // упал сам (например, ошибка в коде): сторож остаётся жив и поднимет
             // сервер, как только server.js поправят — иначе чинить было бы нечем
             console.error(`server crashed (code ${code}) — waiting for server.js to be fixed`);
@@ -196,7 +218,33 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
     }, 0);
     let mtime = latestMtime();
 
+    // Мост Hermes — питон-процесс, дочерний сторожу: его код Node не перечитывает,
+    // а перезапуска сервера он не требует. Поэтому за claude-bridge/*.py следим
+    // отдельно и перезапускаем один мост — раньше правка вступала в силу только
+    // после того, как пользователь гасил весь стек руками (DOCS/decisions/029).
+    // Список читается на каждом замере: файлы моста заводятся реже, чем меняются,
+    // но новый не должен ждать перезапуска сторожа
+    const latestBridgeMtime = () => hermesStack.bridgeFiles().reduce((max, file) => {
+        try {
+            return Math.max(max, fs.statSync(file).mtimeMs);
+        } catch {
+            return max; // файл унесли — правку поймает соседний
+        }
+    }, 0);
+    let bridgeMtime = latestBridgeMtime();
+    let bridgeBusy = false; // перезапуск идёт: замер не должен запускать второй
+
     setInterval(() => {
+        const currentBridge = latestBridgeMtime();
+        if (currentBridge !== bridgeMtime && !bridgeBusy) {
+            bridgeMtime = currentBridge;
+            bridgeBusy = true;
+            // сторож не должен падать из-за моста: ошибку пишем и живём дальше
+            hermesStack.restartBridge('файл бриджа изменён')
+                .catch((err) => console.error('bridge restart failed:', err.message))
+                .finally(() => { bridgeBusy = false; });
+        }
+
         const current = latestMtime();
         if (current === mtime) return;
 
@@ -206,14 +254,52 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
 
     process.on('exit', (code) => logExit(`watchdog exit: code=${code}`));
 
-    for (const signal of ['SIGINT', 'SIGTERM']) {
-        process.on(signal, () => {
-            logExit(`watchdog got ${signal}`);
-            if (child) child.kill(signal);
-            process.exit(0);
-        });
+    // Ctrl+C — единственная кнопка «стоп» для всего стека: вместе с сервером
+    // гасим Hermes и бридж, которые сторож поднял сам (SYSTEM/core/hermes-stack.js).
+    // Остановка синхронная — process.exit не ждёт промисов
+    const shutdown = (why) => {
+        logExit(`watchdog got ${why}`);
+        if (child) child.kill('SIGTERM');
+        hermesStack.stop();
+        process.exit(0);
+    };
+    for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => shutdown(signal));
+
+    // На Windows сигнала с клавиатуры может и не быть: wsl.exe (его запускает
+    // сервер для WSL-claude и мост для каждого хода) переводит консоль в сырой
+    // режим, а убитый (Stop, конец хода) не возвращает его — консоль перестаёт
+    // превращать Ctrl+C в событие, и сторож живёт вечно. Программный сигнал
+    // (GenerateConsoleCtrlEvent) при этом проходит — так этот случай раньше и
+    // «проверялся». Поэтому слушаем клавиатуру сами: в сыром режиме Ctrl+C
+    // приходит байтом 0x03 независимо от того, что сделали с консолью до нас.
+    // Режим переустанавливаем раз в секунду — следующий wsl.exe снова его собьёт;
+    // переключение false→true нужно, иначе setRawMode(true) при уже «своём»
+    // сыром режиме ничего не делает
+    if (process.platform === 'win32' && process.stdin.isTTY) {
+        const arm = () => { try { process.stdin.setRawMode(false); process.stdin.setRawMode(true); } catch { /* консоль отобрали */ } };
+        arm();
+        process.stdin.resume();
+        process.stdin.on('data', (chunk) => { if (chunk.includes(3)) shutdown('Ctrl+C (raw stdin)'); });
+        setInterval(arm, 1000).unref();
     }
 
+    // Hermes-стек: проверка зависимостей, .env и образа — до первого запуска
+    // сервера (сервер должен стартовать с готовыми node_modules), мост и
+    // контейнер — уже параллельно с ним. HERMES_STACK=0 в .env выключает всё это:
+    // тогда `node server.js` — только сервер, как раньше
+    // Ещё раньше — системные зависимости хоста (git, python, Docker, claude CLI
+    // со входом): чего нет — ставится, SYSTEM/core/host-deps.js. Выбранная
+    // там цель claude уходит дочернему серверу через env — он подключит её
+    // сам, без кнопки Connect в Settings. HOST_DEPS=0 в .env выключает проверку
+    const withStack = process.env.HERMES_STACK !== '0';
+    if (process.env.HOST_DEPS !== '0') {
+        const bridgeEnv = (() => { try { return fs.readFileSync(path.join(ROOT, 'claude-bridge', '.env'), 'utf8'); } catch { return ''; } })();
+        const preferredClaude = (bridgeEnv.match(/^CLAUDE_BRIDGE_TARGET=(\w+)/m) || [])[1];
+        const { claudeTarget } = hostDeps.ensureHost({ preferredClaude, withStack });
+        if (claudeTarget) process.env.CLAUDE_AUTOCONNECT = claudeTarget;
+    }
+    const stack = withStack ? hermesStack.prepare(ROOT) : null;
+    let stackStarted = false;
     start();
     return; // код ниже выполняется только в дочернем процессе
 }
@@ -231,7 +317,6 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
 // HEARTBEAT_MS обновляем время правки файла. Свежий пульс при старте значит
 // «кто-то уже работает» — отказываем. Пульс не обновлялся дольше STALE_MS —
 // прошлый процесс упал, не подчистив за собой, замок можно перехватить
-const LOCK_FILE = path.join(ROOT, 'DATA', 'server.lock');
 const HEARTBEAT_MS = 3000;
 const STALE_MS = HEARTBEAT_MS * 4;
 
@@ -241,7 +326,7 @@ function acquireLock() {
         if (age < STALE_MS) {
             console.error(`Another OpenKarandash server is already holding ${LOCK_FILE} (last heartbeat ${Math.round(age / 1000)}s ago).`);
             console.error('Stop that instance first — running two at once fights over the database, the vault and the Telegram bot token.');
-            process.exit(1);
+            process.exit(EXIT_LOCK_HELD);
         }
     } catch { /* замка ещё нет — первый запуск */ }
     fs.mkdirSync(path.dirname(LOCK_FILE), { recursive: true });
@@ -505,6 +590,26 @@ const CLAUDE_MODELS = [
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 let activeTarget = null;
+let activeVersion = null; // версия CLI подключённой цели — для /api/agent/status
+
+// Сторож уже проверил (и при нужде поставил/залогинил) claude и назвал цель в
+// CLAUDE_AUTOCONNECT: подключаем её сами при старте, чтобы свежескачанный
+// проект работал без похода в Settings. Страница узнаёт об этом через
+// /api/agent/status. Выбор в Settings по-прежнему главнее — он перезапишет
+async function autoConnectClaude() {
+    const id = process.env.CLAUDE_AUTOCONNECT;
+    const target = id && TARGETS.find((t) => t.id === id);
+    if (!target || activeTarget) return;
+    try {
+        activeVersion = parseVersion(await runClaude(target, ['--version'], { timeoutMs: 15000 }));
+        if (activeTarget) return; // пока ждали версию, пользователь подключился сам
+        activeTarget = target;
+        console.log(`Claude connected automatically: ${target.label} (CLI ${activeVersion})`);
+        if (process.send) process.send({ claudeTarget: target.id }, () => {});
+    } catch (err) {
+        console.warn(`Claude auto-connect (${id}) failed: ${err.message}`);
+    }
+}
 
 // Кнопка Stop гасила только тот процесс, который мы породили сами, и этого мало
 // в двух случаях: на Windows потомки убитого процесса сигнала не получают и живут
@@ -732,7 +837,11 @@ function setBusy(delta) {
 //   answer / fail(text)  — итоговый текст ответа и текст ошибки хода
 async function runTurn({ target, prompt, sessionId, model, effort, mode }, send, drive) {
     const runId = nextRunId++;
-    const run = { sessionId: sessionId || null, child: null, done: null, target };
+    // startedAt — момент начала именно этого хода: по нему панель Sessions
+    // тикает «живую» длительность активной сессии (см. activeRunStartedAt
+    // и /api/fragment/chat-sessions), пока finishExchange не зафиксирует
+    // итоговый duration_ms в базе
+    const run = { sessionId: sessionId || null, child: null, done: null, target, startedAt: Date.now() };
     let resolveDone;
     run.done = new Promise((resolve) => { resolveDone = resolve; });
 
@@ -807,8 +916,18 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
         // ход с ошибкой дописывается наравне с успешным: answer при ошибке пуст,
         // поэтому условие смотрит и на errorText (см. DOCS/decisions/012)
         if (ctx.session && (ctx.answer || ctx.errorText)) {
+            // durationMs: только askClaude реально разбирает event.duration_ms
+            // от CLI (см. event.type === 'result' выше) — у остальных коннекторов
+            // (askOpenCode/askCodex/askPi/askHermes) meta.durationMs так и остаётся
+            // null, ничего не попадает в duration_ms, и SUM(duration_ms) молча
+            // пропускает этот ход: счётчик в панели честно тикал по настенному
+            // времени, а после завершения хода фиксировать было нечего — отсюда
+            // «0s» вместо накопленного значения. Запасной вариант — настенное
+            // время самого хода (run.startedAt поставлен в начале runTurn) —
+            // используем его, только если коннектор не прислал точную цифру сам
             finishExchange(ctx.session, ctx.answer || ctx.errorText, {
                 ...meta,
+                durationMs: meta.durationMs ?? (Date.now() - run.startedAt),
                 assistantPosition: ctx.assistantPosition,
                 stopReason: meta.stopReason || (ctx.errorText ? 'error' : null),
             });
@@ -919,6 +1038,12 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
     // цель фиксируем на весь запуск: пока идёт работа, в настройках могли переключить CLI
     const target = activeTarget;
     if (!prompt) return send({ type: 'error', error: 'Empty request' });
+    // Hermes под капотом (DOCS/decisions/029): пока его агент поднят сторожем,
+    // ход ведёт он — со своей памятью, скиллами и инструментами, — а мозгом ему
+    // служит тот же claude, что выбран здесь (мост гоняет подключённую цель).
+    // Модель и effort из шапки Hermes не принимает: модель задаёт его конфиг.
+    // Агента нет (HERMES_STACK=0, Docker не запущен) — прямой claude, как раньше
+    if (await hermesReady()) return askHermes({ prompt, sessionId, mode }, send);
     if (model && !CLAUDE_MODELS.includes(model)) {
         return send({ type: 'error', error: `Unknown model: ${model}` });
     }
@@ -1755,20 +1880,80 @@ function hermesAuthHeaders() {
     return HERMES_API_KEY ? { Authorization: `Bearer ${HERMES_API_KEY}` } : {};
 }
 
-// один POST на /chat/completions без стриминга: у остальных коннекторов 'text'
-// приходит целыми блоками, а не токен за токеном (см. askClaude/askOpenCode),
-// поэтому нестримингового ответа Hermes достаточно — незачем городить разбор SSE
-// ради гранулярности, которую эта лента всё равно не показывает
-function runHermes(url, body, { timeoutMs, onSpawn } = {}) {
+// проверка живости agent API: сервер маршрутизирует askClaude через Hermes,
+// когда тот поднят (hermesReady), а Settings его не показывает (DOCS/decisions/029)
+async function detectHermesInstalls() {
+    const checks = await Promise.allSettled(
+        HERMES_TARGETS.map(async (target) => {
+            const res = await fetch(`${target.url}/models`, { headers: hermesAuthHeaders(), signal: AbortSignal.timeout(5000) });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return { id: target.id, label: target.label, version: 'agent API' };
+        })
+    );
+    return checks.filter((c) => c.status === 'fulfilled').map((c) => c.value);
+}
+
+let hermesProbe = { ok: false, at: 0 };
+async function probeHermes() {
+    const ttl = hermesProbe.ok ? 60_000 : 3_000;
+    if (Date.now() - hermesProbe.at < ttl) return hermesProbe.ok;
+    let ok = false;
+    try {
+        const res = await fetch(`${HERMES_TARGETS[0].url}/models`, { headers: hermesAuthHeaders(), signal: AbortSignal.timeout(2000) });
+        ok = res.ok;
+    } catch { ok = false; }
+    hermesProbe = { ok, at: Date.now() };
+    if (ok && !activeHermesTarget) activeHermesTarget = HERMES_TARGETS[0];
+    return ok;
+}
+
+// Контейнер Hermes поднимается около минуты после старта сервера, а первый
+// вопрос из чата обычно приходит раньше. Отдать его прямому claude было бы
+// тихой подменой — поэтому в стартовое окно ждём Hermes, а не обходим его.
+// Позже окна не ждём: если агента нет (HERMES_STACK=0, Docker выключен),
+// каждый ход тормозил бы впустую — тогда прямой claude сразу
+const HERMES_STARTUP_WINDOW_MS = 150_000;
+const serverStartedAt = Date.now();
+async function hermesReady() {
+    if (process.env.HERMES_STACK === '0') return false;
+    if (await probeHermes()) return true;
+    const deadline = serverStartedAt + HERMES_STARTUP_WINDOW_MS;
+    while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2000));
+        if (await probeHermes()) return true;
+    }
+    return false;
+}
+
+// Разговор с Hermes идёт через его API сессий (/api/sessions/{id}/chat/stream),
+// а не через /v1/chat/completions: только поток сессии отдаёт ход по шагам —
+// старт и конец каждого инструмента (tool.started/completed/failed), а по
+// завершении — расшифровку всего хода (run.completed.messages) с текстами
+// между вызовами и результатами инструментов. Так страница Sessions видит у
+// Hermes то же, что у Claude и pi: каждый вызов и его результат, а не только
+// итоговый текст — иначе разбирать, где ход споткнулся, было не по чему
+// (DOCS/decisions/029). Id сессии Hermes хранится в session_cli под целью
+// 'hermes', как у остальных CLI; свою историю Hermes ведёт сам, а сессии,
+// начатой другим CLI, отдаём пересказ последних ходов (handoffPreamble)
+const hermesSessionsBase = (url) => url.replace(/\/v1\/?$/, '');
+
+function hermesRequest(url, { method = 'POST', body, timeoutMs, onSpawn, onEvent } = {}) {
     return new Promise((resolve, reject) => {
-        const payload = JSON.stringify(body);
-        const target = new URL(`${url}/chat/completions`);
+        const payload = body === undefined ? '' : JSON.stringify(body);
+        const target = new URL(url);
         const req = http.request({
             hostname: target.hostname,
             port: target.port || 80,
-            path: target.pathname,
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...hermesAuthHeaders() },
+            // вместе со строкой запроса: у истории сессии (?order=oldest&limit=…)
+            // без неё Hermes отдал бы последнюю страницу вместо запрошенной
+            path: target.pathname + target.search,
+            method,
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(payload),
+                Accept: onEvent ? 'text/event-stream' : 'application/json',
+                ...hermesAuthHeaders(),
+            },
         });
 
         // Stop гасит запрос тем же способом, что и дерево процессов у CLI:
@@ -1795,11 +1980,33 @@ function runHermes(url, body, { timeoutMs, onSpawn } = {}) {
         });
 
         req.on('response', (res) => {
-            let body = '';
-            res.on('data', (chunk) => { body += chunk; });
+            let text = '';
+            // SSE: кадры разделены пустой строкой, в кадре строки event:/data:
+            const frame = (raw) => {
+                let name = 'message';
+                const data = [];
+                for (const line of raw.split(/\r?\n/)) {
+                    if (line.startsWith('event:')) name = line.slice(6).trim();
+                    else if (line.startsWith('data:')) data.push(line.slice(5).trim());
+                }
+                if (!data.length) return;
+                let parsed;
+                try { parsed = JSON.parse(data.join('\n')); } catch { return; }
+                onEvent(name, parsed);
+            };
+            res.on('data', (chunk) => {
+                text += chunk;
+                if (!onEvent || res.statusCode >= 400) return;
+                let cut;
+                while ((cut = text.indexOf('\n\n')) !== -1) {
+                    frame(text.slice(0, cut));
+                    text = text.slice(cut + 2);
+                }
+            });
             res.on('end', () => {
-                if (res.statusCode >= 400) return done(new Error(body.trim() || `Hermes returned ${res.statusCode}`));
-                try { done(null, JSON.parse(body)); } catch { done(new Error('Hermes returned a non-JSON response')); }
+                if (res.statusCode >= 400) return done(Object.assign(new Error(text.trim() || `Hermes returned ${res.statusCode}`), { status: res.statusCode }));
+                if (onEvent) { if (text.trim()) frame(text); return done(null, null); }
+                try { done(null, text.trim() ? JSON.parse(text) : null); } catch { done(new Error('Hermes returned a non-JSON response')); }
             });
         });
 
@@ -1807,45 +2014,220 @@ function runHermes(url, body, { timeoutMs, onSpawn } = {}) {
     });
 }
 
-async function detectHermesInstalls() {
-    const checks = await Promise.allSettled(
-        HERMES_TARGETS.map(async (target) => {
-            const res = await fetch(`${target.url}/models`, { headers: hermesAuthHeaders(), signal: AbortSignal.timeout(5000) });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return { id: target.id, label: target.label, version: 'agent API' };
-        })
-    );
-    return checks.filter((c) => c.status === 'fulfilled').map((c) => c.value);
+// текст, который на самом деле — запрос инструмента по текстовому протоколу
+// моста ({"tool_calls": [...]}). Перед объектом модель повторяет то, что стояло
+// в конце запроса: подпись «Assistant:» и напоминание о протоколе
+// («[Protocol reminder: …]»). Разбирать такой ответ и выполнять вызов — дело
+// моста (claude-bridge/tool_protocol.py); здесь только распознаём, чтобы сырой
+// объект не ушёл человеку в ленту и в телеграм под видом ответа
+const RAW_TOOL_CALL_ECHO = /^(?:\s*(?:Assistant|Model)\s*:|\s*\[\s*Protocol reminder\b[^\n]*\])+/i;
+function isRawToolCall(text) {
+    const body = String(text || '').replace(RAW_TOOL_CALL_ECHO, '').trimStart();
+    // обёртка с ключом tool_calls — и голый список вызовов без неё: модель
+    // пишет и так, и так (сессия hermes-docker-mtqy9nps встала именно на списке)
+    return /^\{\s*"tool_calls"\s*:/.test(body) || /^\[\s*\{\s*"name"\s*:/.test(body);
 }
 
-// у Hermes нет своего «--resume»: разговор восстанавливаем из нашей базы и
-// отправляем целиком, обычным OpenAI messages[] — агент сам решает, что из
-// этого держать в собственной памяти
+// короткая подпись вызова для строки шага — как toolLabel у Claude
+function hermesToolDetail(args) {
+    const a = args && typeof args === 'object' ? args : {};
+    const detail = a.command || a.path || a.file_path || a.pattern || a.query || a.url || a.name || '';
+    return String(detail).slice(0, 120);
+}
+
+// ---------- дотягивание истории Hermes ----------
+//
+// Ход в сессию Hermes может прийти не от нас: из его дашборда, по его же API,
+// заданием по расписанию. В нашей ленте такой ход не появлялся вовсе, и
+// пользователь видел обрывок работы вместо целого разговора. Разбор истории и
+// правило «что считать новым» живут в SYSTEM/core/hermes-history.js — здесь
+// только доступ к нашей базе и адрес Hermes.
+const hermesHistory = hermesHistoryModule.createHermesHistory({
+    request: (url, opts) => hermesRequest(url, opts),
+    log: (message) => console.error(message),
+    store: {
+        cursor: (sessionId) => hermesSyncCursor.get(sessionId)?.id ?? null,
+        lastMessageTime: (sessionId) => Date.parse(lastMessageTime.get(sessionId)?.at || ''),
+        touch: (sessionId) => touchSession.run(new Date().toISOString(), sessionId),
+        append: (sessionId, entry) => {
+            let position = null;
+            if (entry.kind === 'user') {
+                position = countMessages.get(sessionId).n;
+                upsertMessage.run(sessionId, position, 'user', entry.text, entry.at, null, null);
+            } else if (entry.kind === 'assistant') {
+                position = recordAssistantText(sessionId, entry.text, entry.model || 'hermes', null, null);
+            } else if (entry.kind === 'thinking') {
+                position = recordThinking(sessionId, entry.text);
+            } else {
+                position = recordStep(
+                    sessionId,
+                    `${entry.name} ${hermesToolDetail(entry.args)}`.trim(),
+                    entry.name, entry.args, null, null, null,
+                );
+                setMessageToolResult.run(clip(entry.result) || null, 0, null, sessionId, position);
+            }
+            // отметка «эта строка добрана из истории Hermes» и есть курсор
+            setMessageExtraMeta.run(
+                JSON.stringify({ hermesMessageId: entry.hermesMessageId, viaHermesHistory: true }),
+                sessionId, position,
+            );
+        },
+    },
+});
+
+// Дотянуть переписку сессии, если она принадлежит Hermes и сейчас по ней не
+// идёт наш собственный ход: во время хода строки шагов пишет стрим, и
+// дотягивание добавило бы их вторым экземпляром.
+async function syncHermesHistory(sessionId, target) {
+    const hermesId = getCliSession.get(sessionId, target.id)?.id;
+    if (!hermesId) return 0;
+    for (const run of activeRuns.values()) if (run.sessionId === sessionId) return 0;
+    return hermesHistory(sessionId, hermesId, hermesSessionsBase(target.url));
+}
+
+// Название сессии у Hermes обязано быть неповторимым: на второй такой же он
+// отвечает отказом `invalid_title` («Title already in use by session …»).
+// Мы же брали названием первые строки запроса, и любой повтор одного и того же
+// текста — тот же комментарий Karandash к той же кнопке — ронял ход, не начав
+// его (сессия hermes-docker-mtr2tndn). Название — вещь показная, поэтому при
+// таком отказе повторяем создание, дописав к нему наш id сессии: он уникален.
+// Отдельно от него живёт конфликт по id (409) — это наша же сессия, которая у
+// Hermes уже есть после перезапуска нашей базы, её просто продолжаем.
+function isHermesTitleTaken(err) {
+    return /invalid_title|title already in use/i.test(String(err?.message || ''));
+}
+
+async function createHermesSession(base, hermesId, prompt) {
+    const create = (title) => hermesRequest(`${base}/api/sessions`, { body: { id: hermesId, title }, timeoutMs: 30_000 });
+    try {
+        await create(prompt.slice(0, 80));
+        return;
+    } catch (err) {
+        if (err.status === 409) return;
+        if (!isHermesTitleTaken(err)) throw err;
+    }
+    try {
+        await create(`${prompt.slice(0, 60)} · ${hermesId}`);
+    } catch (err) {
+        if (err.status !== 409) throw err;
+    }
+}
+
 async function askHermes({ prompt, sessionId, mode }, send) {
     if (!activeHermesTarget) return send({ type: 'error', error: 'Hermes is not connected' });
     const target = activeHermesTarget;
     if (!prompt) return send({ type: 'error', error: 'Empty request' });
 
-    const history = sessionId
-        ? listMessages.all(sessionId).filter((m) => (m.role === 'user' || m.role === 'assistant') && m.text?.trim())
-        : [];
-    const messages = [...history.map((m) => ({ role: m.role, content: m.text })), { role: 'user', content: prompt }];
-
     return runTurn({ target, prompt, sessionId, mode }, send, async (ctx) => {
-        const data = await runHermes(target.url, { model: 'hermes', messages, stream: false }, {
+        const base = hermesSessionsBase(target.url);
+        // Hermes принимает свой id сессии: берём производный от нашего, чтобы
+        // его было видно в hermes-home/sessions рядом с нашей базой. Искать
+        // запись надо под той же целью, под которой её пишет ctx.begin
+        // (target.id): с жёстким 'hermes' она не находилась никогда, и каждый
+        // ход уходил с преамбулой «у тебя нет своей истории», хотя Hermes держит
+        // её сам — модель путалась и повторяла разбор с нуля
+        const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id);
+        let hermesId = resumeId;
+        if (!hermesId) {
+            hermesId = `ok-${ctx.session}`;
+            await createHermesSession(base, hermesId, prompt);
+            ctx.begin(hermesId);
+        }
+        if (handoff) setMessageInputSent.run(handoff + prompt, ctx.session, ctx.userPosition);
+
+        // позиции строк шагов по порядку вызовов: результат инструмента приходит
+        // не в tool.completed (там нет вывода), а в расшифровке run.completed —
+        // сообщения роли tool идут в том же порядке, что вызовы
+        const steps = []; // { position, name, done }
+        const texts = []; // тексты ассистента из расшифровки, последний — итог
+        let finalText = '';
+        let failure = null;
+
+        const onEvent = (name, ev) => {
+            if (name === 'tool.started') {
+                const detail = hermesToolDetail(ev.args);
+                const toolName = ev.tool_name || 'tool';
+                const position = recordStep(ctx.session, `${toolName} ${detail}`.trim(), toolName, ev.args ?? null, null, null, null);
+                steps.push({ position, name: toolName, done: false });
+                ctx.emit({ type: 'tool', name: toolName, detail });
+                return;
+            }
+            if (name === 'tool.completed' || name === 'tool.failed') {
+                const step = steps.find((s) => !s.done && s.name === ev.tool_name) || steps.find((s) => !s.done);
+                if (step) {
+                    step.done = true;
+                    step.failed = name === 'tool.failed';
+                    // вывода в событии нет — пока только факт; текст дойдёт из расшифровки
+                    setMessageToolResult.run(ev.preview ? clip(String(ev.preview)) : null, step.failed ? 1 : 0, null, ctx.session, step.position);
+                }
+                return;
+            }
+            if (name === 'assistant.completed') { finalText = ev.content || ''; return; }
+            if (name === 'run.completed') {
+                const usage = ev.usage || {};
+                ctx.meta.usage.inputTokens = usage.input_tokens || 0;
+                ctx.meta.usage.outputTokens = usage.output_tokens || 0;
+                // модель Hermes выбирает сам — узнаём её из runtime-метаданных ответа,
+                // чтобы окно контекста (contextWindowFor) считалось по реальной модели,
+                // а не оставалось неизвестным всю сессию
+                if (!ctx.meta.model && ev.runtime?.model) ctx.meta.model = ev.runtime.model;
+                let toolIndex = 0;
+                for (const m of ev.messages || []) {
+                    if (m.role === 'tool') {
+                        const step = steps[toolIndex++];
+                        if (!step) continue;
+                        const output = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '');
+                        setMessageToolResult.run(clip(output), step.failed ? 1 : 0, null, ctx.session, step.position);
+                    } else if (m.role === 'assistant') {
+                        // размышление модели идёт своим полем, а не текстом ответа:
+                        // мост достаёт его из потока Claude и отдаёт как
+                        // reasoning_content (claude-bridge/server.py). Пишем строкой
+                        // роли thinking — лента показывает её курсивом рядом с шагами
+                        const reasoning = m.reasoning_content || m.reasoning || '';
+                        if (typeof reasoning === 'string' && reasoning.trim()) {
+                            recordThinking(ctx.session, reasoning);
+                            ctx.emit({ type: 'thinking', text: reasoning });
+                        }
+                        if (typeof m.content === 'string' && m.content.trim()) texts.push(m.content);
+                    }
+                }
+                // у askClaude (askHermes её замена, DOCS/decisions/029) заполнение окна
+                // считается и шлётся отсюда же, событием result — здесь его аналог
+                // run.completed. Без этого датчик контекста в шапке чата навсегда
+                // застревал на значении первого хода (или на «—», пока хода не было)
+                const window = contextWindowFor(ctx.meta.model);
+                const percent = Math.min(100, Math.round((usage.input_tokens || 0) / window * 100));
+                if (ctx.session) setSessionContext.run(percent, window, ctx.session);
+                ctx.emit({ type: 'context', percent, window, used: usage.input_tokens || 0 });
+                return;
+            }
+            if (name === 'error') failure = ev.message || 'Hermes run failed';
+        };
+
+        await hermesRequest(`${base}/api/sessions/${encodeURIComponent(hermesId)}/chat/stream`, {
+            body: { message: handoff + prompt },
             timeoutMs: HERMES_ASK_TIMEOUT_MS,
             onSpawn: (fakeChild) => { ctx.run.child = fakeChild; },
+            onEvent,
         });
 
-        const text = data.choices?.[0]?.message?.content || '';
-        if (!text) return ctx.fail('Hermes returned an empty answer');
-        ctx.answer = text;
-        if (ctx.session) ctx.assistantPosition = recordAssistantText(ctx.session, text, 'hermes', null, null);
-        ctx.emit({ type: 'text', text });
-
-        if (data.usage) {
-            ctx.meta.usage.inputTokens = data.usage.prompt_tokens || 0;
-            ctx.meta.usage.outputTokens = data.usage.completion_tokens || 0;
+        if (failure) return ctx.fail(failure);
+        // тексты между вызовами — своими строками, как у Claude; итог — последний
+        if (!texts.length && finalText) texts.push(finalText);
+        // вызов инструмента, который модель написала текстом (мост его не
+        // разобрал), — не ответ: в ленту и в телеграм он уйдёт сырым JSON, а в
+        // пересказ следующего хода — примером, который модель повторит
+        const rawCalls = texts.filter(isRawToolCall);
+        if (rawCalls.length) texts.splice(0, texts.length, ...texts.filter((t) => !isRawToolCall(t)));
+        if (!texts.length) {
+            return ctx.fail(rawCalls.length
+                ? 'Hermes ended the turn with a tool call written as text instead of executing it — retry the request'
+                : 'Hermes returned an empty answer');
+        }
+        for (const [i, text] of texts.entries()) {
+            const position = recordAssistantText(ctx.session, text, 'hermes', null, null);
+            if (i === texts.length - 1) { ctx.answer = text; ctx.assistantPosition = position; }
+            ctx.emit({ type: 'text', text });
         }
     });
 }
@@ -2118,6 +2500,15 @@ const setSessionThumb = db.prepare('UPDATE sessions SET thumb = ? WHERE id = ?')
 const setSessionContext = db.prepare('UPDATE sessions SET context_percent = ?, context_window = ? WHERE id = ?');
 const setSessionInfo = db.prepare('UPDATE sessions SET session_info = ? WHERE id = ?');
 const setSessionRateLimit = db.prepare('UPDATE sessions SET rate_limit = ? WHERE id = ?');
+// курсор дотягивания истории Hermes (syncHermesHistory): докуда переписка его
+// сессии уже перенесена к нам. У сессий старше этого механизма отметок нет —
+// там порогом служит время последней нашей записи
+const hermesSyncCursor = db.prepare(`
+    SELECT MAX(CAST(json_extract(extra_meta, '$.hermesMessageId') AS INTEGER)) AS id
+    FROM messages WHERE session_id = ?
+`);
+const lastMessageTime = db.prepare('SELECT MAX(created_at) AS at FROM messages WHERE session_id = ?');
+
 const getSessionMeta = db.prepare('SELECT context_percent AS contextPercent, context_window AS contextWindow, session_info AS sessionInfo, rate_limit AS rateLimit, target, thumb FROM sessions WHERE id = ?');
 
 const getSessionTitle = db.prepare('SELECT title FROM sessions WHERE id = ?');
@@ -2295,12 +2686,15 @@ function recordHookResponse(sessionId, position, event) {
 }
 
 // рассуждения модели (блоки thinking) — отдельной строкой в той же таблице, рядом с шагами
+// Возвращает позицию строки — дотягивание истории (syncHermesHistory) ставит
+// на неё отметку о происхождении, как и на остальные добранные строки
 function recordThinking(sessionId, text, signature) {
     const position = countMessages.get(sessionId).n;
     upsertMessage.run(sessionId, position, 'thinking', clip(text), new Date().toISOString(), null, null);
     // signature (600-2348 символов) — крипто-подпись блока для API, не читаемый
     // текст; храним факт и длину, не саму строку
     if (signature) setMessageExtraMeta.run(JSON.stringify({ signaturePresent: true, signatureLength: signature.length }), sessionId, position);
+    return position;
 }
 
 // текстовый кусок ответа — своя строка на каждое событие 'text' (за один ход
@@ -2424,30 +2818,41 @@ function sessionSummaries() {
     }));
 }
 
+// момент старта текущего хода активной сессии (для живого тикающего счётчика
+// в панели Sessions) — null, если по этой сессии сейчас ничего не выполняется.
+// Один и тот же sessionId вторым активным ходом на практике не бывает (composer
+// блокируется на время хода), первое совпадение достаточно
+function activeRunStartedAt(sessionId) {
+    for (const run of activeRuns.values()) {
+        if (run.sessionId === sessionId) return run.startedAt || null;
+    }
+    return null;
+}
+
 // серверные половины фич: каждая заводит свои таблицы сама и отдаёт готовую
 // таблицу маршрутов. server.js их только собирает и не знает, что внутри.
-// Список ниже — единственное место, где ядро знает про фичи вообще
-// вкладка Kanban отдаёт готовую доску beads-web. Модуль возвращает не только
-// маршруты: диспетчер ниже спрашивает у него, какие адреса принадлежат доске,
-// и проксирует их на её бинарь. Так кадр вкладки живёт на нашем порту — без
-// этого он чужого origin, и Karandash не может заглянуть внутрь (DOCS/decisions/021)
-const kanban = require('./PROJECTS/Kanban/kanban-server.js').createRoutes({ root: ROOT });
+// Список ниже — единственное место, где ядро знает про фичи вообще.
+// Вкладка Kanban сейчас чистая UI-заготовка без сервера — своих маршрутов не
+// заводит, вид меняется по шагам пользователя (DOCS/decisions/032, отменяет 030 и 021)
 
 // телеграм-мост Settings: ему нужен и .env (ключ бота), и способ начать ход
 // не из браузера — ответ человека в личке продолжает ту же сессию
 const telegram = require('./PROJECTS/Settings/telegram-server.js');
-const { notifyTurnFinished } = telegram.init({ setEnvValue, ask: askOutsideBrowser });
+const { notifyTurnFinished } = telegram.init({ setEnvValue, ask: askOutsideBrowser, db });
 
 const featureRoutes = {
     ...graph.createRoutes(),
     ...require('./PROJECTS/Flow/flow-server.js').createRoutes({ db }),
     ...require('./PROJECTS/Chat/pages-server.js').createRoutes({ db, root: ROOT }),
-    ...require('./PROJECTS/Chat/chat-server.js').createRoutes({ sessions: sessionSummaries }),
+    ...require('./PROJECTS/Chat/chat-server.js').createRoutes({
+        sessions: sessionSummaries,
+        usage: (id) => sumSessionUsage.get(id),
+        activeStartedAt: activeRunStartedAt,
+    }),
     ...require('./PROJECTS/Home/home-server.js').createRoutes({
         sessions: sessionSummaries,
         activeCount: () => activeRuns.size,
     }),
-    ...kanban.routes,
     ...require('./PROJECTS/Karandash/karandash-server.js').createRoutes({ setEnvValue }),
     ...telegram.createRoutes(),
     ...require('./SYSTEM/toolbar-icons-server.js').createRoutes({ db }),
@@ -2477,6 +2882,13 @@ async function handleApi(req, res, urlPath) {
         // имя CLI приходит полем agent в теле, а не в пути: так добавление
         // третьего коннектора не добавляет ни одного маршрута
 
+        // что подключено на сервере сейчас — страница без сохранённого выбора
+        // берёт отсюда авто-подключённый claude (autoConnectClaude)
+        if (urlPath === '/api/agent/status') {
+            sendJson(res, { claude: activeTarget ? { id: activeTarget.id, label: activeTarget.label, version: activeVersion } : null });
+            return;
+        }
+
         if (urlPath === '/api/agent/detect') {
             const { agent } = await readJson(req);
             sendJson(res, { installs: await agentByName(agent).detect() });
@@ -2499,6 +2911,9 @@ async function handleApi(req, res, urlPath) {
             const version = await adapter.version(target);
             const models = adapter.models ? await adapter.models(target) : undefined;
             adapter.activate(target);
+            if (agent === 'claude') activeVersion = version;
+            // мост Hermes (у сторожа) переключается на тот же claude, что выбран здесь
+            if (agent === 'claude' && process.send) process.send({ claudeTarget: target.id }, () => {});
             sendJson(res, { ok: true, id: target.id, label: target.label, version, models });
             return;
         }
@@ -2628,6 +3043,11 @@ async function handleApi(req, res, urlPath) {
 
         if (urlPath === '/api/sessions/messages') {
             const { id } = await readJson(req);
+            // сессию Hermes могли продолжить мимо нас (его дашборд, его API,
+            // задание по расписанию) — перед показом добираем такие ходы,
+            // иначе лента обрывается на последнем нашем
+            const hermesTarget = HERMES_TARGETS.find((t) => t.id === (getSessionMeta.get(id) || {}).target);
+            if (hermesTarget) await syncHermesHistory(id, hermesTarget);
             const meta = getSessionMeta.get(id) || {};
             let sessionInfo = null;
             let rateLimit = null;
@@ -2698,14 +3118,6 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // адреса встроенной доски (её разметка, /_next/* и её собственные разделы API)
-    // уходят на её бинарь. Список разделов явный — наши маршруты она не перехватывает.
-    // Корень `/` делится на двоих: кадру доски он отдаётся, человеку — наша страница
-    if (kanban.owns(req, urlPath)) {
-        kanban.proxy(req, res, urlPath);
-        return;
-    }
-
     if (urlPath.startsWith('/api/')) {
         handleApi(req, res, urlPath);
         return;
@@ -2722,13 +3134,6 @@ const server = http.createServer((req, res) => {
 
     fs.readFile(filePath, (err, data) => {
         if (err) {
-            // такого файла у нас нет. Если это похоже на маршрут встроенной доски
-            // (GET за путём без расширения) — отдаём его ей, а не 404: свои адреса
-            // вроде /project/<id> она знает сама, перечислить их заранее нельзя
-            if (kanban.ownsFallback(req, urlPath)) {
-                kanban.proxy(req, res, urlPath);
-                return;
-            }
             res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('404 Not Found');
             return;
         }
@@ -2774,6 +3179,9 @@ server.listen(PORT, () => {
     console.log('Building the project map — this takes a few seconds...');
     prepareVault();
     console.log(`Server started: http://localhost:${PORT} (runtime: ${detectRuntimePlatform()})`);
+    // сторожу: порт занят нами, можно поднимать Hermes-стек
+    if (process.send) process.send({ listening: true }, () => {});
+    autoConnectClaude();
 
     if (LIVE_RELOAD) {
         watchFiles();

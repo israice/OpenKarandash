@@ -1,0 +1,140 @@
+# Настоящий конфиг Hermes-профиля бэкенд-разработчика (не заготовка для
+# человека, как и профиль QA — только тот устроен как каталог pi, а этот как
+# каталог самого Hermes). Формат — то же дерево ключей, что читает любой
+# профиль Hermes; про Hermes в Docker через claude-bridge — DOCS/decisions/029,
+# про то, почему у этого работника именно такая форма профиля, а не форма
+# pi, как у QA, — DOCS/decisions/033. Системный промпт-эквивалент лежит в
+# PERSONA.md, а не в SOUL.md: это имя файла Hermes запрещает агенту писать.
+#
+# Панели ноды Backend developer на канвасе Flow читают этот файл, но пока
+# только для показа человеку — реальный запуск (askHermes в server.js) свой
+# --profile ещё не принимает, см. README.md рядом.
+
+model:
+  default: claude-bridge-sonnet
+  provider: claude-bridge
+  base_url: http://localhost:8642
+  api_key: ${HERMES_BACKEND_API_KEY}
+  context_length: 200000
+  aliases:
+    fast: claude-bridge-haiku
+    smart: claude-bridge-opus
+
+agent:
+  max_turns: 200
+  tool_use_enforcement: strict
+  service_tier: default
+  verify_on_stop: true
+
+terminal:
+  backend: docker
+  cwd: /workspace
+  timeout: 600
+
+compression:
+  enabled: true
+  threshold: 0.85
+  target_ratio: 0.5
+
+display:
+  skin: default
+  interface: cli
+  language: en
+  show_reasoning: false
+  show_cost: true
+  pet: null
+
+# Разрешения бэкенд-разработчика — настоящий, не имитированный механизм
+# Hermes (в отличие от QA, у которого approvals вообще нет, только список
+# инструментов pi). smart — Hermes сам решает, когда спросить подтверждение,
+# manual — спрашивает всегда, off — никогда. У бэкенда smart, и в отличие
+# от QA (write/edit исключены на уровне инструментов) запись разрешена
+approvals:
+  mode: smart
+  timeout: 120
+  cron_mode: manual
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: false
+  provider: sqlite
+  write_approval: smart
+
+security:
+  redact_secrets: true
+  tirith_enabled: true
+  website_blocklist: []
+
+delegation:
+  model: claude-bridge-sonnet
+  provider: claude-bridge
+  max_concurrent_children: 2
+  max_iterations: 6
+  max_spawn_depth: 2
+
+checkpoints:
+  enabled: true
+  max_snapshots: 10
+
+# Панель Tools ноды показывает этот список как набор инструментов — см.
+# PROJECTS/Flow/flow.js, BACKEND_TOOLS. В отличие от QA (только чтение),
+# бэкенду выдана запись: terminal, file, coding, code_execution.
+toolsets:
+  - terminal
+  - file
+  - coding
+  - code_execution
+  - project
+  - skills
+  - memory
+  - delegation
+  - todo
+
+# Панель MCP ноды показывает эти серверы (BACKEND_MCPS в flow.js);
+# отмечен подключённым по умолчанию только github (BACKEND_MCP_DEFAULT).
+# Имена npm-пакетов ниже правдоподобны по конвенции, но не все проверены
+# как реально существующие — см. «Чем платим» в README.md рядом
+mcp:
+  servers:
+    github:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+    postgres:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-postgres"]
+    sqlite:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-sqlite"]
+    redis:
+      command: npx
+      args: ["-y", "mcp-server-redis"]
+    docker:
+      command: npx
+      args: ["-y", "mcp-server-docker"]
+    kubernetes:
+      command: npx
+      args: ["-y", "mcp-server-kubernetes"]
+    http:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-fetch"]
+    openapi:
+      command: npx
+      args: ["-y", "mcp-openapi-server"]
+    sentry:
+      command: npx
+      args: ["-y", "@sentry/mcp-server"]
+    grafana:
+      command: npx
+      args: ["-y", "mcp-grafana"]
+    aws:
+      command: npx
+      args: ["-y", "mcp-server-aws"]
+    stripe:
+      command: npx
+      args: ["-y", "@stripe/mcp"]
+    slack:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-slack"]
+    jira:
+      command: npx
+      args: ["-y", "mcp-server-jira"]

@@ -461,7 +461,7 @@
                             <div class="flow-node__panel flow-node__panel--tools" hidden>
                                 <div class="flow-node__panel-title flow-node__panel-title--with-action">
                                     <span>Tools</span>
-                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/QA/settings.json" title="Open settings.json" aria-label="Open settings.json">📄</button>
+                                    <button type="button" class="flow-node__panel-file" data-file="settings.json" title="Open settings.json" aria-label="Open settings.json">📄</button>
                                 </div>
                                 <div class="flow-node__panel-hint">What can I do: the built-in and connected tools available for taking actions.</div>
                                 <div class="flow-node__tools-list"></div>
@@ -513,6 +513,294 @@
                                  сессиями. Файла в профиле тоже пока нет -->
                             <div class="flow-node__panel flow-node__panel--memory" hidden>
                                 <div class="flow-node__panel-title">Memory</div>
+                                <div class="flow-node__panel-hint">What do I remember: the context, facts and preferences kept between sessions.</div>
+                                <div class="flow-node__memory-list"></div>
+                            </div>
+                            <button type="button" class="flow-node__add-bottom" title="Add a node (or drag onto another node to connect)">+</button>
+                            <button type="button" class="flow-node__add-right" title="Add a node (or drag onto another node to connect)">+</button>
+                        </div>
+                    </template>
+                    <!-- личная стартовая нода бэкенд-разработчика: тот же двухколоночный
+                         каркас, что у QA (шаблон/меню/панели), но всё содержимое своё —
+                         профиль здесь настоящий каталог Hermes, а не pi (DOCS/decisions/033).
+                         Панели с иконкой 📄 ведут в PROJECTS/Flow/profiles/Backend developer/
+                         config.yaml или SOUL.md — один физический файл на несколько панелей,
+                         в отличие от QA, где у каждой панели свой файл -->
+                    <template id="flowNodeBackendTemplate">
+                        <div class="flow-node flow-node--backend">
+                            <nav class="flow-node__menu" aria-label="Backend developer menu">
+                                <button type="button" class="flow-node__menu-item" data-panel="mcp" aria-pressed="false" title="MCP-серверы для бэкенд-разработчика: выбери, какими пользоваться в этой сессии">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🔌</span>
+                                    <span class="flow-node__menu-label">MCP</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="prompt" aria-pressed="false" title="System Prompt — как я должен себя вести: основные инструкции, правила и принципы работы агента">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">📜</span>
+                                    <span class="flow-node__menu-label">System Prompt</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="soul" aria-pressed="false" title="Soul — кто я: личность, характер, ценности и стиль взаимодействия">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🫀</span>
+                                    <span class="flow-node__menu-label">Soul</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="model" aria-pressed="false" title="Model — чем я думаю: выбранная языковая модель и провайдер, через которых работает агент">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🤖</span>
+                                    <span class="flow-node__menu-label">Model</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="thinking" aria-pressed="false" title="Thinking — насколько глубоко я думаю: уровень рассуждения, reasoning/thinking budget и связанные параметры">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🧠</span>
+                                    <span class="flow-node__menu-label">Thinking</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="tools" aria-pressed="false" title="Tools — что я умею делать: доступные встроенные и подключённые инструменты для выполнения действий">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🧰</span>
+                                    <span class="flow-node__menu-label">Tools</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="skills" aria-pressed="false" title="Skills — какие специализированные способности у меня есть: набор инструкций и навыков под конкретные задачи">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🎓</span>
+                                    <span class="flow-node__menu-label">Skills</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="agents" aria-pressed="false" title="Agents — каких других агентов я могу привлечь: доступные субагенты и правила их использования">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">👥</span>
+                                    <span class="flow-node__menu-label">Agents</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="memory" aria-pressed="false" title="Memory — что я помню: сохраняемый контекст, факты, предпочтения и накопленные знания между сессиями">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">💾</span>
+                                    <span class="flow-node__menu-label">Memory</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="permissions" aria-pressed="false" title="Permissions — что мне разрешено: ограничения и политики доступа к файлам, shell, сети, внешним действиям и другим ресурсам">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🔐</span>
+                                    <span class="flow-node__menu-label">Permissions</span>
+                                </button>
+                            </nav>
+                            <div class="flow-node__main">
+                                <div class="flow-node__header">
+                                    <span class="flow-node__titles">
+                                        <span class="flow-node__title-row">
+                                            <span class="flow-node__title">Backend developer</span>
+                                        </span>
+                                        <span class="flow-node__subtitle">Server &amp; API · Entry point</span>
+                                    </span>
+                                </div>
+                                <div class="flow-node__body">The starting point of the Backend flow: everything the backend developer builds grows from this node.</div>
+                                <div class="flow-node__footer flow-node__footer--controls">
+                                    <select class="chat__session-select flow-node__control flow-node__provider" aria-label="Provider"></select>
+                                    <select class="chat__session-select flow-node__control flow-node__model" aria-label="Model"></select>
+                                    <select class="chat__session-select flow-node__control flow-node__effort" aria-label="Effort"></select>
+                                </div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--mcp" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>MCP servers</span>
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/Backend developer/config.yaml" title="Open config.yaml" aria-label="Open config.yaml">📄</button>
+                                </div>
+                                <input type="search" class="flow-node__mcp-search" placeholder="Search MCP…" aria-label="Search MCP">
+                                <div class="flow-node__mcp-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--prompt" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>System Prompt</span>
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/Backend developer/PERSONA.md" title="Open PERSONA.md" aria-label="Open PERSONA.md">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">How should I behave: basic instructions, rules and working principles of the agent.</div>
+                                <div class="flow-node__prompt-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--soul" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Soul</span>
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/Backend developer/PERSONA.md" title="Open PERSONA.md" aria-label="Open PERSONA.md">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">Who am I: personality, character, values and interaction style.</div>
+                                <div class="flow-node__soul-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--thinking" hidden>
+                                <div class="flow-node__panel-title">Thinking</div>
+                                <div class="flow-node__panel-hint">How deep do I think: reasoning level, thinking budget and related parameters.</div>
+                                <div class="flow-node__thinking-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--tools" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Tools</span>
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/Backend developer/config.yaml" title="Open config.yaml" aria-label="Open config.yaml">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">What can I do: the built-in and connected tools available for taking actions.</div>
+                                <div class="flow-node__tools-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--permissions" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Permissions</span>
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/Backend developer/config.yaml" title="Open config.yaml" aria-label="Open config.yaml">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">What am I allowed to do: Hermes's approval mode, timeouts and what requires confirmation before it runs.</div>
+                                <div class="flow-node__permissions-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--model" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Model</span>
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/Backend developer/config.yaml" title="Open config.yaml" aria-label="Open config.yaml">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">What do I think with: the language model and the provider the agent runs through.</div>
+                                <div class="flow-node__llm-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--skills" hidden>
+                                <div class="flow-node__panel-title">Skills</div>
+                                <div class="flow-node__panel-hint">What special abilities do I have: sets of instructions and skills for particular tasks.</div>
+                                <div class="flow-node__skills-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--agents" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Agents</span>
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/Backend developer/config.yaml" title="Open config.yaml" aria-label="Open config.yaml">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">Which other agents can I call in: the subagents available and the rules for using them.</div>
+                                <div class="flow-node__agents-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--memory" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Memory</span>
+                                    <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/Backend developer/config.yaml" title="Open config.yaml" aria-label="Open config.yaml">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">What do I remember: the context, facts and preferences kept between sessions.</div>
+                                <div class="flow-node__memory-list"></div>
+                            </div>
+                            <button type="button" class="flow-node__add-bottom" title="Add a node (or drag onto another node to connect)">+</button>
+                            <button type="button" class="flow-node__add-right" title="Add a node (or drag onto another node to connect)">+</button>
+                        </div>
+                    </template>
+                    <!-- личная стартовая нода трёх профилей без собственной визуальной
+                         особенности — Secretary, UI developer, HR. Один общий шаблон вместо
+                         ещё трёх копий разметки QA/Backend: заголовок, подзаголовок, текст
+                         тела и пути файлов профиля подставляет applyProfileMeta в flow.js по
+                         записи PROFILE_META сразу после клонирования (ensureRootNode) —
+                         здесь только пустая оболочка, одинаковая для всех трёх -->
+                    <template id="flowNodeProfileTemplate">
+                        <div class="flow-node flow-node--profile">
+                            <nav class="flow-node__menu" aria-label="Profile menu">
+                                <button type="button" class="flow-node__menu-item" data-panel="mcp" aria-pressed="false" title="MCP servers: pick which ones to use in this session">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🔌</span>
+                                    <span class="flow-node__menu-label">MCP</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="prompt" aria-pressed="false" title="System Prompt — how should I behave: basic instructions, rules and working principles of the agent">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">📜</span>
+                                    <span class="flow-node__menu-label">System Prompt</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="soul" aria-pressed="false" title="Soul — who am I: personality, character, values and interaction style">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🫀</span>
+                                    <span class="flow-node__menu-label">Soul</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="model" aria-pressed="false" title="Model — what do I think with: the selected language model and provider">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🤖</span>
+                                    <span class="flow-node__menu-label">Model</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="thinking" aria-pressed="false" title="Thinking — how deep do I think: reasoning level, thinking budget and related parameters">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🧠</span>
+                                    <span class="flow-node__menu-label">Thinking</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="tools" aria-pressed="false" title="Tools — what can I do: available built-in and connected tools for taking actions">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🧰</span>
+                                    <span class="flow-node__menu-label">Tools</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="skills" aria-pressed="false" title="Skills — what special abilities do I have: sets of instructions and skills for particular tasks">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🎓</span>
+                                    <span class="flow-node__menu-label">Skills</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="agents" aria-pressed="false" title="Agents — which other agents can I call in: available subagents and the rules for using them">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">👥</span>
+                                    <span class="flow-node__menu-label">Agents</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="memory" aria-pressed="false" title="Memory — what do I remember: kept context, facts, preferences and accumulated knowledge between sessions">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">💾</span>
+                                    <span class="flow-node__menu-label">Memory</span>
+                                </button>
+                                <button type="button" class="flow-node__menu-item" data-panel="permissions" aria-pressed="false" title="Permissions — what am I allowed to do: limits and access policy to files, shell, network, outside actions and other resources">
+                                    <span class="flow-node__menu-icon" aria-hidden="true">🔐</span>
+                                    <span class="flow-node__menu-label">Permissions</span>
+                                </button>
+                            </nav>
+                            <div class="flow-node__main">
+                                <div class="flow-node__header">
+                                    <span class="flow-node__titles">
+                                        <span class="flow-node__title-row">
+                                            <span class="flow-node__title"></span>
+                                        </span>
+                                        <span class="flow-node__subtitle"></span>
+                                    </span>
+                                </div>
+                                <div class="flow-node__body"></div>
+                                <div class="flow-node__footer flow-node__footer--controls">
+                                    <select class="chat__session-select flow-node__control flow-node__provider" aria-label="Provider"></select>
+                                    <select class="chat__session-select flow-node__control flow-node__model" aria-label="Model"></select>
+                                    <select class="chat__session-select flow-node__control flow-node__effort" aria-label="Effort"></select>
+                                </div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--mcp" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>MCP servers</span>
+                                    <button type="button" class="flow-node__panel-file" title="Open profile file" aria-label="Open profile file">📄</button>
+                                </div>
+                                <input type="search" class="flow-node__mcp-search" placeholder="Search MCP…" aria-label="Search MCP">
+                                <div class="flow-node__mcp-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--prompt" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>System Prompt</span>
+                                    <button type="button" class="flow-node__panel-file" title="Open profile file" aria-label="Open profile file">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">How should I behave: basic instructions, rules and working principles of the agent.</div>
+                                <div class="flow-node__prompt-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--soul" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Soul</span>
+                                    <button type="button" class="flow-node__panel-file" title="Open profile file" aria-label="Open profile file">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">Who am I: personality, character, values and interaction style.</div>
+                                <div class="flow-node__soul-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--thinking" hidden>
+                                <div class="flow-node__panel-title">Thinking</div>
+                                <div class="flow-node__panel-hint">How deep do I think: reasoning level, thinking budget and related parameters.</div>
+                                <div class="flow-node__thinking-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--tools" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Tools</span>
+                                    <button type="button" class="flow-node__panel-file" title="Open profile file" aria-label="Open profile file">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">What can I do: the built-in and connected tools available for taking actions.</div>
+                                <div class="flow-node__tools-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--permissions" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Permissions</span>
+                                    <button type="button" class="flow-node__panel-file" title="Open profile file" aria-label="Open profile file">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">What am I allowed to do: Hermes's approval mode, timeouts and what requires confirmation before it runs.</div>
+                                <div class="flow-node__permissions-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--model" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Model</span>
+                                    <button type="button" class="flow-node__panel-file" title="Open profile file" aria-label="Open profile file">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">What do I think with: the language model and the provider the agent runs through.</div>
+                                <div class="flow-node__llm-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--skills" hidden>
+                                <div class="flow-node__panel-title">Skills</div>
+                                <div class="flow-node__panel-hint">What special abilities do I have: sets of instructions and skills for particular tasks.</div>
+                                <div class="flow-node__skills-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--agents" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Agents</span>
+                                    <button type="button" class="flow-node__panel-file" title="Open profile file" aria-label="Open profile file">📄</button>
+                                </div>
+                                <div class="flow-node__panel-hint">Which other agents can I call in: the subagents available and the rules for using them.</div>
+                                <div class="flow-node__agents-list"></div>
+                            </div>
+                            <div class="flow-node__panel flow-node__panel--memory" hidden>
+                                <div class="flow-node__panel-title flow-node__panel-title--with-action">
+                                    <span>Memory</span>
+                                    <button type="button" class="flow-node__panel-file" title="Open profile file" aria-label="Open profile file">📄</button>
+                                </div>
                                 <div class="flow-node__panel-hint">What do I remember: the context, facts and preferences kept between sessions.</div>
                                 <div class="flow-node__memory-list"></div>
                             </div>
@@ -584,9 +872,9 @@
         </div>
     </div>
 
-    <div class="view view--board" id="kanbanView" hidden>
-        <div class="board" id="board"></div>
-    </div>
+    <!-- Kanban — чистая UI-заготовка: разметку колонок строит сам kanban.js,
+         тут только пустой контейнер вкладки (DOCS/decisions/032) -->
+    <div class="view view--board" id="kanbanView" hidden></div>
 
     <!-- Вкладка Book разметки в этом файле не имеет: и панель со списком
          разделов, и панель README справа строит PROJECTS/Book/book-tab.js. -->
@@ -645,6 +933,7 @@
                     <span class="segmented__thumb" aria-hidden="true"></span>
                     <button type="button" class="segmented__option" role="radio" aria-checked="false" data-mode="Chat" tabindex="-1">Chat</button>
                     <button type="button" class="segmented__option" role="radio" aria-checked="true" data-mode="Action" tabindex="0">Action</button>
+                    <button type="button" class="segmented__option segmented__option--soon" role="radio" aria-checked="false" data-mode="Loop" tabindex="-1" disabled title="Coming Soon">Loop</button>
                 </div>
                 <button type="submit" class="chat__send">Send</button>
             </form>

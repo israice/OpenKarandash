@@ -44,7 +44,7 @@
         </button>
 
         <ul class="settings__menu" id="settingsMenu" role="menu" aria-labelledby="settingsButton" hidden>
-            <li role="none"><button type="button" class="settings__item" role="menuitem">Placeholder_2</button></li>
+            <li role="none"><button type="button" class="settings__item" role="menuitem">Login</button></li>
             <li role="none"><button type="button" class="settings__item" role="menuitem">Placeholder_2</button></li>
             <li role="none"><div class="settings__separator"></div></li>
             <li role="none"><button type="button" class="settings__item" role="menuitem">Settings</button></li>
@@ -77,62 +77,84 @@
     // ---------- разметка: окно настроек ----------
 
     const settingsModal = document.createElement('div');
-    settingsModal.className = 'modal';
+    // modal--top-align: диалог настроек не центрируется по высоте, а прибит к верху
+    // контейнера (сразу под топбаром) — иначе смена вкладки на менее высокую
+    // (Router/Network/Sandglass) утягивает всё окно вниз вслед за центровкой
+    settingsModal.className = 'modal modal--top-align';
     settingsModal.id = 'settingsModal';
     settingsModal.hidden = true;
     settingsModal.innerHTML = `
         <div class="modal__backdrop" data-close-modal></div>
         <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+            <div class="settings-tabs" id="settingsTabs" role="tablist" aria-label="Settings sections">
+                <button type="button" class="settings-tabs__item" role="tab" aria-selected="true" aria-controls="settingsTabProviders" data-tab="Providers">Providers</button>
+                <button type="button" class="settings-tabs__item" role="tab" aria-selected="false" aria-controls="settingsTabRouter" data-tab="Router">Router</button>
+                <button type="button" class="settings-tabs__item" role="tab" aria-selected="false" aria-controls="settingsTabNetwork" data-tab="Network">Network</button>
+                <button type="button" class="settings-tabs__item" role="tab" aria-selected="false" aria-controls="settingsTabSandglass" data-tab="Sandglass">Sandglass</button>
+            </div>
             <div class="modal__header">
                 <h2 class="modal__title" id="settingsModalTitle">Settings</h2>
                 <button type="button" class="modal__close" data-close-modal aria-label="Close">&times;</button>
             </div>
-            <p class="modal__hint">Connect an AI provider to pick a default model.</p>
-            <div class="provider" id="defaultProviderRow">
-                <div class="provider__model">
-                    <span class="provider__model-label">Provider:</span>
-                    <select class="provider__select provider__select--source" id="defaultProviderSelect" aria-label="Provider"></select>
-                    <span class="provider__model-label">Model:</span>
-                    <select class="provider__select" id="defaultProviderModelSelect" aria-label="Default model"></select>
-                </div>
-            </div>
-            <ul class="provider-list" id="providerList"></ul>
-            <div class="provider screenshot-screen" id="screenshotScreenRow" hidden>
-                <span class="provider__model-label">Screen for Karandash screenshots:</span>
-                <select class="provider__select" id="screenshotScreenSelect" aria-label="Screen for screenshots"></select>
-                <img class="screenshot-screen__preview" id="screenshotScreenPreview" alt="Selected screen preview" hidden style="cursor: zoom-in">
-            </div>
-            <div class="provider telegram" id="telegramRow">
-                <div class="provider__row">
-                    <div>
-                        <div class="provider__name">Telegram</div>
-                        <div class="provider__note">Bot token and allowed user ids — saved to the local .env</div>
-                    </div>
-                    <div class="provider__actions">
-                        <span class="provider__status" id="telegramStatus" hidden></span>
-                        <button type="button"
-                                class="provider__button provider__button--connect"
-                                id="telegramConnectButton"
-                                aria-expanded="false"
-                                aria-controls="telegramFields">Connect</button>
+            <div class="settings-tab-content" id="settingsTabProviders" role="tabpanel">
+                <p class="modal__hint">Connect an AI provider to pick a default model.</p>
+                <div class="provider" id="defaultProviderRow">
+                    <div class="provider__model">
+                        <span class="provider__model-label">Provider:</span>
+                        <select class="provider__select provider__select--source" id="defaultProviderSelect" aria-label="Provider"></select>
+                        <span class="provider__model-label">Model:</span>
+                        <select class="provider__select" id="defaultProviderModelSelect" aria-label="Default model"></select>
                     </div>
                 </div>
-                <div class="provider__model telegram__fields" id="telegramFields" hidden>
-                    <span class="provider__model-label">API key:</span>
-                    <input type="password" class="provider__input" id="telegramTokenInput"
-                           placeholder="123456789:AA..." autocomplete="off" spellcheck="false"
-                           aria-label="Telegram bot API key">
-                    <span class="provider__model-label">User ids:</span>
-                    <input type="text" class="provider__input" id="telegramUsersInput"
-                           placeholder="12345678, 87654321" autocomplete="off" spellcheck="false"
-                           aria-label="Telegram user ids, comma separated">
-                    <div class="telegram__hint" id="telegramHint"></div>
+                <ul class="provider-list" id="providerList"></ul>
+                <div class="provider screenshot-screen" id="screenshotScreenRow" hidden>
+                    <span class="provider__model-label">Screen for Karandash screenshots:</span>
+                    <select class="provider__select" id="screenshotScreenSelect" aria-label="Screen for screenshots"></select>
+                    <img class="screenshot-screen__preview" id="screenshotScreenPreview" alt="Selected screen preview" hidden style="cursor: zoom-in">
                 </div>
+                <div class="provider telegram" id="telegramRow">
+                    <div class="provider__row">
+                        <div>
+                            <div class="provider__name">Telegram</div>
+                            <div class="provider__note">Bot token and allowed user ids — saved to the local .env</div>
+                        </div>
+                        <div class="provider__actions">
+                            <span class="provider__status" id="telegramStatus" hidden></span>
+                            <button type="button"
+                                    class="provider__button provider__button--connect"
+                                    id="telegramConnectButton"
+                                    aria-expanded="false"
+                                    aria-controls="telegramFields">Connect</button>
+                        </div>
+                    </div>
+                    <div class="provider__model telegram__fields" id="telegramFields" hidden>
+                        <span class="provider__model-label">API key:</span>
+                        <input type="password" class="provider__input" id="telegramTokenInput"
+                               placeholder="123456789:AA..." autocomplete="off" spellcheck="false"
+                               aria-label="Telegram bot API key">
+                        <span class="provider__model-label">User ids:</span>
+                        <input type="text" class="provider__input" id="telegramUsersInput"
+                               placeholder="12345678, 87654321" autocomplete="off" spellcheck="false"
+                               aria-label="Telegram user ids, comma separated">
+                        <div class="telegram__hint" id="telegramHint"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="settings-tab-content" id="settingsTabRouter" role="tabpanel" hidden>
+                <p class="modal__hint">Coming soon.</p>
+            </div>
+            <div class="settings-tab-content" id="settingsTabNetwork" role="tabpanel" hidden>
+                <p class="modal__hint">Coming soon.</p>
+            </div>
+            <div class="settings-tab-content" id="settingsTabSandglass" role="tabpanel" hidden>
+                <p class="modal__hint">Coming soon.</p>
             </div>
         </div>
     `;
     document.body.append(settingsModal);
 
+    const settingsTabs = settingsModal.querySelector('#settingsTabs');
+    const settingsTabItems = Array.from(settingsTabs.querySelectorAll('.settings-tabs__item'));
     const providerList = settingsModal.querySelector('#providerList');
     const defaultProviderSelect = settingsModal.querySelector('#defaultProviderSelect');
     const defaultProviderModelSelect = settingsModal.querySelector('#defaultProviderModelSelect');
@@ -164,10 +186,18 @@
         settingsButton.setAttribute('aria-expanded', 'false');
     }
 
-    settingsButton.addEventListener('click', () => openSettings());
+    settingsButton.addEventListener('click', () => {
+        if (settingsMenu.hidden) openMenu();
+        else closeMenu();
+    });
 
     document.addEventListener('click', (e) => {
-        if (!settingsRoot.contains(e.target)) closeMenu();
+        if (settingsRoot.contains(e.target)) return;
+        // кнопка карандаша переключает свой отдельный режим (PROJECTS/Karandash/karandash.js) —
+        // клик по ней не должен закрывать уже открытое меню настроек, только Esc
+        const karandashButton = document.getElementById('karandashButton');
+        if (karandashButton && e.composedPath().includes(karandashButton)) return;
+        closeMenu();
     });
 
     document.addEventListener('keydown', (e) => {
@@ -495,28 +525,10 @@
         renderProviders();
     }
 
-    // у Hermes ровно одно окружение (Docker) — detect либо находит его, либо нет,
-    // выбор между несколькими environments тут не встаёт
-    async function connectHermes(install) {
-        const result = await api('/api/agent/connect', { agent: 'hermes', id: install.id });
-        if (!result.ok) {
-            showProviderError('hermes', result.error);
-            return;
-        }
-
-        App.connections.set('hermes', {
-            installId: result.id,
-            label: result.label,
-            version: result.version,
-            note: `${result.label} · ${result.version}`,
-        });
-        App.saveProviderState('hermes');
-        App.renderSessionBarControls();
-        renderProviders();
-    }
-
-    // окно выбора открывается, только когда найдено больше одного окружения;
-    // providerLabel уходит и в заголовок, и в подсказку — общий вид для Claude и OpenCode
+    // выбор между несколькими найденными установками CLI: тот же список, что и
+    // у showNotFound, только со строками вместо пустоты. Функция была потеряна при
+    // правках, а четыре вызова на неё остались — окно настроек падало с ReferenceError
+    // ровно там, где CLI нашёлся и в Windows, и в WSL
     function pickInstall(installs, onPick, providerLabel = 'CLI') {
         pickerTitle.textContent = `Where should ${providerLabel} run?`;
         pickerHint.textContent = 'CLI found in multiple environments — choose which one to use.';
@@ -527,7 +539,13 @@
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'picker__item';
-            btn.innerHTML = `<span>${install.label}</span><span class="picker__version">CLI ${install.version}</span>`;
+            // label и version приходят с сервера — кладём текстом, а не разметкой
+            const label = document.createElement('span');
+            label.textContent = install.label;
+            const version = document.createElement('span');
+            version.className = 'picker__version';
+            version.textContent = `CLI ${install.version}`;
+            btn.append(label, version);
             btn.addEventListener('click', () => {
                 App.closeModal(pickerModal);
                 onPick(install);
@@ -557,7 +575,7 @@
             if (id === 'claude') {
                 App.setChatSessionId(null);
                 App.saveClaudeState();
-            } else if (id === 'codex' || id === 'opencode' || id === 'pi' || id === 'hermes') {
+            } else if (id === 'codex' || id === 'opencode' || id === 'pi') {
                 App.setChatSessionId(null);
                 App.saveProviderState(id);
             }
@@ -653,28 +671,6 @@
             if (installs.length === 0) showNotFound('pi CLI');
             else if (installs.length === 1) connectPi(installs[0]);
             else pickInstall(installs, connectPi, 'pi CLI');
-            return;
-        }
-
-        // у Hermes подключение тоже настоящее: тот же поток detect → connect,
-        // но окружение всегда одно (Docker), выбор не встаёт
-        if (id === 'hermes') {
-            btn.disabled = true;
-            btn.textContent = 'Looking for Hermes...';
-
-            let installs = [];
-            try {
-                ({ installs = [] } = await api('/api/agent/detect', { agent: 'hermes' }));
-            } catch (err) {
-                renderProviders();
-                showProviderError(id, `Server unavailable: ${err.message}`);
-                return;
-            }
-
-            renderProviders();
-
-            if (installs.length === 0) showNotFound('Hermes (Docker)');
-            else connectHermes(installs[0]);
             return;
         }
 
@@ -875,10 +871,33 @@
         if (show) telegramTokenInput.focus();
     });
 
+    // ---------- панель табов окна настроек ----------
+
+    settingsTabs.addEventListener('click', (e) => {
+        const item = e.target.closest('.settings-tabs__item');
+        if (!item) return;
+        const tab = item.dataset.tab;
+        settingsTabItems.forEach((btn) => {
+            const active = btn === item;
+            btn.setAttribute('aria-selected', String(active));
+            const panel = settingsModal.querySelector(`#${btn.getAttribute('aria-controls')}`);
+            if (panel) panel.hidden = !active;
+        });
+        void tab;
+    });
+
     // ---------- открытие окна настроек ----------
 
     function openSettings() {
         closeMenu();
+        // окно всегда открывается на вкладке Providers, даже если в прошлый
+        // раз закрыли на другой — соответствует текущему содержимому по умолчанию
+        settingsTabItems.forEach((btn) => {
+            const active = btn.dataset.tab === 'Providers';
+            btn.setAttribute('aria-selected', String(active));
+            const panel = settingsModal.querySelector(`#${btn.getAttribute('aria-controls')}`);
+            if (panel) panel.hidden = !active;
+        });
         renderDefaultProviderRow();
         renderProviders();
         renderScreenshotScreen();

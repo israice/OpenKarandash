@@ -9,7 +9,13 @@
 // (последние четыре знака). Клиент присылает её обратно неизменной — значит,
 // поле не трогали и ключ в .env остаётся прежним.
 
-const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
+const { readJson, sendJson, sendHtml } = require('../../SYSTEM/core/http.js');
+const { formatWhen } = require('../../SYSTEM/core/format.js');
+const { Eta } = require('eta');
+
+// свой экземпляр Eta со своей папкой шаблонов (см. «Серверные фрагменты» в
+// AGENTS.md): cache:false — правка .eta подхватывается без перезапуска
+const eta = new Eta({ views: __dirname, cache: false });
 // ВРЕМЕННО: дневник опроса — понять, откуда берётся Conflict
 const fsDiag = require('fs');
 const diagStart = Date.now();
@@ -43,7 +49,7 @@ const MESSAGE_MEMORY = 500;     // сколько наших сообщений 
 const TOKEN_RE = /^\d{5,}:[A-Za-z0-9_-]{20,}$/;
 const USER_RE = /^-?\d+$/;
 
-let deps = { setEnvValue: () => {}, ask: null };
+let deps = { setEnvValue: () => {}, ask: null, db: null };
 
 let token = '';
 let users = [];        // кому шлём и от кого принимаем — остальные для бота не существуют
@@ -88,6 +94,43 @@ const CONFLICT_HINT = 'The same bot token is polled somewhere else — stop that
 const sessionByMessage = new Map();
 // а обычное сообщение без reply уходит в последнюю, о которой мы писали
 const lastSessionByChat = new Map();
+
+// история исходящих уведомлений для вкладки Telegram (#telegramMessages):
+// что мост отправил и когда. Раньше жила в памяти процесса (простой массив) —
+// каждая правка *-server.js перезапускает сервер, и последнее уведомление
+// пропадало из вкладки, хотя человек уже прочитал его в самом Telegram.
+// Поэтому это таблица в общей базе (db передаётся через init), как и sessions/messages
+const SENT_MEMORY = 100; // сколько последних уведомлений храним для вкладки
+
+let insertSent = null;
+let listSent = null;
+let trimSent = null;
+
+function initDb(database) {
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS telegram_sent (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            head TEXT NOT NULL,
+            body TEXT NOT NULL,
+            at TEXT NOT NULL
+        );
+    `);
+    insertSent = database.prepare('INSERT INTO telegram_sent (session_id, head, body, at) VALUES (?, ?, ?, ?)');
+    // самые новые первыми — так лимит LIMIT ? сразу берёт нужный хвост;
+    // порядок для отображения (старые сверху) восстанавливает route .reverse()
+    listSent = database.prepare('SELECT session_id AS sessionId, head, body, at FROM telegram_sent ORDER BY id DESC LIMIT ?');
+    trimSent = database.prepare(`
+        DELETE FROM telegram_sent WHERE id NOT IN (
+            SELECT id FROM telegram_sent ORDER BY id DESC LIMIT ?
+        )
+    `);
+}
+
+function rememberSent(sessionId, head, body) {
+    insertSent.run(sessionId, head, body, new Date().toISOString());
+    trimSent.run(SENT_MEMORY); // старое подчищаем сразу, а не отдельным заданием
+}
 
 // ---------- разбор настроек ----------
 
@@ -159,6 +202,9 @@ async function notifyTurnFinished({ sessionId, title, text }) {
     const head = title ? `✅ ${title}` : '✅ Done';
     const body = text.length > TEXT_LIMIT ? `${text.slice(0, TEXT_LIMIT)}…` : text;
     const message = `${head}\n\n${body}`;
+    // одна запись на ход, а не на получателя: адресатов может быть несколько,
+    // а во вкладке Telegram это одно и то же уведомление
+    rememberSent(sessionId, head, body);
 
     for (const chatId of users) {
         try {
@@ -295,6 +341,7 @@ async function connect() {
 
 function init(dependencies) {
     deps = { ...deps, ...dependencies };
+    initDb(deps.db);
     token = process.env[TOKEN_KEY] || '';
     users = parseUsers(process.env[USERS_KEY]);
     // ключ из .env уже есть — мост поднимается вместе с сервером, без захода
@@ -314,6 +361,19 @@ function createRoutes() {
     return {
         '/api/telegram/state': async (req, res) => {
             sendJson(res, state());
+        },
+
+        // лента вкладки Telegram (#telegramMessages): те же сообщения, что
+        // ушли человеку notifyTurnFinished'ом — последний ответ каждой
+        // завершившейся сессии, самые свежие снизу
+        '/api/fragment/telegram-messages': (req, res) => {
+            // из базы приходят новые сверху (см. listSent) — переворачиваем
+            // для отображения: старые сверху, самое свежее внизу, как в чате
+            const list = listSent.all(SENT_MEMORY).reverse().map((m) => ({
+                ...m,
+                when: formatWhen(m.at),
+            }));
+            sendHtml(res, eta.render('telegram-messages', { messages: list }));
         },
 
         // сохранение автоматическое: клиент шлёт оба поля на каждую правку.

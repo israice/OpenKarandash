@@ -9,7 +9,7 @@ import {
     PROVIDERS, connections, saveProviderState, saveAllProviderStates, getActiveProviderId,
     updateClaudeUsage, updateContextGauge, contextWindowForModel,
 } from '../../SYSTEM/providers.js';
-import { isChatNearBottom, scrollChatToBottom, addStep, addThinkingStep, addMessage, addPendingStatus } from './chat-feed.js';
+import { isChatNearBottom, scrollChatToBottom, addStep, addThinkingStep, addMessage, addPendingStatus, markPendingActivity, removePendingStatus, addInterruptedNotice } from './chat-feed.js';
 import { PENDING_SESSION_ID, setChatSessionId, setRunningSessionId, setComposerBusy, loadSessions } from './chat-sessions.js';
 
 // останавливает CLI-процесс на сервере; поток сам закроется событием error/done.
@@ -60,11 +60,14 @@ function makeRenderer(status) {
         if (event.type === 'tool') {
             // каждое действие остаётся своей строкой в ленте, а не заменяет предыдущую
             addStep(`${event.name} ${event.detail}`.trim(), status);
+            markPendingActivity(status); // пауза до следующего шага считается заново
         } else if (event.type === 'thinking') {
             // текст рассуждения, а не просто отметка, что оно было
             addThinkingStep(event.text, status);
+            markPendingActivity(status);
         } else if (event.type === 'text') {
             answered = true;
+            markPendingActivity(status);
             const stick = isChatNearBottom();
             addMessage(event.text, 'assistant');
             state.chatList.append(status); // строка ожидания остаётся последней
@@ -111,7 +114,7 @@ export async function attachSession(id, run) {
         });
     } finally {
         window.__holdReload?.(false);
-        status.remove();
+        removePendingStatus(status);
         setRunningSessionId(null);
         if (run === state.chatRun) setComposerBusy(false);
     }
@@ -131,6 +134,9 @@ export async function openSession(id, running = false) {
     const { messages = [], contextPercent = null, contextWindow = null } = await api('/api/sessions/messages', { id });
     for (const message of messages) {
         if (message.role === 'tool') addStep(message.text);
+        // размышление модели — та же строка курсивом, что и вживую, иначе
+        // сохранённая сессия выглядит иначе, чем та же сессия на глазах
+        else if (message.role === 'thinking') addThinkingStep(message.text);
         else addMessage(message.text, message.role === 'user' ? 'user' : 'assistant');
     }
 
@@ -141,7 +147,25 @@ export async function openSession(id, running = false) {
     if (running) {
         setRunningSessionId(id);
         attachSession(id, state.chatRun);
+        return;
     }
+
+    // ход, который не дошёл до ответа: последней осталась строка шага или сам
+    // вопрос. Ждать нечего — работа уже не идёт, поэтому предлагаем продолжить
+    if (isTurnUnfinished(messages)) {
+        addInterruptedNotice(() => sendToClaude('продолжай'));
+    }
+}
+
+// ход считается недоведённым, когда последнее слово осталось не за агентом:
+// на шаге инструмента (работу оборвали) или на вопросе человека (ответа не было)
+function isTurnUnfinished(messages) {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const role = messages[i].role;
+        if (role === 'assistant' || role === 'error') return false;
+        if (role === 'user' || role === 'tool') return true;
+    }
+    return false;
 }
 
 export async function sendToClaude(text, mode = 'Action') {
@@ -242,7 +266,7 @@ export async function sendToClaude(text, mode = 'Action') {
     } finally {
         window.__holdReload?.(false);
         setRunningSessionId(null);
-        status.remove();
+        removePendingStatus(status);
         if (run === state.chatRun) {
             setComposerBusy(false);
             state.chatInput.focus();

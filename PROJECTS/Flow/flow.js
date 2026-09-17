@@ -241,6 +241,13 @@
                 'Backend developer': '⚙️',
                 'QA': '🐞',
                 'HR': '🧑‍💼',
+                // ниже — настоящие Hermes-профили из hermes-home/profiles/*
+                // (не выдуманные, как QA/Backend developer выше): их реально
+                // монтирует Hermes-стек (DOCS/decisions/029, DOCS/decisions/036)
+                'Developer': '💻',
+                'Docs writer': '📝',
+                'QA checker': '🔬',
+                'Reviewer': '🔎',
             };
             const DEFAULT_AGENT_ICON = '🧩';
 
@@ -269,7 +276,7 @@
                 flowNav.append(row);
             }
 
-            for (const title of ['Secretary', 'UI developer', 'Backend developer', 'QA', 'HR']) {
+            for (const title of ['Secretary', 'UI developer', 'Backend developer', 'QA', 'HR', 'Developer', 'Docs writer', 'QA checker', 'Reviewer']) {
                 addAgentItem(title, AGENT_ICONS[title]);
             }
             for (const title of loadCustomAgents()) {
@@ -807,6 +814,7 @@
                         if (byId[id]) continue;
                         const clone = cloneNodeElement(id);
                         clone.id = id;
+                        applyPersonalMeta(clone, flowById[id]);
                         surface.append(clone);
                         fitNodeMenu(clone);
                         applyMenuOrder(clone);
@@ -879,11 +887,68 @@
                 // ensureRootNode, а собственная карточка со своей разметкой.
                 // Id фиксированный: по нему же её узнаёт восстановление графа
                 // после перезагрузки и берёт тот же шаблон, а не общий
+                // Secretary/UI developer/HR делят один и тот же шаблон карточки
+                // (#flowNodeProfileTemplate) вместо ещё трёх копий разметки QA/Backend —
+                // содержимое в него кладёт applyProfileMeta по PROFILE_META (см. ниже)
                 const PERSONAL_ROOTS = {
                     'QA': { id: 'flowNodeQaRoot', template: 'flowNodeQaTemplate' },
+                    'Backend developer': { id: 'flowNodeBackendRoot', template: 'flowNodeBackendTemplate' },
+                    'Secretary': { id: 'flowNodeSecretaryRoot', template: 'flowNodeProfileTemplate' },
+                    'UI developer': { id: 'flowNodeUiRoot', template: 'flowNodeProfileTemplate' },
+                    'HR': { id: 'flowNodeHrRoot', template: 'flowNodeProfileTemplate' },
+                    // настоящие каталоги hermes-home/profiles/* (DOCS/decisions/036):
+                    // общий шаблон карточки, как у Secretary/UI developer/HR — четвёртый
+                    // собственный шаблон разметки заводить незачем, раз их реальные
+                    // файлы (SOUL.md, config.yaml) и так одинаковы у всех четырёх
+                    'Developer': { id: 'flowNodeDeveloperRoot', template: 'flowNodeProfileTemplate' },
+                    'Docs writer': { id: 'flowNodeDocsWriterRoot', template: 'flowNodeProfileTemplate' },
+                    'QA checker': { id: 'flowNodeQaCheckerRoot', template: 'flowNodeProfileTemplate' },
+                    'Reviewer': { id: 'flowNodeReviewerRoot', template: 'flowNodeProfileTemplate' },
                 };
                 const PERSONAL_ROOT_BY_ID = {};
                 for (const root of Object.values(PERSONAL_ROOTS)) PERSONAL_ROOT_BY_ID[root.id] = root;
+                // заголовок/подзаголовок общего шаблона (#flowNodeProfileTemplate) в
+                // разметке пустые — у QA и Backend developer они уже вписаны в их
+                // собственный шаблон. Подставляем их здесь по имени профиля
+                const PROFILE_META = {
+                    'Secretary': { title: 'Secretary', subtitle: 'Dispatcher agent · Entry point' },
+                    'UI developer': { title: 'UI developer', subtitle: 'Interface & client code · Entry point' },
+                    'HR': { title: 'HR', subtitle: 'People & onboarding · Entry point' },
+                    // subtitle короткий специально: полная строка profile.yaml →
+                    // description лежит в панели System Prompt (см. HERMES_PROMPT_*)
+                    'Developer': { title: 'Developer', subtitle: 'Real Hermes profile · hermes-home/profiles/developer' },
+                    'Docs writer': { title: 'Docs writer', subtitle: 'Real Hermes profile · hermes-home/profiles/docs-writer' },
+                    'QA checker': { title: 'QA checker', subtitle: 'Real Hermes profile · hermes-home/profiles/qa-checker' },
+                    'Reviewer': { title: 'Reviewer', subtitle: 'Real Hermes profile · hermes-home/profiles/reviewer' },
+                };
+                // вызывается и при первом создании личной ноды (ensureRootNode), и при
+                // восстановлении графа после перезагрузки (restoreGraph) — в обоих
+                // случаях клон общего шаблона приходит с пустыми title/subtitle
+                function applyPersonalMeta(root, flow) {
+                    const meta = PROFILE_META[flow];
+                    if (!meta) return;
+                    const title = root.querySelector('.flow-node__title');
+                    const subtitle = root.querySelector('.flow-node__subtitle');
+                    if (title && !title.textContent) title.textContent = meta.title;
+                    if (subtitle && !subtitle.textContent) subtitle.textContent = meta.subtitle;
+                }
+                // у настоящих hermes-home/profiles/* иконка 📄 в панели должна открывать
+                // настоящий файл этого профиля — общий #flowNodeProfileTemplate приходит
+                // без data-file, расставляем его здесь по имени личной ноды
+                const FILE_BY_ROOT = {
+                    flowNodeDeveloperRoot: { soul: 'hermes-home/profiles/developer/SOUL.md', prompt: 'hermes-home/profiles/developer/profile.yaml', tools: 'hermes-home/profiles/developer/config.yaml', permissions: 'hermes-home/profiles/developer/config.yaml', model: 'hermes-home/profiles/developer/config.yaml', agents: 'hermes-home/profiles/developer/config.yaml' },
+                    flowNodeDocsWriterRoot: { soul: 'hermes-home/profiles/docs-writer/SOUL.md', prompt: 'hermes-home/profiles/docs-writer/profile.yaml', tools: 'hermes-home/profiles/docs-writer/config.yaml', permissions: 'hermes-home/profiles/docs-writer/config.yaml', model: 'hermes-home/profiles/docs-writer/config.yaml', agents: 'hermes-home/profiles/docs-writer/config.yaml' },
+                    flowNodeQaCheckerRoot: { soul: 'hermes-home/profiles/qa-checker/SOUL.md', prompt: 'hermes-home/profiles/qa-checker/profile.yaml', tools: 'hermes-home/profiles/qa-checker/config.yaml', permissions: 'hermes-home/profiles/qa-checker/config.yaml', model: 'hermes-home/profiles/qa-checker/config.yaml', agents: 'hermes-home/profiles/qa-checker/config.yaml' },
+                    flowNodeReviewerRoot: { soul: 'hermes-home/profiles/reviewer/SOUL.md', prompt: 'hermes-home/profiles/reviewer/profile.yaml', tools: 'hermes-home/profiles/reviewer/config.yaml', permissions: 'hermes-home/profiles/reviewer/config.yaml', model: 'hermes-home/profiles/reviewer/config.yaml', agents: 'hermes-home/profiles/reviewer/config.yaml' },
+                };
+                function applyPanelFiles(root) {
+                    const files = FILE_BY_ROOT[root.id];
+                    if (!files) return;
+                    for (const [panel, path] of Object.entries(files)) {
+                        const btn = root.querySelector('.flow-node__panel--' + panel + ' .flow-node__panel-file');
+                        if (btn) btn.dataset.file = path;
+                    }
+                }
                 // клон карточки под конкретный id: личной ноде — её шаблон, всем
                 // остальным — общий
                 function cloneNodeElement(id) {
@@ -937,8 +1002,53 @@
                 // пока отметок не ставили, подключённым считается тот сервер, который
                 // и правда прописан в профиле (PROJECTS/Flow/profiles/QA/mcp.json)
                 const MCP_DEFAULT = ['playwright'];
-                function connectedMcps() {
-                    return flowGet(MCP_STATE_KEY, MCP_DEFAULT);
+
+                // те же интеграции, но для бэкенд-разработчика: список свой, ключ
+                // хранения свой (flowBackendMcp) — общий с QA был бы неверен, раз
+                // отметки должны жить раздельно по ролям
+                const BACKEND_MCPS = [
+                    { id: 'github', name: 'GitHub', hint: 'Issues, pull requests, code review' },
+                    { id: 'postgres', name: 'Postgres', hint: 'Schema, queries, migrations' },
+                    { id: 'sqlite', name: 'SQLite', hint: 'Local dev database' },
+                    { id: 'redis', name: 'Redis', hint: 'Cache and background job queues' },
+                    { id: 'docker', name: 'Docker', hint: 'Container builds and compose stacks' },
+                    { id: 'kubernetes', name: 'Kubernetes', hint: 'Deploys and rollouts' },
+                    { id: 'http', name: 'HTTP client', hint: 'REST calls and integration checks' },
+                    { id: 'openapi', name: 'OpenAPI', hint: 'API schema and contract checks' },
+                    { id: 'sentry', name: 'Sentry', hint: 'Errors from the running server' },
+                    { id: 'grafana', name: 'Grafana', hint: 'Metrics and dashboards' },
+                    { id: 'aws', name: 'AWS', hint: 'Cloud resources and deploys' },
+                    { id: 'stripe', name: 'Stripe', hint: 'Billing and payment webhooks' },
+                    { id: 'slack', name: 'Slack', hint: 'Deploy and incident notifications' },
+                    { id: 'jira', name: 'Jira', hint: 'Backlog and sprint tickets' },
+                ];
+                const BACKEND_MCP_STATE_KEY = 'flowBackendMcp';
+                // по умолчанию подключённым считается то, что и правда прописано в
+                // config.yaml профиля (см. PROJECTS/Flow/profiles/Backend developer/config.yaml)
+                const BACKEND_MCP_DEFAULT = ['github'];
+
+                // четыре настоящих Hermes-профиля (hermes-home/profiles/*) сегодня не
+                // содержат mcp: в своём config.yaml — список пуст не потому что мы его
+                // не нарисовали, а потому что там правда ничего не настроено
+                const HERMES_MCPS = [];
+
+                // сопоставление личной ноды (по её фиксированному id) со списком её
+                // интеграций и ключом отметок — без этого любая карточка с таким меню
+                // рисовала бы список и хранила отметки QA
+                const MCP_BY_ROOT = {
+                    flowNodeQaRoot: { list: QA_MCPS, stateKey: MCP_STATE_KEY, def: MCP_DEFAULT },
+                    flowNodeBackendRoot: { list: BACKEND_MCPS, stateKey: BACKEND_MCP_STATE_KEY, def: BACKEND_MCP_DEFAULT },
+                    flowNodeDeveloperRoot: { list: HERMES_MCPS, stateKey: 'flowDeveloperMcp', def: [] },
+                    flowNodeDocsWriterRoot: { list: HERMES_MCPS, stateKey: 'flowDocsWriterMcp', def: [] },
+                    flowNodeQaCheckerRoot: { list: HERMES_MCPS, stateKey: 'flowQaCheckerMcp', def: [] },
+                    flowNodeReviewerRoot: { list: HERMES_MCPS, stateKey: 'flowReviewerMcp', def: [] },
+                };
+                function mcpConfigFor(n) {
+                    return MCP_BY_ROOT[n.id] || MCP_BY_ROOT.flowNodeQaRoot;
+                }
+                function connectedMcps(n) {
+                    const cfg = mcpConfigFor(n);
+                    return flowGet(cfg.stateKey, cfg.def);
                 }
                 // кнопка рядом с сервером: подключает, а у подключённого — отключает
                 function setMcpButton(btn, connected) {
@@ -949,9 +1059,10 @@
                 function renderMcpPanel(n) {
                     const list = n.querySelector('.flow-node__mcp-list');
                     if (!list) return;
-                    const connected = connectedMcps();
+                    const cfg = mcpConfigFor(n);
+                    const connected = connectedMcps(n);
                     list.textContent = '';
-                    for (const mcp of QA_MCPS) {
+                    for (const mcp of cfg.list) {
                         const row = document.createElement('div');
                         row.className = 'flow-node__mcp';
                         row.dataset.mcp = mcp.id;
@@ -1085,6 +1196,200 @@
                     { id: 'forget', label: 'What I forget', hint: 'What stays inside one session only', value: 'Page state, ids, screenshots and the exact output of a run: they live as long as the session does.' },
                 ];
                 const MEMORY_STATE_KEY = 'flowQaMemory';
+
+                // --- те же девять панелей, но для бэкенд-разработчика (шаблон
+                // #flowNodeBackendTemplate, DOCS/decisions/033). Профиль здесь —
+                // настоящий каталог Hermes (PROJECTS/Flow/profiles/Backend developer/
+                // config.yaml + PERSONA.md — Hermes-эквивалент системного промпта
+                // называется SOUL.md, но Hermes запрещает запись в файл с этим именем
+                // из-под агента, поэтому тот же текст лежит в PERSONA.md, см. README.md
+                // рядом), поэтому значения ниже пересказывают именно его поля, а не
+                // придуманы заново. Как и у QA, в запрос к CLI текст не уходит —
+                // это только описание для человека
+                const BACKEND_SOUL = [
+                    { id: 'identity', label: 'Who am I', hint: 'Role, name and place in the flow', value: 'Backend developer of this project: server, API and data — everything behind the interface.' },
+                    { id: 'personality', label: 'Personality', hint: 'Character traits and temper', value: 'Methodical, a bit stubborn about correctness. I would rather re-check an edge case than ship a guess.' },
+                    { id: 'values', label: 'Values', hint: 'What I never trade off', value: 'A working server over a clever one. A migration that can be rolled back. No silent data loss.' },
+                    { id: 'style', label: 'Interaction style', hint: 'How I talk to the team', value: 'I explain the trade-off, then pick one. Short answers, code when code says it better than words.' },
+                ];
+                const BACKEND_SOUL_STATE_KEY = 'flowBackendSoul';
+                const BACKEND_PROMPT = [
+                    { id: 'behavior', label: 'How should I behave', hint: 'Basic instructions: what I do and what I never do', value: 'I build and change the server: routes, schema, connectors. I write real code, not a description of it.' },
+                    { id: 'rules', label: 'Rules', hint: 'Constraints I follow in every answer', value: 'Do not start server.js myself — the user runs it. Do not touch another feature\'s files without a reason. Keep secrets in .env.' },
+                    { id: 'principles', label: 'Principles', hint: 'How I decide when the rules are silent', value: 'Match the pattern already in the codebase before inventing a new one. A small correct change beats a large speculative one.' },
+                    { id: 'output', label: 'Output format', hint: 'What my answer looks like', value: 'What changed and why, one paragraph. Then the diff speaks for itself.' },
+                ];
+                const BACKEND_PROMPT_STATE_KEY = 'flowBackendPrompt';
+                const BACKEND_THINKING = [
+                    { id: 'depth', label: 'How deep do I think', hint: 'Reasoning level: from a quick answer to a long deliberation', value: 'Deep enough to trace a request through every layer it touches before writing the fix.' },
+                    { id: 'budget', label: 'Thinking budget', hint: 'How much reasoning a single answer may take', value: 'config.yaml has no direct field for this yet — closest is the model/provider choice below.' },
+                    { id: 'when', label: 'When to think longer', hint: 'Tasks worth spending the extra reasoning on', value: 'A schema change, a race between two routes, anything touching money or auth.' },
+                    { id: 'visibility', label: 'Visible reasoning', hint: 'What of my thinking the team gets to see', value: 'display.show_reasoning: false in config.yaml — the team sees the result and the diff, not the scratch work.' },
+                ];
+                const BACKEND_THINKING_STATE_KEY = 'flowBackendThinking';
+                const BACKEND_TOOLS = [
+                    { id: 'builtin', label: 'What can I do', hint: 'Built-in tools: files, search, terminal, code execution', value: 'terminal, file, coding, code_execution — read, write, run. Unlike QA, write and edit are not excluded.' },
+                    { id: 'connected', label: 'Connected tools', hint: 'What comes from outside: MCP servers and integrations', value: 'GitHub by default (config.yaml → mcp.servers); the rest of the MCP list stays off until a task needs it.' },
+                    { id: 'choice', label: 'How I choose', hint: 'Which tool I reach for on which task', value: 'file/coding to change the server, terminal to run and check it, delegation for work that splits cleanly.' },
+                    { id: 'missing', label: 'What I lack', hint: 'Abilities I would need but do not have yet', value: 'No real deploy target yet — terminal.backend: docker points at a workspace, not this project\'s host.' },
+                ];
+                const BACKEND_TOOLS_STATE_KEY = 'flowBackendTools';
+                const BACKEND_PERMISSIONS = [
+                    { id: 'mode', label: 'Approval mode', hint: 'config.yaml → approvals.mode', value: 'smart — Hermes decides on its own when a step is risky enough to ask first, rather than asking every time.' },
+                    { id: 'timeout', label: 'Approval timeout', hint: 'config.yaml → approvals.timeout', value: '120 seconds to answer a confirmation before the step is treated as declined.' },
+                    { id: 'cron', label: 'Cron approvals', hint: 'config.yaml → approvals.cron_mode', value: 'manual — a scheduled run always asks, unlike an interactive one.' },
+                    { id: 'security', label: 'Security', hint: 'config.yaml → security', value: 'redact_secrets and tirith_enabled are on; no website blocklist entries yet.' },
+                ];
+                const BACKEND_PERMISSIONS_STATE_KEY = 'flowBackendPermissions';
+                const BACKEND_MODEL = [
+                    { id: 'model', label: 'What do I think with', hint: 'config.yaml → model.default', value: 'claude-bridge-sonnet — enough reasoning for real server code, not the cheapest option.' },
+                    { id: 'provider', label: 'Provider', hint: 'config.yaml → model.provider / base_url', value: 'claude-bridge, over the project\'s own Hermes-in-Docker gateway (DOCS/decisions/029).' },
+                    { id: 'why', label: 'Why this one', hint: 'What this model is better at than the others for my tasks', value: 'Backend work is mostly one careful change at a time — a stronger model beats many cheap retries.' },
+                    { id: 'fallback', label: 'Fallback', hint: 'What I switch to when this one is unavailable or too expensive', value: 'model.aliases: fast → claude-bridge-haiku for small edits, smart → claude-bridge-opus for the hardest ones.' },
+                ];
+                const BACKEND_MODEL_STATE_KEY = 'flowBackendModel';
+                const BACKEND_SKILLS = [
+                    { id: 'skills', label: 'What special abilities do I have', hint: 'Skills loaded for this profile', value: 'The profile\'s own skills/ folder is a placeholder for now — nothing written there yet.' },
+                    { id: 'when', label: 'When I reach for them', hint: 'Which task turns on which skill', value: 'A recurring backend pattern — auth, migrations, a connector shape — once one gets written down.' },
+                    { id: 'own', label: 'My own skills', hint: 'Instructions written for this agent alone', value: 'Following the project\'s existing route/module pattern instead of inventing a new shape per feature.' },
+                    { id: 'missing', label: 'What I lack', hint: 'Skills I would need but do not have yet', value: 'No written skill yet for this project\'s own conventions — today that knowledge lives only in AGENTS.override.md.' },
+                ];
+                const BACKEND_SKILLS_STATE_KEY = 'flowBackendSkills';
+                const BACKEND_AGENTS = [
+                    { id: 'available', label: 'Which agents can I call in', hint: 'config.yaml → delegation', value: 'Up to 2 concurrent children, 6 iterations, spawn depth 2 — same model as mine (claude-bridge-sonnet).' },
+                    { id: 'when', label: 'When I delegate', hint: 'Which work goes to someone else instead of me', value: 'A subtask that splits cleanly and does not need the full context of the main change.' },
+                    { id: 'rules', label: 'Rules of use', hint: 'What I hand over and what I check on the way back', value: 'I hand over a self-contained goal and verify the result myself before trusting it.' },
+                    { id: 'limits', label: 'What I never delegate', hint: 'Work I keep for myself', value: 'The final review of anything touching the schema or a production route.' },
+                ];
+                const BACKEND_AGENTS_STATE_KEY = 'flowBackendAgents';
+                const BACKEND_MEMORY = [
+                    { id: 'remember', label: 'What do I remember', hint: 'config.yaml → memory', value: 'memory_enabled: true, provider: sqlite — facts persist across sessions; user_profile_enabled is off.' },
+                    { id: 'preferences', label: 'Preferences', hint: 'What I have learned about the team and the project', value: 'The project\'s own conventions: dependency policy, decision log, per-feature server files.' },
+                    { id: 'write', label: 'What I write down', hint: 'What is worth remembering and what is not', value: 'write_approval: smart — Hermes itself judges what is worth saving versus asking first.' },
+                    { id: 'forget', label: 'What I forget', hint: 'What stays inside one session only', value: 'The exact terminal output and intermediate diffs of a single run — those are not durable facts.' },
+                ];
+                const BACKEND_MEMORY_STATE_KEY = 'flowBackendMemory';
+
+                // четыре настоящих каталога hermes-home/profiles/* физически почти
+                // идентичны друг другу (тот же SOUL.md, тот же config.yaml, тот же
+                // набор bundled skills) — реально различается только description в
+                // profile.yaml. Поля общие на все четыре карточки, кроме System
+                // Prompt: там честно показан этот текст, а не выдуманная роль
+                const HERMES_SOUL_TEXT = 'You are Hermes Agent, built by Nous Research. Be direct: match the length of your reply to the weight of the ask — a one-line question gets a one-line answer, and finished work gets a short report of what changed, what\'s verified, and what\'s left, never a replay of the process. No filler ("Great question," "I\'d be happy to"), no restating the request back, no re-summarizing what you already said, no narrating tool calls the user can see. Plain claims over adjectives; when unsure, say so plainly. Agree because it\'s right, not because the user said it. Depth is earned — give it when the user asks for detail, teaches, or the stakes demand it, not by default.';
+                const HERMES_SOUL = [
+                    { id: 'identity', label: 'SOUL.md content', hint: 'The real file — byte-identical across all four profiles, nothing role-specific written here yet', value: HERMES_SOUL_TEXT },
+                ];
+                const HERMES_THINKING = [
+                    { id: 'level', label: 'Reasoning level', hint: 'config.yaml has no thinking/reasoning block', value: 'Not set — runs at claude-bridge-sonnet\'s default, no override configured.' },
+                ];
+                const HERMES_TOOLS = [
+                    { id: 'toolsets', label: 'Enabled toolsets', hint: 'config.yaml → toolsets', value: 'hermes-cli — the standard bundled toolset. No extra toolsets or plugins enabled.' },
+                ];
+                const HERMES_PERMISSIONS = [
+                    { id: 'security', label: 'Security', hint: 'config.yaml → security (commented out = defaults)', value: 'redact_secrets and tirith_enabled stay at their defaults (both on) — the security block is only a commented example, never uncommented.' },
+                ];
+                const HERMES_MODEL = [
+                    { id: 'model', label: 'What do I think with', hint: 'config.yaml → model.default', value: 'claude-bridge-sonnet, provider claude-bridge — same as every profile in this project (DOCS/decisions/029).' },
+                    { id: 'fallback', label: 'Fallback', hint: 'config.yaml → fallback_providers', value: 'fallback_providers: [] — no fallback model configured, the commented example was never filled in.' },
+                ];
+                const HERMES_SKILLS = [
+                    { id: 'skills', label: 'What special abilities do I have', hint: 'skills/ folder', value: 'The full stock Hermes skill bundle (apple, autonomous-ai-agents, creative, devops, email, media, note-taking, productivity, research, social-media, software-development, web) — nothing written for this role specifically yet.' },
+                ];
+                const HERMES_AGENTS = [
+                    { id: 'available', label: 'Which agents can I call in', hint: 'config.yaml → agent (empty object)', value: 'agent: {} — delegation is left at Hermes defaults, not configured per role.' },
+                ];
+                const HERMES_MEMORY = [
+                    { id: 'remember', label: 'What do I remember', hint: 'memories/ folder', value: 'Empty — no memory entries written yet for this profile.' },
+                ];
+                const HERMES_PROMPT_DEVELOPER = [
+                    { id: 'role', label: 'What do I do', hint: 'profile.yaml → description', value: 'Основной разработчик: реализация фич, правки кода и тестов в проекте OpenKarandash (Node/JS сервер, htmx-фрагменты, ES-модули клиента).' },
+                    { id: 'sessions', label: 'Track record so far', hint: 'sessions/ folder', value: '1 session recorded so far.' },
+                ];
+                const HERMES_PROMPT_DOCS_WRITER = [
+                    { id: 'role', label: 'What do I do', hint: 'profile.yaml → description', value: 'Документация: ведёт DOCS/decisions, README разделов и заметки в vault — объясняет причины решений и держит карту проекта актуальной.' },
+                    { id: 'sessions', label: 'Track record so far', hint: 'sessions/ folder', value: 'No sessions recorded yet.' },
+                ];
+                const HERMES_PROMPT_QA_CHECKER = [
+                    { id: 'role', label: 'What do I do', hint: 'profile.yaml → description', value: 'QA живого интерфейса через Playwright: проверяет вкладки и фичи руками на реально запущенном сервере пользователя, ищет визуальные и функциональные баги.' },
+                    { id: 'sessions', label: 'Track record so far', hint: 'sessions/ folder', value: 'No sessions recorded yet.' },
+                ];
+                const HERMES_PROMPT_REVIEWER = [
+                    { id: 'role', label: 'What do I do', hint: 'profile.yaml → description', value: 'Код-ревью: проверяет диффы на соответствие конвенциям проекта (AGENTS.md), ищет баги, security-риски и нарушения архитектуры фич перед мержем.' },
+                    { id: 'sessions', label: 'Track record so far', hint: 'sessions/ folder', value: 'No sessions recorded yet.' },
+                ];
+
+                // сопоставление личной ноды (по фиксированному id) с набором полей для
+                // каждой панели: без него Backend developer показывал бы текст QA, раз
+                // renderFieldPanel не знает, чья это карточка (см. клик по data-panel ниже)
+                const ROOT_FIELDS = {
+                    flowNodeQaRoot: {
+                        soul: [QA_SOUL, SOUL_STATE_KEY],
+                        prompt: [QA_PROMPT, PROMPT_STATE_KEY],
+                        thinking: [QA_THINKING, THINKING_STATE_KEY],
+                        tools: [QA_TOOLS, TOOLS_STATE_KEY],
+                        permissions: [QA_PERMISSIONS, PERMISSIONS_STATE_KEY],
+                        model: [QA_MODEL, MODEL_STATE_KEY],
+                        skills: [QA_SKILLS, SKILLS_STATE_KEY],
+                        agents: [QA_AGENTS, AGENTS_STATE_KEY],
+                        memory: [QA_MEMORY, MEMORY_STATE_KEY],
+                    },
+                    flowNodeBackendRoot: {
+                        soul: [BACKEND_SOUL, BACKEND_SOUL_STATE_KEY],
+                        prompt: [BACKEND_PROMPT, BACKEND_PROMPT_STATE_KEY],
+                        thinking: [BACKEND_THINKING, BACKEND_THINKING_STATE_KEY],
+                        tools: [BACKEND_TOOLS, BACKEND_TOOLS_STATE_KEY],
+                        permissions: [BACKEND_PERMISSIONS, BACKEND_PERMISSIONS_STATE_KEY],
+                        model: [BACKEND_MODEL, BACKEND_MODEL_STATE_KEY],
+                        skills: [BACKEND_SKILLS, BACKEND_SKILLS_STATE_KEY],
+                        agents: [BACKEND_AGENTS, BACKEND_AGENTS_STATE_KEY],
+                        memory: [BACKEND_MEMORY, BACKEND_MEMORY_STATE_KEY],
+                    },
+                    flowNodeDeveloperRoot: {
+                        soul: [HERMES_SOUL, 'flowDeveloperSoul'],
+                        prompt: [HERMES_PROMPT_DEVELOPER, 'flowDeveloperPrompt'],
+                        thinking: [HERMES_THINKING, 'flowDeveloperThinking'],
+                        tools: [HERMES_TOOLS, 'flowDeveloperTools'],
+                        permissions: [HERMES_PERMISSIONS, 'flowDeveloperPermissions'],
+                        model: [HERMES_MODEL, 'flowDeveloperModel'],
+                        skills: [HERMES_SKILLS, 'flowDeveloperSkills'],
+                        agents: [HERMES_AGENTS, 'flowDeveloperAgents'],
+                        memory: [HERMES_MEMORY, 'flowDeveloperMemory'],
+                    },
+                    flowNodeDocsWriterRoot: {
+                        soul: [HERMES_SOUL, 'flowDocsWriterSoul'],
+                        prompt: [HERMES_PROMPT_DOCS_WRITER, 'flowDocsWriterPrompt'],
+                        thinking: [HERMES_THINKING, 'flowDocsWriterThinking'],
+                        tools: [HERMES_TOOLS, 'flowDocsWriterTools'],
+                        permissions: [HERMES_PERMISSIONS, 'flowDocsWriterPermissions'],
+                        model: [HERMES_MODEL, 'flowDocsWriterModel'],
+                        skills: [HERMES_SKILLS, 'flowDocsWriterSkills'],
+                        agents: [HERMES_AGENTS, 'flowDocsWriterAgents'],
+                        memory: [HERMES_MEMORY, 'flowDocsWriterMemory'],
+                    },
+                    flowNodeQaCheckerRoot: {
+                        soul: [HERMES_SOUL, 'flowQaCheckerSoul'],
+                        prompt: [HERMES_PROMPT_QA_CHECKER, 'flowQaCheckerPrompt'],
+                        thinking: [HERMES_THINKING, 'flowQaCheckerThinking'],
+                        tools: [HERMES_TOOLS, 'flowQaCheckerTools'],
+                        permissions: [HERMES_PERMISSIONS, 'flowQaCheckerPermissions'],
+                        model: [HERMES_MODEL, 'flowQaCheckerModel'],
+                        skills: [HERMES_SKILLS, 'flowQaCheckerSkills'],
+                        agents: [HERMES_AGENTS, 'flowQaCheckerAgents'],
+                        memory: [HERMES_MEMORY, 'flowQaCheckerMemory'],
+                    },
+                    flowNodeReviewerRoot: {
+                        soul: [HERMES_SOUL, 'flowReviewerSoul'],
+                        prompt: [HERMES_PROMPT_REVIEWER, 'flowReviewerPrompt'],
+                        thinking: [HERMES_THINKING, 'flowReviewerThinking'],
+                        tools: [HERMES_TOOLS, 'flowReviewerTools'],
+                        permissions: [HERMES_PERMISSIONS, 'flowReviewerPermissions'],
+                        model: [HERMES_MODEL, 'flowReviewerModel'],
+                        skills: [HERMES_SKILLS, 'flowReviewerSkills'],
+                        agents: [HERMES_AGENTS, 'flowReviewerAgents'],
+                        memory: [HERMES_MEMORY, 'flowReviewerMemory'],
+                    },
+                };
+
                 // потолок высоты поля панели: выше него поле не растёт, текст уходит
                 // под собственную прокрутку — иначе одно длинное поле вытягивает ноду
                 const FIELD_MAX_HEIGHT = 160;
@@ -1792,17 +2097,21 @@
                     item.classList.toggle('flow-node__menu-item--active', show);
                     item.setAttribute('aria-pressed', show ? 'true' : 'false');
                     if (show && item.dataset.panel === 'mcp') renderMcpPanel(n);
-                    if (show && item.dataset.panel === 'soul') renderFieldPanel(n, 'soul', QA_SOUL, SOUL_STATE_KEY);
-                    if (show && item.dataset.panel === 'prompt') renderFieldPanel(n, 'prompt', QA_PROMPT, PROMPT_STATE_KEY);
-                    if (show && item.dataset.panel === 'thinking') renderFieldPanel(n, 'thinking', QA_THINKING, THINKING_STATE_KEY);
-                    if (show && item.dataset.panel === 'tools') renderFieldPanel(n, 'tools', QA_TOOLS, TOOLS_STATE_KEY);
-                    if (show && item.dataset.panel === 'permissions') renderFieldPanel(n, 'permissions', QA_PERMISSIONS, PERMISSIONS_STATE_KEY);
+                    // содержимое остальных панелей зависит от того, чья это карточка —
+                    // QA или Backend developer (см. ROOT_FIELDS выше): без этой развилки
+                    // Backend показывал бы текст QA
+                    const rootFields = ROOT_FIELDS[n.id] || ROOT_FIELDS.flowNodeQaRoot;
+                    if (show && item.dataset.panel === 'soul') renderFieldPanel(n, 'soul', ...rootFields.soul);
+                    if (show && item.dataset.panel === 'prompt') renderFieldPanel(n, 'prompt', ...rootFields.prompt);
+                    if (show && item.dataset.panel === 'thinking') renderFieldPanel(n, 'thinking', ...rootFields.thinking);
+                    if (show && item.dataset.panel === 'tools') renderFieldPanel(n, 'tools', ...rootFields.tools);
+                    if (show && item.dataset.panel === 'permissions') renderFieldPanel(n, 'permissions', ...rootFields.permissions);
                     // у панели Model префикс классов llm: .flow-node__model — это
                     // селектор модели в подвале карточки, занимать его нельзя
-                    if (show && item.dataset.panel === 'model') renderFieldPanel(n, 'llm', QA_MODEL, MODEL_STATE_KEY);
-                    if (show && item.dataset.panel === 'skills') renderFieldPanel(n, 'skills', QA_SKILLS, SKILLS_STATE_KEY);
-                    if (show && item.dataset.panel === 'agents') renderFieldPanel(n, 'agents', QA_AGENTS, AGENTS_STATE_KEY);
-                    if (show && item.dataset.panel === 'memory') renderFieldPanel(n, 'memory', QA_MEMORY, MEMORY_STATE_KEY);
+                    if (show && item.dataset.panel === 'model') renderFieldPanel(n, 'llm', ...rootFields.model);
+                    if (show && item.dataset.panel === 'skills') renderFieldPanel(n, 'skills', ...rootFields.skills);
+                    if (show && item.dataset.panel === 'agents') renderFieldPanel(n, 'agents', ...rootFields.agents);
+                    if (show && item.dataset.panel === 'memory') renderFieldPanel(n, 'memory', ...rootFields.memory);
                     afterNodeChange();
                 });
 
@@ -1940,11 +2249,17 @@
                 surface.addEventListener('click', (e) => {
                     const btn = e.target.closest('.flow-node__mcp-toggle');
                     if (!btn) return;
+                    // карточка каждой роли на странице ровно одна (личная нода держит
+                    // фиксированный id), поэтому отметку достаточно обновить внутри неё —
+                    // и не задеть тот же id в списке другой роли (у QA и Backend есть
+                    // совпадающие id, например slack)
+                    const n = btn.closest('.flow-node');
+                    const cfg = mcpConfigFor(n);
                     const id = btn.closest('.flow-node__mcp').dataset.mcp;
-                    const connected = connectedMcps();
+                    const connected = connectedMcps(n);
                     const next = connected.includes(id) ? connected.filter((v) => v !== id) : [...connected, id];
-                    flowSet(MCP_STATE_KEY, next);
-                    for (const row of surface.querySelectorAll('.flow-node__mcp[data-mcp="' + id + '"]')) {
+                    flowSet(cfg.stateKey, next);
+                    for (const row of n.querySelectorAll('.flow-node__mcp[data-mcp="' + id + '"]')) {
                         setMcpButton(row.querySelector('.flow-node__mcp-toggle'), next.includes(id));
                     }
                 });
@@ -2188,8 +2503,12 @@
                     const root = cloneNodeElement(id);
                     root.id = nextNodeId(id);
                     if (sessionId) root.dataset.session = sessionId;
-                    // у личной ноды заголовок свой, из её шаблона — не перебиваем
+                    // у QA и Backend developer заголовок свой, из их собственного шаблона —
+                    // не перебиваем; у общего #flowNodeProfileTemplate его подставляет
+                    // applyPersonalMeta по имени профиля
                     if (!PERSONAL_ROOT_BY_ID[root.id]) root.querySelector('.flow-node__title').textContent = 'Start';
+                    else applyPersonalMeta(root, flow);
+                    if (PERSONAL_ROOT_BY_ID[root.id]) applyPanelFiles(root);
                     surface.append(root);
                     fitNodeMenu(root);
                     applyMenuOrder(root);

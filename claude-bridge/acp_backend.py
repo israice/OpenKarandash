@@ -274,9 +274,8 @@ class AcpBackend:
         tool_section = tool_protocol.render_tools(tools or [], tool_choice)
         if tool_section:
             parts.append(tool_section)
-        parts.append(transcript)
-        if tool_section:
-            parts.append(tool_protocol.REMINDER)
+        # reminder before the trailing "Assistant:" cue — see cli_backend._prepare
+        parts.append(tool_protocol.insert_reminder(transcript) if tool_section else transcript)
 
         blocks: list[dict] = [{"type": "text", "text": "\n\n".join(p for p in parts if p)}]
         for img in images:
@@ -388,9 +387,14 @@ def _to_bridge_result(payload: dict, text: str, model: str,
 def _attach_tool_calls(result: BridgeResult, tools: list[dict] | None) -> BridgeResult:
     if not tools:
         return result
-    calls = tool_protocol.parse_tool_calls(result.text, tool_protocol.tool_names(tools))
+    names = tool_protocol.tool_names(tools)
+    prose, calls, note = tool_protocol.split_reply(result.text, names)
     if calls:
         result.tool_calls = calls
-        result.text = ""
+        result.text = prose  # пояснение перед объектом — это содержимое сообщения
         result.stop_reason = "tool_use"
+    elif note:
+        # инструмента нет: ошибку возвращаем модели словами, а не сырым
+        # объектом человеку — иначе ход кончается ничем и вызов повторяется
+        result.text = f"{prose}\n\n{note}" if prose else note
     return result

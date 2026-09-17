@@ -15,7 +15,7 @@ import { state as chatState } from './chat-state.js';
 import { api, confirmModal, openShotLightbox, restoreServerConnection } from '../../SYSTEM/app.js';
 import {
     PROVIDERS, connections, saveProviderState, saveAllProviderStates,
-    loadClaudeState, loadProviderState, loadOpenCodeState, renderSessionModelEffort,
+    loadClaudeState, loadProviderState, loadOpenCodeState, renderSessionModelEffort, renderSessionBarControls,
 } from '../../SYSTEM/providers.js';
 import { initFeed } from './chat-feed.js';
 import {
@@ -47,22 +47,53 @@ function setMode(mode) {
 }
 
 // комментарий из режима Karandash начинает отдельную сессию с этим вопросом.
-// вкладку на Chat не переключаем — пользователь сам перейдёт туда, если захочет
-function startCommentSession(prompt, thumb) {
+// вкладку на Chat не переключаем — пользователь сам перейдёт туда, если захочет.
+// mode приходит из переключателя Chat/Action самого попапа Karandash — Chat
+// обсуждает место без изменений, Action сразу вносит правку; Loop недоступен
+// там же, где и в композере, поэтому сюда никогда не долетает
+function startCommentSession(prompt, thumb, mode) {
     chatState.pendingThumb = thumb || null;
     setChatSessionId(null);
     saveAllProviderStates();
     chatState.chatRun += 1;
     chatState.chatList.innerHTML = '';
-    setMode('Action');
-    sendToClaude(prompt, 'Action');
+    const sendMode = mode === 'Chat' ? 'Chat' : 'Action';
+    setMode(sendMode);
+    sendToClaude(prompt, sendMode);
+}
+
+async function adoptAutoConnectedClaude() {
+    try {
+        const status = await api('/api/agent/status', {});
+        if (!status?.claude) return null;
+        const provider = PROVIDERS.find((p) => p.id === 'claude');
+        const state = {
+            installId: status.claude.id,
+            label: status.claude.label,
+            version: status.claude.version,
+            model: provider.defaultModel,
+            effort: provider.defaultEffort,
+            note: `${status.claude.label} · CLI ${status.claude.version}`,
+        };
+        connections.set('claude', state);
+        saveProviderState('claude');
+        renderSessionBarControls(); // панель уже нарисована пустой — показать подключение
+        return state;
+    } catch {
+        return null;
+    }
 }
 
 async function restoreOnLoad() {
-    const savedClaude = loadClaudeState();
+    let savedClaude = loadClaudeState();
     if (savedClaude?.installId) {
         connections.set('claude', savedClaude);
         restoreServerConnection('claude'); // сервер мог быть перезапущен — вернём ему окружение
+    } else {
+        // выбора ещё не было (свежескачанный проект) — сервер мог подключить
+        // claude сам при старте (autoConnectClaude): берём его, чтобы сессии
+        // создавались сразу, без похода в Settings
+        savedClaude = await adoptAutoConnectedClaude();
     }
 
     const savedCodex = loadProviderState('codex');
@@ -81,12 +112,6 @@ async function restoreOnLoad() {
     if (savedPi?.installId) {
         connections.set('pi', savedPi);
         restoreServerConnection('pi');
-    }
-
-    const savedHermes = loadProviderState('hermes');
-    if (savedHermes?.installId) {
-        connections.set('hermes', savedHermes);
-        restoreServerConnection('hermes');
     }
 
     renderObsConnection();
@@ -175,7 +200,8 @@ function init() {
 
     // режим отправки: обе опции видны, активная помечена aria-checked
     chatMode = document.getElementById('chatMode');
-    modeOptions = [...chatMode.querySelectorAll('.segmented__option')];
+    // кнопка Loop задизейблена и не участвует в переключении режимов
+    modeOptions = [...chatMode.querySelectorAll('.segmented__option')].filter((o) => !o.disabled);
 
     chatMode.addEventListener('click', (e) => {
         const option = e.target.closest('.segmented__option');

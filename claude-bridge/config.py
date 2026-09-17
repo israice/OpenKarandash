@@ -135,6 +135,8 @@ class BridgeConfig:
         """Absolute path to the `claude` executable for the configured target."""
         if self.binary:
             return self.binary
+        # on a Windows host the WSL target is launched through wsl.exe (see
+        # cli_backend.launch_prefix), so no binary is looked up here for it
         candidates = ("claude.exe", "claude") if self.target == "windows" else ("claude",)
         for name in candidates:
             found = shutil.which(name)

@@ -190,7 +190,8 @@
     position: absolute;
     top: 3px;
     left: 3px;
-    width: calc(50% - 4px);
+    /* ширина под три опции (Chat/Action/Loop): вычитаем паддинги (3px*2) и зазоры (2px*2) */
+    width: calc((100% - 10px) / 3);
     height: calc(100% - 6px);
     border-radius: 6px;
     background: #2b4d78;
@@ -222,6 +223,13 @@
 }
 
 .segmented__option[aria-checked="true"] { color: #f2f2f4; }
+
+/* Loop: заглушка без логики, пока недоступна */
+.segmented__option--soon {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+.segmented__option--soon:hover { color: #8b909a; }
 
 .segmented__option:hover:not([aria-checked="true"]) { color: #c3c7ce; }
 

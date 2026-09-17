@@ -3,8 +3,13 @@
 //
 // Модуль сам заводит свою таблицу и отдаёт таблицу маршрутов: server.js только
 // подключает её к общему списку, ничего не зная про устройство flow_state.
+//
+// Вторая тема папки — память навыков работников — живёт отдельным файлом
+// (profiles-server.js, DOCS/decisions/022: один файл — одна тема); здесь только
+// подмешивание её маршрутов, чтобы server.js по-прежнему знал одну точку входа.
 
 const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
+const profiles = require('./profiles-server.js');
 
 function createRoutes({ db }) {
     db.exec(`
@@ -21,6 +26,8 @@ function createRoutes({ db }) {
     `);
 
     return {
+        ...profiles.createRoutes(),
+
         '/api/flow/state': (req, res) => {
             const state = {};
             for (const row of listFlowState.all()) {
