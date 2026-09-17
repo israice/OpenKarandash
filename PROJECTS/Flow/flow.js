@@ -2642,9 +2642,21 @@
                     [/^Task$/, '🤖', 'tool-task'],
                     [/^AskUserQuestion$/, '🙋', 'tool-ask'],
                     [/^(Grep|Glob)$/, '🔍', 'tool-search'],
+                    // те же семейства у Hermes: его инструменты названы по-своему
+                    [/^(read_file|write_file|patch)$/, '📄', 'tool-file'],
+                    [/^(terminal|execute_code|process)$/, '⌨️', 'tool-shell'],
+                    [/^(web_search|web_extract|browser_\w+)$/, '🌐', 'tool-web'],
+                    [/^delegate_task$/, '🤖', 'tool-task'],
+                    [/^clarify$/, '🙋', 'tool-ask'],
+                    [/^(search_files|session_search)$/, '🔍', 'tool-search'],
                 ];
 
                 function nodeKindOf(m) {
+                    // пометка хода (server.js recordNotice): в заголовке — её источник
+                    // (hermes.compaction, claude-bridge, server.retry-nudge…), а не общее слово
+                    if (m.role === 'system' && m.toolName) return { ...NODE_KINDS.system, title: m.toolName };
+                    // ответ помощника — не ответ основной модели
+                    if (m.role === 'assistant' && m.parentToolUseId) return { ...NODE_KINDS.assistant, title: 'Subagent answer' };
                     if (m.role !== 'tool') return NODE_KINDS[m.role] || NODE_KINDS.unknown;
                     const name = m.toolName || 'Tool';
                     for (const [re, emoji, kind] of TOOL_KINDS) {
@@ -2710,7 +2722,24 @@
                         ['Input', input, false],
                         ['What happened', m.text || '', false],
                         ['Output', m.toolResult || '', !!m.toolError],
+                        // всё остальное, что сервер знает о строке (модель, токены, id
+                        // вызовов, откуда перенесена): ни одно поле не должно быть скрыто
+                        ['Metadata', sessionMetadata(m), false],
                     ];
+                }
+
+                function sessionMetadata(m) {
+                    const skip = new Set(['text', 'toolInput', 'toolResult', 'inputSent', 'extraMeta', 'resultMeta', 'toolResultImages']);
+                    const meta = {};
+                    for (const [key, value] of Object.entries(m)) {
+                        if (skip.has(key) || value === null || value === undefined || value === '') continue;
+                        meta[key] = value;
+                    }
+                    for (const key of ['extraMeta', 'resultMeta']) {
+                        if (!m[key]) continue;
+                        try { meta[key] = JSON.parse(m[key]); } catch { meta[key] = m[key]; }
+                    }
+                    return formatJsonValue(meta, 0);
                 }
 
                 // гармошка в карточке: нативный <details>, своего JS на раскрытие нет.
@@ -2782,6 +2811,10 @@
                     try {
                         const input = JSON.parse(m.toolInput);
                         if (input.file_path) return String(input.file_path).split('\\').join('/');
+                        // у файловых инструментов Hermes путь лежит в поле path
+                        if (/^(read_file|write_file|patch)$/.test(m.toolName || '') && input.path) {
+                            return String(input.path).split('\\').join('/');
+                        }
                         // вызов Skill читает целиком SKILL.md в контекст — тот же факт,
                         // что и Read, только путь не приходит полем, а собирается по
                         // имени навыка. Скоуп «plugin:skill»/«dir:skill» неоднозначен
@@ -2895,6 +2928,13 @@
                     }
                 };
 
+                // строка-шаг, а не реплика: вызов инструмента и событие хода (пометки
+                // recordNotice, системные события CLI) — в цепочку шагов вниз, как и в
+                // ленте Sessions, а не в главную цепочку вопросов и ответов
+                function isStepRow(m) {
+                    return m.role === 'tool' || m.role === 'system';
+                }
+
                 function buildSessionNodes(flow, messages, sessionId) {
                     setActiveFlow(flow);
                     // выбор другой сессии в списке (#flowSessionSelect) должен показывать
@@ -2949,7 +2989,7 @@
                         if (branch) {
                             parent = lastInBranch.get(branch) || byToolUse.get(branch);
                             direction = 'vertical';
-                        } else if (m.role === 'tool') {
+                        } else if (isStepRow(m)) {
                             parent = lastGray || lastWhite;
                             direction = 'vertical';
                         } else {
@@ -3014,7 +3054,7 @@
 
                         if (m.toolUseId) byToolUse.set(m.toolUseId, node);
                         if (branch) lastInBranch.set(branch, node);
-                        else if (m.role === 'tool') lastGray = node;
+                        else if (isStepRow(m)) lastGray = node;
                         else { lastWhite = node; lastGray = null; }
                     }
 

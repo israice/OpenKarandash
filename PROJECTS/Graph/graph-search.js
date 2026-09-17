@@ -107,15 +107,16 @@ function safeRead(file) {
     }
 }
 
-function searchProject(query, limit = 20) {
+function searchProject(query, limit = 20, kind = '') {
     const match = ftsQuery(query);
     if (!match) return { ok: true, hits: [] };
     try {
-        // веса по колонкам: совпадение в заголовке важнее, чем в теле
+        // веса по колонкам: совпадение в заголовке важнее, чем в теле;
+        // kind — тот же фильтр, что у search.js (code|note|session)
         const hits = searchDb.prepare(`
             SELECT kind, ref, title, snippet(docs, 3, '«', '»', '…', 12) AS snippet
-            FROM docs WHERE docs MATCH ? ORDER BY bm25(docs, 0, 0, 10.0, 1.0) LIMIT ?
-        `).all(match, Math.min(Number(limit) || 20, 100));
+            FROM docs WHERE docs MATCH ?${kind ? ' AND kind = ?' : ''} ORDER BY bm25(docs, 0, 0, 10.0, 1.0) LIMIT ?
+        `).all(...(kind ? [match, String(kind)] : [match]), Math.min(Number(limit) || 20, 100));
         return { ok: true, hits };
     } catch (error) {
         return { ok: false, error: `Search failed: ${error.message}` };

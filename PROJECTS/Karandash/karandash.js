@@ -44,7 +44,7 @@
         </div>
         <div class="comment-popover__actions">
             <button type="button" class="comment-popover__button" id="commentCancel">Cancel</button>
-            <button type="button" class="comment-popover__button comment-popover__button--primary" id="commentSave">Save</button>
+            <button type="button" class="comment-popover__button comment-popover__button--primary" id="commentSave">Send</button>
         </div>
     `;
     document.body.appendChild(popover);

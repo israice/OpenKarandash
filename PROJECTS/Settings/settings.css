@@ -106,6 +106,26 @@
     align-items: flex-start;
 }
 
+/* ---------- строка переключателя режима выполнения (CLI / Omniroute) ---------- */
+
+.settings-mode-row {
+    margin: 0 0 14px;
+}
+
+/* .segmented/.segmented__thumb/.segmented__option — общие классы из chat.css
+   (переключатель Chat/Action/Loop композера). Там расчёт ширины «пилюли» под
+   три опции; здесь их только две — CLI и Omniroute (последняя пока Coming
+   Soon, как Loop), поэтому ширина считается отдельно */
+.segmented--pair .segmented__thumb {
+    width: calc((100% - 8px) / 2);
+}
+
+/* заголовок «Settings» и переключатель режима видны только на вкладке
+   Providers (скрываются из settings.js через hidden); когда заголовок
+   скрыт, кнопка закрытия остаётся прижатой к правому краю, а не уезжает
+   влево вслед за пропавшим текстом */
+.modal__header--collapsed { justify-content: flex-end; }
+
 /* ---------- панель табов окна настроек ---------- */
 
 .settings-tabs {
@@ -319,25 +339,93 @@
 }
 
 /* ---------- подключение Telegram ---------- */
+/* фирменный голубой Telegram (Simple Icons) — используется только здесь,
+   у остальных провайдеров нет своего брендового цвета и своей иконки */
+:root {
+    --telegram-blue: #2AABEE;
+}
 
 /* карточка стоит последней в окне настроек, после экрана для скриншотов */
-.telegram {
+.provider--telegram {
     margin-top: 10px;
 }
 
-/* поля токена и id — под кнопкой, показываются по нажатию «Connect».
-   у .provider__model свой display: flex, поэтому hidden ему нужно вернуть силу */
+.telegram__title {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.telegram__icon {
+    flex: 0 0 auto;
+    margin-top: 1px;
+    color: var(--telegram-blue);
+}
+
+/* зелёный кружок .provider__status — общий индикатор «подключено» у всех
+   провайдеров; у Telegram он единственный перекрашен в фирменный голубой,
+   чтобы карточка бота узнавалась с первого взгляда, а не терялась в списке */
+.telegram__status::before {
+    background: var(--telegram-blue);
+}
+
+/* поля токена и id стоят не голыми строками под кнопкой, а в отдельном
+   вложенном «конверте» — своим фоном и рамкой они читаются как один блок
+   настроек моста, а не продолжение строки Connected/Disconnect */
 .telegram__fields {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
     margin-top: 12px;
+    padding: 12px;
+    border: 1px solid #232a33;
+    border-left: 2px solid var(--telegram-blue);
+    border-radius: 10px;
+    background: #14171c;
 }
 
 .telegram__fields[hidden] {
     display: none;
 }
 
-/* подсказка и ошибка сохранения — своей строкой под полями во всю ширину */
+.telegram__field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.telegram__field-label {
+    font-size: 0.74rem;
+    color: #8b909a;
+}
+
+/* .provider__input в остальных местах — короткая пилюля рядом с выбором
+   модели; здесь полю нужна вся ширина диалога под длинный токен бота или
+   список id, и глубокое скругление 999px превращало бы его в вытянутый овал —
+   форме токена больше подходит обычный скруглённый прямоугольник во всю ширину */
+.telegram__input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: #22252b;
+    font: inherit;
+    font-size: 0.82rem;
+    color: #e9e9ec;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.telegram__input::placeholder { color: #6b6f78; }
+
+.telegram__input:hover { background: #2a2d34; }
+
+.telegram__input:focus-visible {
+    outline: none;
+    border-color: var(--telegram-blue);
+}
+
+/* подсказка и ошибка сохранения — своей строкой под обоими полями */
 .telegram__hint {
-    flex: 1 0 100%;
     font-size: 0.72rem;
     line-height: 1.4;
     color: #8b909a;
@@ -406,4 +494,34 @@
     margin-top: 8px;
     font-size: 0.78rem;
     color: #ff9a9d;
+}
+
+/* ---------- вкладка Sandglass: счётчик + честные песочные часы ----------
+   Счётчик тикает в settings.js (renderSandglassCountdown), доля прошедшего
+   времени пишется в data-elapsed на .sandglass. Сам рисунок — не SVG, а
+   3D-рендер на three.js (PROJECTS/Settings/settings-sandglass.js, перенос
+   формы из https://github.com/khanmjk/Hourglass_Fable5 без их физического
+   движка): верхняя и нижняя куча песка и струйка в горлышке двигаются там,
+   этот файл только про размер и расположение canvas. */
+
+.sandglass {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 20px 0 8px;
+}
+
+.sandglass__countdown {
+    font-variant-numeric: tabular-nums;
+    font-size: 1.3rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #e9e9ec;
+}
+
+.hourglass {
+    display: block;
+    width: 96px;
+    height: 96px;
 }

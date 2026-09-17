@@ -64,29 +64,6 @@
     font-weight: 600;
 }
 
-.modal__close {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 30px;
-    height: 30px;
-    padding: 0;
-    border: 0;
-    border-radius: 7px;
-    background: none;
-    font-size: 1.2rem;
-    line-height: 1;
-    color: #a9adb6;
-    cursor: pointer;
-}
-
-.modal__close:hover { background: #262930; color: #f2f2f4; }
-
-.modal__close:focus-visible {
-    outline: 2px solid #6ea8fe;
-    outline-offset: 2px;
-}
-
 .modal__hint {
     margin: 6px 0 16px;
     font-size: 0.82rem;

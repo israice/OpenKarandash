@@ -14,6 +14,7 @@ delivered as an ordinary assistant message.
 
 from __future__ import annotations
 
+import ast
 import difflib
 import json
 import logging
@@ -25,6 +26,32 @@ from typing import Any
 logger = logging.getLogger("claude_bridge.tools")
 
 _FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL)
+
+# Разбор JSON, терпимый к «сырому» control-символу внутри строкового литерала.
+# Живой случай: длинный аргумент write_file (весь файл текстом), модель на
+# середине потеряла экранирование переноса строки — вместо `\n` ушёл настоящий
+# байт 0x0A внутри JSON-строки. Строгий json.loads такое отвергает целиком
+# («Bad control character in string literal»), и весь запрос — с уже готовым
+# вызовом write_file — уходил человеку сырым текстом, обрывая ход (сессия
+# hermes-docker-mu4uiwpq). strict=False разрешает буквальные control-символы
+# в строках и ничего не стоит, когда вход и так был правильным.
+_STRICT_DECODER = json.JSONDecoder()
+_LENIENT_DECODER = json.JSONDecoder(strict=False)
+
+
+def _loads(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return json.loads(text, strict=False)
+
+
+def _raw_decode(text: str, idx: int = 0) -> tuple[Any, int]:
+    try:
+        return _STRICT_DECODER.raw_decode(text, idx)
+    except json.JSONDecodeError:
+        return _LENIENT_DECODER.raw_decode(text, idx)
+
 
 PROTOCOL_INSTRUCTIONS = """
 # Tool request protocol — READ THIS FIRST
@@ -59,6 +86,21 @@ Rules:
 
 ## Tools you may request
 """.strip()
+
+# Поправка, которую мост сам отправляет модели, когда её ответ похож на вызов
+# инструмента, но ни один разборщик его не взял. Раньше такой ответ уходил в
+# Hermes обычным текстом — и ход заканчивался: каждая новая форма записи
+# (``execute_code(code=...)``, ``name\nRequest\n{...}``, битый JSON) обрывала
+# сессию, пока под неё не допишут очередной разборщик. Поправка закрывает весь
+# класс сразу: модель переписывает вызов в форме протокола, и ход идёт дальше.
+CORRECTION = (
+    "[Bridge notice: your previous reply looks like a tool request, but it is not "
+    "in the protocol format, so NOTHING was executed. If you meant to call a tool, "
+    "reply again with ONLY the object "
+    '{"tool_calls": [{"name": "<tool>", "arguments": {...}}]} — valid JSON with '
+    "escaped strings; no function-call syntax like name(arg=...), no labels, no "
+    "code fence. If that reply was your final answer to the user, repeat it unchanged.]"
+)
 
 REMINDER = (
     "[Protocol reminder: to use a tool, END this reply with the JSON object "
@@ -136,7 +178,11 @@ def render_tool_calls(tool_calls: list[dict]) -> str:
             args = json.loads(raw) if isinstance(raw, str) else raw
         except json.JSONDecodeError:
             args = {"_raw": raw}
-        entries.append({"name": fn["name"], "arguments": args if isinstance(args, dict) else {}})
+        # ключи аргументов по алфавиту: Hermes возвращает наш же вызов с
+        # отсортированными ключами, и без этого одна и та же история
+        # отрисовывалась по-разному — продолжение сессии CLI промахивалось
+        args = json.loads(json.dumps(args, sort_keys=True)) if isinstance(args, dict) else {}
+        entries.append({"name": fn["name"], "arguments": args})
     return json.dumps({"tool_calls": entries}, ensure_ascii=False) if entries else ""
 
 
@@ -205,7 +251,7 @@ def _repair_truncated(candidate: str) -> dict | None:
         return None
     for suffix in ("}", "]", "}]", "]}", "}]}", "}}]}"):
         try:
-            payload = json.loads(candidate + suffix)
+            payload = _loads(candidate + suffix)
         except json.JSONDecodeError:
             continue
         repaired = _normalize_payload(payload)
@@ -286,7 +332,7 @@ def _parse_yaml_style(candidate: str) -> dict | None:
         if not m:
             break
         try:
-            args, end = json.JSONDecoder().raw_decode(candidate, m.end())
+            args, end = _raw_decode(candidate, m.end())
         except json.JSONDecodeError:
             return None
         entries.append({"name": m.group("name"), "arguments": args if isinstance(args, dict) else {}})
@@ -309,29 +355,131 @@ def _parse_yaml_style(candidate: str) -> dict | None:
 # остаток целиком — этот один JSON-объект без хвоста.
 _NAME_LINE = re.compile(r"^[ \t]*([A-Za-z_][A-Za-z0-9_.-]*)[ \t]*:?[ \t]*\r?\n")
 _SHORT_LABEL = re.compile(r"^[ \t]*[^\n:{\[]{0,24}:[ \t]*")
+# Та же подпись, но без двоеточия, отдельной строкой — живой случай, который
+# оборвал сессию: ``execute_code\nRequest\n\n{...}``. Слово "Request" без
+# ":" не совпадает с _SHORT_LABEL (тот требует двоеточие на этой же строке),
+# разбор проваливался, и готовый вызов (execute_code с валидным JSON внутри)
+# уходил человеку сырым текстом вместо исполнения.
+# И в одну строку: ``execute_code Request  {...}`` (сессия mu4w0wf6)
+_NAME_INLINE_REQUEST = re.compile(r"^[ \t]*([A-Za-z_][A-Za-z0-9_.-]*)[ \t]+Request:?[ \t]*(?=[{\[\r\n])")
+_BARE_LABEL_LINE = re.compile(r"^[ \t]*[^\n:{\[]{1,24}\r?\n")
 
 
 def _parse_name_then_json(candidate: str, known: set[str] | None) -> dict | None:
     if not known:
         return None
-    m = _NAME_LINE.match(candidate)
+    m = _NAME_LINE.match(candidate) or _NAME_INLINE_REQUEST.match(candidate)
     if not m:
         return None
     real = _match_known(m.group(1), known)
     if real is None:
         return None
     rest = candidate[m.end():]
-    label = _SHORT_LABEL.match(rest)
-    if label:
-        rest = rest[label.end():]
-    rest = rest.lstrip()
+    # снимаем сколько угодно коротких строк-подписей перед объектом (не одну
+    # как раньше): модель то пишет "Request:", то просто "Request" отдельной
+    # строкой, то оставляет пустую строку перед {.
+    for _ in range(4):
+        stripped = rest.lstrip()
+        if stripped[:1] in "{[":
+            rest = stripped
+            break
+        label = _SHORT_LABEL.match(stripped) or _BARE_LABEL_LINE.match(stripped)
+        if not label:
+            rest = stripped
+            break
+        rest = stripped[label.end():]
     try:
-        args, end = json.JSONDecoder().raw_decode(rest)
+        args, end = _raw_decode(rest)
     except json.JSONDecodeError:
         return None
     if rest[end:].strip() or not isinstance(args, dict):
         return None
     return {"tool_calls": [{"name": real, "arguments": args}]}
+
+
+def _parse_python_call(candidate: str, known: set[str] | None) -> dict | None:
+    """Вызов, записанный как Python: ``execute_code(code="...")``.
+
+    Живой случай: сессия hermes-docker-mu4wyl0n закончилась ответом, который
+    целиком был ``execute_code(code="from hermes_tools import …")`` — ни JSON,
+    ни ``name({...})``. Разбираем через ast: только вызовы предложенных
+    инструментов, только именованные аргументы-литералы; всё остальное (код с
+    выражениями, позиционные аргументы) остаётся прозой."""
+    if not known:
+        return None
+    try:
+        tree = ast.parse(candidate.strip(), mode="exec")
+    except (SyntaxError, ValueError):
+        return None
+    entries = []
+    for node in tree.body:
+        call = node.value if isinstance(node, ast.Expr) else None
+        if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name) or call.args:
+            return None
+        name = _match_known(call.func.id, known)
+        if name is None:
+            return None
+        args = {}
+        for kw in call.keywords:
+            if kw.arg is None:
+                return None
+            try:
+                args[kw.arg] = ast.literal_eval(kw.value)
+            except (ValueError, SyntaxError):
+                return None
+        entries.append({"name": name, "arguments": args})
+    if not entries:
+        return None
+    logger.warning("tool call written as a Python call; parsed")
+    return {"tool_calls": entries}
+
+
+# Нижняя граница таймаута terminal. Модель сама ставит 30–60 с, а медленные
+# команды на смонтированном проекте идут дольше (git status из контейнера —
+# около 90 с): команда убивалась на полпути, ход тратился на повторы. Hermes
+# возвращает результат сразу по завершении команды, так что большой таймаут
+# ничего не стоит быстрым командам. 600 — предел переднего плана у Hermes.
+TERMINAL_TIMEOUT_FLOOR = 600
+
+
+def _lift_terminal_timeout(name: str, args: Any) -> Any:
+    if name != "terminal":
+        return args
+    parsed = args
+    if isinstance(args, str):
+        try:
+            parsed = json.loads(args)
+        except json.JSONDecodeError:
+            return args
+    if not isinstance(parsed, dict):
+        return args
+    timeout = parsed.get("timeout")
+    if isinstance(timeout, (int, float)) and not isinstance(timeout, bool) and timeout < TERMINAL_TIMEOUT_FLOOR:
+        # предупреждение, а не молчаливая правка: оно же уходит пометкой в ленту (run_notes)
+        logger.warning("terminal timeout raised from %s to %s seconds", timeout, TERMINAL_TIMEOUT_FLOOR)
+        return {**parsed, "timeout": TERMINAL_TIMEOUT_FLOOR}
+    return args
+
+
+# Строка, которая начинается с имени предложенного инструмента и дальше похожа
+# на вызов: скобка, фигурная скобка, подпись «Request» или конец строки.
+def _call_line(known: set[str]) -> re.Pattern:
+    names = "|".join(sorted((re.escape(n) for n in known), key=len, reverse=True))
+    return re.compile(rf"(?m)^[ \t`*]*(?:{names})[`*]*[ \t]*(?:\(|\{{|:?[ \t]*\r?\n[ \t]*(?:\{{|Request\b)|[ \t]+Request\b)")
+
+
+def looks_like_call_attempt(text: str, known: set[str] | None) -> bool:
+    """Ответ, в котором модель явно пыталась вызвать инструмент, но разбор не
+    удался. Ложное срабатывание стоит одного лишнего запроса (модель повторит
+    ответ), пропуск — оборванной сессии, поэтому граница скорее широкая."""
+    body = _strip_echo(text or "")
+    if not body:
+        return False
+    if re.search(r"""["']tool_calls["']""", body):
+        return True
+    if re.search(r'(?m)^[ \t]*[\[{][ \t]*\{?[ \t]*"(?:name|arguments)"[ \t]*:', body):
+        return True
+    return bool(known) and bool(_call_line(known).search(body))
 
 
 def _strip_echo(text: str) -> str:
@@ -358,7 +506,7 @@ def _decode_leading_object(candidate: str) -> dict | None:
     Хвост допускается только служебный (то же эхо, повторная метка роли,
     закрывающий фенс) — прозу после вызова считаем разговором, а не запросом."""
     try:
-        payload, end = json.JSONDecoder().raw_decode(candidate)
+        payload, end = _raw_decode(candidate)
     except json.JSONDecodeError:
         return None
     tail = _strip_echo(candidate[end:]).strip().strip("`").strip()
@@ -442,12 +590,13 @@ def _parse_tool_calls(text: str, known: set[str] | None = None,
         candidate = _strip_echo(fenced.group(1))
     if candidate[0] not in "{[":
         payload = (_parse_drift(candidate) or _parse_yaml_style(candidate)
-                   or _parse_name_then_json(candidate, known))
+                   or _parse_name_then_json(candidate, known)
+                   or _parse_python_call(candidate, known))
         if payload is None:
             return None
     else:
         try:
-            payload = json.loads(candidate)
+            payload = _loads(candidate)
         except json.JSONDecodeError:
             payload = _decode_leading_object(candidate) or _repair_truncated(candidate)
             if payload is None:
@@ -455,7 +604,7 @@ def _parse_tool_calls(text: str, known: set[str] | None = None,
                 repaired = _repair_brackets(candidate)
                 if repaired != candidate:
                     try:
-                        payload = json.loads(repaired)
+                        payload = _loads(repaired)
                     except json.JSONDecodeError:
                         payload = _decode_leading_object(repaired)
                     if payload is not None:
@@ -486,10 +635,6 @@ def _parse_tool_calls(text: str, known: set[str] | None = None,
             if inline:
                 logger.warning("call %r carried inline arguments; folded into arguments", name)
                 args = inline
-        if isinstance(args, str):  # already-serialized arguments pass through
-            args_json = args
-        else:
-            args_json = json.dumps(args if isinstance(args, dict) else {}, ensure_ascii=False)
         if known is not None:
             real = _match_known(str(name), known)
             if real is None:
@@ -498,6 +643,11 @@ def _parse_tool_calls(text: str, known: set[str] | None = None,
                     dropped.append(str(name))
                 continue
             name = real
+        args = _lift_terminal_timeout(str(name), args)
+        if isinstance(args, str):  # already-serialized arguments pass through
+            args_json = args
+        else:
+            args_json = json.dumps(args if isinstance(args, dict) else {}, ensure_ascii=False)
         calls.append({
             "id": f"call_{uuid.uuid4().hex[:24]}",
             "type": "function",
@@ -514,7 +664,7 @@ def _parse_tool_calls(text: str, known: set[str] | None = None,
 # пояснения-прозы перед меткой, а этот хвостовой проход искал только { или [
 # и метку в начале строки не видел — весь объект уходил человеку текстом
 # вместо исполнения (живой репорт, вариант YAML-формы session mu4me2k5).
-_BLOCK_START = re.compile(r"(?mi)^[ \t]*(?:[\[{]|tool call:|-?\s*name:\s*\S|[A-Za-z_][\w.-]*\s*\(\s*\{)")
+_BLOCK_START = re.compile(r"(?mi)^[ \t]*(?:[\[{]|tool call:|-?\s*name:\s*\S|[A-Za-z_][\w.-]*\s*\(\s*(?:\{|[A-Za-z_]\w*\s*=)|[A-Za-z_][\w.-]*[ \t]+Request\b)")
 # открывающий фенс, оставшийся в пояснении перед блоком
 _OPEN_FENCE_TAIL = re.compile(r"```(?:json)?[ \t]*$")
 

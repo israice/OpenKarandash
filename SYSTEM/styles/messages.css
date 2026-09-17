@@ -170,6 +170,12 @@
     40% { opacity: 1; }
 }
 
+/* шаги-инструментов сворачиваются гармошкой (chat-feed.js addStep/setStepOpen):
+   заголовок (тег + короткая сводка) виден всегда одной строкой, тело
+   (полные Input/Output из toolInput/toolResult) скрыто, пока блок не открыт.
+   Открыт может быть только один за раз — все новые шаги появляются свёрнутыми,
+   открывает их только клик. У шагов без тела (живой поток до перечитывания
+   истории — в нём нет сырых args/result) клика нет, курсор обычный */
 .chat__message--tool {
     align-self: flex-start;
     border: 1px solid #2e3138;
@@ -177,6 +183,59 @@
     color: #6a6f78;
     font-size: 0.8rem;
     padding: 6px 14px;
+    max-width: 100%;
+}
+
+.chat__message--tool:not(.chat__message--tool-plain) {
+    cursor: pointer;
+}
+
+.chat__message--tool:not(.chat__message--tool-plain):hover {
+    border-color: #454a54;
+}
+
+.chat__tool-head {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.chat__tool-body {
+    display: none;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #2e3138;
+}
+
+.chat__message--tool.is-open .chat__tool-body {
+    display: block;
+}
+
+.chat__tool-section + .chat__tool-section {
+    margin-top: 8px;
+}
+
+.chat__tool-section-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.6;
+    margin-bottom: 4px;
+}
+
+.chat__tool-section-pre {
+    margin: 0;
+    font-family: inherit;
+    font-size: 0.8rem;
+    color: #b7bcc4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 320px;
+    overflow: auto;
+}
+
+.chat__tool-section-pre--error {
+    color: #e07a7a;
 }
 
 /* тег имени инструмента (read_file, search_files, skill_view, Bash, …) —

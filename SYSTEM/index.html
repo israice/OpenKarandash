@@ -31,7 +31,8 @@
     {
         "imports": {
             "three": "/node_modules/three/build/three.module.js",
-            "three/addons/": "/node_modules/three/examples/jsm/"
+            "three/addons/": "/node_modules/three/examples/jsm/",
+            "@dimforge/rapier3d-simd-compat": "/node_modules/@dimforge/rapier3d-simd-compat/rapier.mjs"
         }
     }
     </script>
@@ -953,7 +954,6 @@
         <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="fileModalTitle">
             <div class="modal__header">
                 <h2 class="modal__title" id="fileModalTitle"></h2>
-                <button type="button" class="modal__close" data-close-modal aria-label="Close">&times;</button>
             </div>
             <p class="file-modal__meta" id="fileModalMeta"></p>
             <div class="file-modal__links" id="fileModalLinks"></div>
@@ -972,7 +972,6 @@
         <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="versionModalTitle">
             <div class="modal__header">
                 <h2 class="modal__title" id="versionModalTitle">Version history</h2>
-                <button type="button" class="modal__close" data-close-modal aria-label="Close">&times;</button>
             </div>
             <ul class="version-list">{{VERSION_LIST}}</ul>
         </div>
@@ -991,6 +990,8 @@
          Файл ставится через npm (package.json), поэтому путь ведёт в node_modules -->
     <script src="node_modules/htmx.org/dist/htmx.min.js" defer></script>
     <script src="PROJECTS/Settings/settings.js" defer></script>
+    <!-- 3D-рендер песочных часов вкладки Sandglass: ES-модуль (import three), поэтому type="module" -->
+    <script src="PROJECTS/Settings/settings-sandglass.js" type="module"></script>
     <!-- book-tab.js раньше app.js: тот на старте ищет #bookView в DOM -->
     <script src="PROJECTS/Book/book-tab.js" defer></script>
     <!-- telegram.js раньше app.js: тот на старте ищет #telegramView в DOM -->

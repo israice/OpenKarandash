@@ -8,12 +8,10 @@
 # клонируем/обновляем с github.com/NousResearch/hermes-agent при старте сервера
 # (SYSTEM/core/hermes-stack.js); в git остаются только наши настройки к нему
 # (docker-compose.hermes.yml, hermes-home.config.example.yaml, .env.example).
-# claude-bridge — npm нужен только опциональному ACP-бэкенду, hermes-home —
+# hermes-home —
 # рантайм-данные конкретного запуска Hermes (сессии, конфиг), logs — его же логи
 /hermes/
-claude-bridge/node_modules/
 claude-bridge/__pycache__/
-claude-bridge/claude-config/
 /hermes-home/
 /logs/
 

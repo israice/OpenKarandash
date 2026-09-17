@@ -46,9 +46,6 @@ Hermes manually (WSL).
 | Variable | Default | Meaning |
 |---|---|---|
 | `CLAUDE_BRIDGE_TOKEN` | *(empty = auth off)* | Shared secret Hermes sends as `Authorization: Bearer`. Required by Hermes' provider resolution. |
-| `CLAUDE_BRIDGE_BACKEND` | `cli` | `cli` — one `claude -p` per request; `acp` — long-lived `claude-agent-acp` with session reuse. See "Backends". |
-| `CLAUDE_BRIDGE_ACP_BINARY` | *(bundled)* | Path to `claude-agent-acp`; defaults to the npm install under `node_modules/.bin`. |
-| `CLAUDE_BRIDGE_ACP_CONFIG_DIR` | `./claude-config` | `CLAUDE_CONFIG_DIR` for the ACP agent — isolates it from the host user's skills and MCP servers. |
 | `CLAUDE_BRIDGE_TARGET` | `wsl` | `wsl` → the Linux `claude` (from a Windows host via `wsl.exe -e bash -lc`); `windows` → `claude.exe`. OpenKarandash sets it to whatever Claude installation is connected in Settings. |
 | `CLAUDE_BRIDGE_BINARY` | *(auto)* | Absolute path to the CLI, overriding target-based discovery. |
 | `CLAUDE_BRIDGE_HOST` | `127.0.0.1` | Bind address. Leaving loopback makes the token mandatory. |
@@ -57,6 +54,8 @@ Hermes manually (WSL).
 | `CLAUDE_BRIDGE_MODEL` | `sonnet` | Model used when the request names none. |
 | `CLAUDE_BRIDGE_TIMEOUT` | `600` | Per-turn timeout, seconds. |
 | `CLAUDE_BRIDGE_DEBUG` | `0` | Log the spawned argv. |
+| `CLAUDE_BRIDGE_EFFORT` | *(CLI default)* | `--effort` for every turn (`low`…`max`). One value for the whole bridge: it is part of the cached request, so changing it mid-conversation discards the prompt cache. |
+| `CLAUDE_BRIDGE_SESSION_REUSE` | `1` | Continue a CLI session between agent steps so the history is read from the prompt cache (see below). `0` = every request re-sends the full transcript. |
 
 ## Endpoints
 
@@ -64,46 +63,6 @@ Hermes manually (WSL).
 - `GET /v1/models` — `claude-bridge-sonnet` / `-opus` / `-haiku`; any other id is
   passed to `claude --model` verbatim
 - `POST /v1/chat/completions` — non-streaming and SSE streaming
-
-## Backends
-
-Both are implemented and pass the same test suite (streaming, tool calls,
-images, multi-turn, concurrency).
-
-**`cli` (default)** — `claude -p` per request. Stateless, no Node dependency.
-
-**`acp`** — one `claude-agent-acp` subprocess, sessions reused across requests.
-The OpenAI wire is stateless, so sessions are keyed by the history that produced
-them: a request extending a known session continues it and sends only the new
-message.
-
-Measured on the same 4-turn conversation (single run, so treat as indicative):
-
-| | turn 1 | turns 2-4 | cache write total | cache read total | weighted input equivalent* |
-|---|---|---|---|---|---|
-| `cli` | 4.2 s | 3.5–3.9 s | 2 925 | 34 763 | **7 133** |
-| `acp` | 10.7 s | 1.7–2.0 s | 5 634 | 53 558 | 12 398 |
-
-\* cache write ×1.25, cache read ×0.1 relative to input tokens.
-
-**ACP is roughly twice as fast per follow-up turn, but costs more, not less.**
-The expectation going in was the opposite — that a fresh CLI process per request
-would re-pay for the prompt cache each time. It does not: Anthropic caches by
-prefix server-side, so the CLI backend writes the cache once and reads it on
-every later turn even across processes.
-
-**ACP is experimental and not recommended.** Two problems beyond cost:
-
-1. It cannot be reduced to a bare model. `tools: []`, `disallowedTools` and
-   `settingSources: []` passed through `session/new`'s
-   `_meta.claudeCode.options` do not take effect, so the agent keeps its own
-   toolbox — and the model then trusts those schemas over the bridge's text
-   protocol, telling Hermes its tools do not exist.
-2. It inherits the operator's MCP servers. A session opened for a Hermes chat
-   listed Gmail and Google Drive tools; the CLI backend, with
-   `--strict-mcp-config`, does not.
-
-Use `cli` unless you are experimenting.
 
 ## How the CLI is driven
 
@@ -122,9 +81,41 @@ Use `cli` unless you are experimenting.
   over the bridge's text protocol, announced "my real tools are ListAgents,
   Workflow, ..." and refused Hermes' tools as imaginary. Complete, the model
   reports NONE and overhead drops to ~490 tokens.
-- `--setting-sources "" --strict-mcp-config --no-session-persistence` — the host
-  user's settings, skills and MCP servers stay out, so the bridge answers the
-  same way regardless of local machine state.
+- `--setting-sources "" --strict-mcp-config` — the host user's settings, skills
+  and MCP servers stay out, so the bridge answers the same way regardless of
+  local machine state. The CLI runs with `DATA/bridge-sessions/` as its cwd, so
+  the project's `CLAUDE.md` is not pulled in and bridge sessions never show up
+  in the user's own `claude --resume` list.
+- `--session-id` / `--resume` for agent turns (requests with tools), otherwise
+  `--no-session-persistence` — see *Prompt cache and session reuse*.
+- Pings: while the model thinks, the stream sends an empty chunk every 15 s, and
+  reasoning is streamed as it arrives. Hermes counts any chunk as liveness, so a
+  long think is not mistaken for a hung provider. If Hermes disconnects, the CLI
+  process is killed instead of finishing an answer nobody reads.
+
+## Prompt cache and session reuse
+
+Anthropic's prompt cache matches on block boundaries. Sending the whole history
+as one new user message each time (the original design) meant the cache never
+covered the history: every agent step re-wrote 50–150k tokens into the cache
+and re-read none of it — measured 8.5M input tokens with zero cache reads over
+one 85-call Hermes session.
+
+`session_cache.py` fixes that. Each agent turn runs in a persisted CLI session;
+an index maps "hash of the conversation so far + the reply just given" to that
+session id. The next request that starts with exactly that conversation resumes
+the session and sends only the new messages; everything before is read from
+cache (measured 96–99% cached input, 4–6 s per tool step instead of 30–240 s).
+
+Matching is by a chain of hashes over the rendered messages, with whitespace
+collapsed, argument keys sorted, and the short prose line before a tool call
+ignored (Hermes echoes calls back with sorted keys and without that prose). Any
+other divergence — Hermes compressed its context, changed the system prompt or
+tool set — is a miss: the turn goes out as a full transcript in a new session,
+exactly as before, and the log line `no resume: … message N differs` shows what
+changed. An index entry is used once; a second request with the same prefix
+(background review, retry) gets a miss rather than a session that already holds
+a newer turn. Session files older than 24 h are pruned.
 
 ## Tool calling
 
@@ -200,18 +191,28 @@ bridge collects `thinking_delta` alongside the text and returns it as
 when streaming. Without it a Hermes session shows bare tool steps with nothing
 between them, and every `reasoning` column in Hermes' own store stays empty.
 
+## Bridge notes
+
+Whatever the bridge does to the model's reply on its own — re-asking for an
+unparsed tool call, raising a `terminal` timeout, dropping a hallucinated tool,
+repairing call JSON — is logged as a warning. `run_notes.py` collects those
+warnings per request and sends them back as reasoning lines prefixed with
+`[claude-bridge]`, so they reach the OpenKarandash session feed as separate
+events instead of staying in this log (`DOCS/decisions/039`). Any new warning
+in the bridge becomes such a note automatically.
+
 ## Images
 
 Messages go in as stream-json, so OpenAI `image_url` parts (data: URLs and http
 URLs) become native Anthropic image blocks. Every `user` line in that stream
-starts its own turn, so the whole conversation is packed into ONE user message —
-a role-labelled transcript plus the image blocks.
+starts its own turn, so one request is ONE user message — the role-labelled
+transcript (or only its new part, for a resumed session) plus the image blocks.
 
 ## Known limits
 
 - Tool calling rides a text convention, not a native schema channel.
 - A model that ignores the format degrades to a plain text answer rather than
   erroring. Hallucinated tool names are dropped before they reach Hermes.
-- Each request is a fresh CLI process, so there is no server-side session reuse
-  between turns; the full history is re-sent every time.
-- The ACP backend is not implemented — see the repo README.
+- Each request is still a fresh CLI process (~5 s startup). Session reuse covers
+  agent turns only; one-off requests (titles, compression summaries) are not
+  cached.

@@ -66,7 +66,6 @@
         <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
             <div class="modal__header">
                 <h2 class="modal__title" id="pickerTitle">Where should Claude CLI run?</h2>
-                <button type="button" class="modal__close" data-close-modal aria-label="Close">&times;</button>
             </div>
             <p class="modal__hint" id="pickerHint"></p>
             <ul class="picker" id="pickerList"></ul>
@@ -94,7 +93,13 @@
             </div>
             <div class="modal__header">
                 <h2 class="modal__title" id="settingsModalTitle">Settings</h2>
-                <button type="button" class="modal__close" data-close-modal aria-label="Close">&times;</button>
+            </div>
+            <div class="settings-mode-row">
+                <div class="segmented segmented--pair" id="settingsModeToggle" role="radiogroup" aria-label="Execution mode" data-active="CLI">
+                    <span class="segmented__thumb" aria-hidden="true"></span>
+                    <button type="button" class="segmented__option" role="radio" aria-checked="true" data-mode="CLI" tabindex="0">CLI</button>
+                    <button type="button" class="segmented__option segmented__option--soon" role="radio" aria-checked="false" data-mode="Omniroute" tabindex="-1" disabled title="Coming Soon">Omniroute</button>
+                </div>
             </div>
             <div class="settings-tab-content" id="settingsTabProviders" role="tabpanel">
                 <p class="modal__hint">Connect an AI provider to pick a default model.</p>
@@ -112,14 +117,20 @@
                     <select class="provider__select" id="screenshotScreenSelect" aria-label="Screen for screenshots"></select>
                     <img class="screenshot-screen__preview" id="screenshotScreenPreview" alt="Selected screen preview" hidden style="cursor: zoom-in">
                 </div>
-                <div class="provider telegram" id="telegramRow">
+                <div class="provider provider--telegram" id="telegramRow">
                     <div class="provider__row">
-                        <div>
-                            <div class="provider__name">Telegram</div>
-                            <div class="provider__note">Bot token and allowed user ids — saved to the local .env</div>
+                        <div class="telegram__title">
+                            <!-- иконка взята как есть из Simple Icons (MIT, simpleicons.org/icons/telegram) -->
+                            <svg class="telegram__icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                                <path fill="currentColor" d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+                            </svg>
+                            <div>
+                                <div class="provider__name">Telegram</div>
+                                <div class="provider__note">Sends the answer to a finished session and takes your reply back into it.</div>
+                            </div>
                         </div>
                         <div class="provider__actions">
-                            <span class="provider__status" id="telegramStatus" hidden></span>
+                            <span class="provider__status telegram__status" id="telegramStatus" hidden>Connected</span>
                             <button type="button"
                                     class="provider__button provider__button--connect"
                                     id="telegramConnectButton"
@@ -127,15 +138,19 @@
                                     aria-controls="telegramFields">Connect</button>
                         </div>
                     </div>
-                    <div class="provider__model telegram__fields" id="telegramFields" hidden>
-                        <span class="provider__model-label">API key:</span>
-                        <input type="password" class="provider__input" id="telegramTokenInput"
-                               placeholder="123456789:AA..." autocomplete="off" spellcheck="false"
-                               aria-label="Telegram bot API key">
-                        <span class="provider__model-label">User ids:</span>
-                        <input type="text" class="provider__input" id="telegramUsersInput"
-                               placeholder="12345678, 87654321" autocomplete="off" spellcheck="false"
-                               aria-label="Telegram user ids, comma separated">
+                    <div class="telegram__fields" id="telegramFields" hidden>
+                        <label class="telegram__field">
+                            <span class="telegram__field-label">API key</span>
+                            <input type="password" class="telegram__input" id="telegramTokenInput"
+                                   placeholder="123456789:AA..." autocomplete="off" spellcheck="false"
+                                   aria-label="Telegram bot API key">
+                        </label>
+                        <label class="telegram__field">
+                            <span class="telegram__field-label">User ids</span>
+                            <input type="text" class="telegram__input" id="telegramUsersInput"
+                                   placeholder="12345678, 87654321" autocomplete="off" spellcheck="false"
+                                   aria-label="Telegram user ids, comma separated">
+                        </label>
                         <div class="telegram__hint" id="telegramHint"></div>
                     </div>
                 </div>
@@ -147,7 +162,16 @@
                 <p class="modal__hint">Coming soon.</p>
             </div>
             <div class="settings-tab-content" id="settingsTabSandglass" role="tabpanel" hidden>
-                <p class="modal__hint">Coming soon.</p>
+                <div class="sandglass" data-elapsed="0">
+                    <div class="sandglass__countdown" id="sandglassCountdown">1d 02:30:12</div>
+                    <!-- свои песочные часы: 3D-рендер на three.js вместо SVG (перенос формы и
+                         повадки из https://github.com/khanmjk/Hourglass_Fable5, без их отдельного
+                         физического движка — облегчённая версия, см. PROJECTS/Settings/settings-sandglass.js).
+                         Контракт между этим файлом и тем модулем — атрибут data-elapsed на .sandglass:
+                         сюда пишется доля прошедшего времени счётчика выше (renderSandglassSand),
+                         рендер читает её каждый кадр и двигает верхнюю/нижнюю кучу и струйку сам -->
+                    <canvas class="hourglass" width="96" height="96" role="img" aria-label="Hourglass with sand falling to the bottom, showing time left until the countdown above reaches zero"></canvas>
+                </div>
             </div>
         </div>
     `;
@@ -164,6 +188,50 @@
     const screenshotScreenRow = settingsModal.querySelector('#screenshotScreenRow');
     const screenshotScreenSelect = settingsModal.querySelector('#screenshotScreenSelect');
     const screenshotScreenPreview = settingsModal.querySelector('#screenshotScreenPreview');
+    const settingsModalTitle = settingsModal.querySelector('#settingsModalTitle');
+    const settingsModalHeader = settingsModal.querySelector('.modal__header');
+    const settingsModeRow = settingsModal.querySelector('.settings-mode-row');
+
+    // заголовок «Settings» и переключатель режима (CLI/Omniroute) относятся
+    // только к вкладке Providers — на остальных табах (Router/Network/
+    // Sandglass) их скрываем; кнопка закрытия при этом остаётся на месте.
+    function setSettingsHeaderVisibility(isProviders) {
+        settingsModalTitle.hidden = !isProviders;
+        settingsModeRow.hidden = !isProviders;
+        settingsModalHeader.classList.toggle('modal__header--collapsed', !isProviders);
+    }
+
+    // ---------- переключатель режима выполнения: CLI / Omniroute ----------
+    // Omniroute пока Coming Soon (как Loop в композере Chat) — переключатель
+    // стоит, но кликнуть по нему нельзя; CLI остаётся единственным рабочим
+    // режимом и текущим поведением проекта без изменений.
+
+    const settingsModeToggle = settingsModal.querySelector('#settingsModeToggle');
+    const settingsModeOptions = [...settingsModeToggle.querySelectorAll('.segmented__option')].filter((o) => !o.disabled);
+
+    function setSettingsMode(mode) {
+        settingsModeToggle.dataset.active = mode;
+        for (const option of settingsModeToggle.querySelectorAll('.segmented__option')) {
+            const active = option.dataset.mode === mode;
+            option.setAttribute('aria-checked', String(active));
+            option.tabIndex = active ? 0 : -1;
+        }
+    }
+
+    settingsModeToggle.addEventListener('click', (e) => {
+        const option = e.target.closest('.segmented__option');
+        if (option && !option.disabled) setSettingsMode(option.dataset.mode);
+    });
+
+    settingsModeToggle.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        if (settingsModeOptions.length < 2) return;
+        e.preventDefault();
+        const current = settingsModeOptions.findIndex((o) => o.dataset.mode === settingsModeToggle.dataset.active);
+        const next = settingsModeOptions[(current + (e.key === 'ArrowRight' ? 1 : -1) + settingsModeOptions.length) % settingsModeOptions.length];
+        setSettingsMode(next.dataset.mode);
+        next.focus();
+    });
 
     async function api(path, body) {
         const res = await fetch(path, {
@@ -840,10 +908,68 @@
         telegramRefreshTimer = null;
     }
 
+    // ---------- вкладка Sandglass: обратный отсчёт (пока заглушка) ----------
+    // 1 день 2 часа 30 минут 12 секунд — стартовое значение-заглушка, тикает
+    // раз в секунду до нуля и останавливается; уровень песка в SVG следует
+    // за долей прошедшего времени этого же счётчика (renderSandglassSand)
+    const SANDGLASS_INITIAL_SECONDS = 24 * 3600 + 2 * 3600 + 30 * 60 + 12;
+    let sandglassSecondsLeft = SANDGLASS_INITIAL_SECONDS;
+    let sandglassTimer = null;
+    const sandglassCountdownEl = settingsModal.querySelector('#sandglassCountdown');
+    const sandglassEl = settingsModal.querySelector('.sandglass');
+
+    function formatSandglass(totalSeconds) {
+        const s = Math.max(0, totalSeconds);
+        const days = Math.floor(s / 86400);
+        const hours = Math.floor((s % 86400) / 3600);
+        const minutes = Math.floor((s % 3600) / 60);
+        const seconds = s % 60;
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${days}d ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+    }
+
+    // доля прошедшего времени (0 в начале — верх полон, 1 у нуля — низ полон);
+    // сам рисунок (3D-рендер, PROJECTS/Settings/settings-sandglass.js) читает
+    // это значение из data-elapsed каждый кадр и сам двигает кучи и струйку —
+    // этот файл про сам рендер ничего не знает, только пишет долю
+    function renderSandglassSand() {
+        if (!sandglassEl) return;
+        const total = SANDGLASS_INITIAL_SECONDS || 1;
+        const elapsed = Math.min(1, Math.max(0, 1 - sandglassSecondsLeft / total));
+        sandglassEl.dataset.elapsed = String(elapsed);
+    }
+
+    function renderSandglassCountdown() {
+        if (sandglassCountdownEl) sandglassCountdownEl.textContent = formatSandglass(sandglassSecondsLeft);
+        renderSandglassSand();
+    }
+
+    function startSandglassCountdown() {
+        if (sandglassTimer) return;
+        renderSandglassCountdown();
+        sandglassTimer = setInterval(() => {
+            if (sandglassSecondsLeft <= 0) {
+                clearInterval(sandglassTimer);
+                sandglassTimer = null;
+                return;
+            }
+            sandglassSecondsLeft -= 1;
+            renderSandglassCountdown();
+        }, 1000);
+    }
+
+    function stopSandglassCountdown() {
+        clearInterval(sandglassTimer);
+        sandglassTimer = null;
+    }
+
     // App.closeModal общий на все окна и про Telegram не знает — ловим закрытие
     // по смене атрибута hidden, а не заводим отдельный колбэк в app.js
     new MutationObserver(() => {
-        if (settingsModal.hidden) stopTelegramRefresh();
+        if (settingsModal.hidden) {
+            stopTelegramRefresh();
+            stopSandglassCountdown();
+        }
     }).observe(settingsModal, { attributes: true, attributeFilter: ['hidden'] });
 
     for (const input of [telegramTokenInput, telegramUsersInput]) {
@@ -883,7 +1009,8 @@
             const panel = settingsModal.querySelector(`#${btn.getAttribute('aria-controls')}`);
             if (panel) panel.hidden = !active;
         });
-        void tab;
+        setSettingsHeaderVisibility(tab === 'Providers');
+        if (tab === 'Sandglass') startSandglassCountdown();
     });
 
     // ---------- открытие окна настроек ----------
@@ -898,6 +1025,7 @@
             const panel = settingsModal.querySelector(`#${btn.getAttribute('aria-controls')}`);
             if (panel) panel.hidden = !active;
         });
+        setSettingsHeaderVisibility(true);
         renderDefaultProviderRow();
         renderProviders();
         renderScreenshotScreen();

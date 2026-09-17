@@ -2,6 +2,12 @@
 // Читает индекс, который собирает server.js — своего разбора здесь нет,
 // поэтому команда работает и без запущенного сервера.
 //
+// Если саму базу открыть нельзя, спрашивает запущенный сервер (/api/search).
+// Так бывает в контейнере Hermes: DATA/.index.db живёт в режиме WAL, а через
+// смонтированную с Windows папку SQLite отвечает «disk I/O error» — агент
+// тогда копировал базу и писал дампы руками, тратя на это десятки шагов.
+// Адрес сервера — OPENKARANDASH_URL, иначе localhost и host.docker.internal.
+//
 //   node PROJECTS/Graph/search.js "живая перезагрузка"
 //   node PROJECTS/Graph/search.js --kind session "граф"
 
@@ -37,21 +43,60 @@ if (!fs.existsSync(INDEX_FILE)) {
     process.exit(1);
 }
 
-const db = new DatabaseSync(INDEX_FILE);
-const match = ftsQuery(query);
-const rows = db.prepare(`
-    SELECT kind, ref, title, snippet(docs, 3, '«', '»', '…', 12) AS snippet
-    FROM docs WHERE docs MATCH ?${kind ? ' AND kind = ?' : ''}
-    ORDER BY bm25(docs, 0, 0, 10.0, 1.0) LIMIT 15
-`).all(...(kind ? [match, kind] : [match]));
-
-if (!rows.length) {
-    console.log('Nothing found.');
-    process.exit(0);
+function searchLocal() {
+    const db = new DatabaseSync(INDEX_FILE, { readOnly: true });
+    const match = ftsQuery(query);
+    return db.prepare(`
+        SELECT kind, ref, title, snippet(docs, 3, '«', '»', '…', 12) AS snippet
+        FROM docs WHERE docs MATCH ?${kind ? ' AND kind = ?' : ''}
+        ORDER BY bm25(docs, 0, 0, 10.0, 1.0) LIMIT 15
+    `).all(...(kind ? [match, kind] : [match]));
 }
 
-for (const row of rows) {
-    console.log(`\n[${row.kind}] ${row.title}`);
-    console.log(`  ${row.ref}`);
-    console.log(`  ${row.snippet.replace(/\s+/g, ' ').trim()}`);
+async function searchServer() {
+    const port = process.env.PORT || 3001;
+    const bases = [process.env.OPENKARANDASH_URL, `http://127.0.0.1:${port}`, `http://host.docker.internal:${port}`].filter(Boolean);
+    let lastError;
+    for (const base of bases) {
+        try {
+            const res = await fetch(`${base}/api/search`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ q: query, limit: 15, kind }),
+                signal: AbortSignal.timeout(5000),
+            });
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+            return data.hits;
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    throw lastError;
 }
+
+async function main() {
+    let rows;
+    try {
+        rows = searchLocal();
+    } catch (localError) {
+        try {
+            rows = await searchServer();
+        } catch (serverError) {
+            console.error(`Index unreadable (${localError.message}) and server unreachable (${serverError.message}).`);
+            process.exit(1);
+        }
+    }
+
+    if (!rows.length) {
+        console.log('Nothing found.');
+        return;
+    }
+    for (const row of rows) {
+        console.log(`\n[${row.kind}] ${row.title}`);
+        console.log(`  ${row.ref}`);
+        console.log(`  ${row.snippet.replace(/\s+/g, ' ').trim()}`);
+    }
+}
+
+main();

@@ -297,6 +297,11 @@ async function startHermes(apiKey) {
         fs.writeFileSync(gitconfig, '[safe]\n\tdirectory = *\n');
         log('hermes-home/.gitconfig заведён: git внутри контейнера доверяет смонтированному проекту');
     }
+    // hermes/ числится в индексе git подмодулем, а это клон на 1,1 ГБ: git status
+    // проверял его целиком — 18 с на хосте и больше 300 с из контейнера через
+    // смонтированный диск, агент упирался в таймаут и крутился вокруг git.
+    // Своих правок в hermes/ мы не держим, так что не смотрим в него вовсе.
+    run('git', ['config', 'diff.ignoreSubmodules', 'all']);
     const r = run('docker', [...COMPOSE_ARGS, 'up', '-d', 'gateway']);
     if (r.status !== 0) return warn('docker compose up не удался — Hermes не поднят');
     composeUp = true;

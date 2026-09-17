@@ -39,7 +39,14 @@ let pickerModal = null;
 
 export function openModal(el) {
     el.hidden = false;
-    el.querySelector('.modal__close').focus();
+    // крестик закрытия убран из всех окон (data-close-modal остался только
+    // на фоне-подложке) — фокус ставим на сам диалог, чтобы Escape и клик
+    // по подложке по-прежнему закрывали окно с клавиатуры
+    const dialog = el.querySelector('.modal__dialog');
+    if (dialog) {
+        dialog.setAttribute('tabindex', '-1');
+        dialog.focus();
+    }
 }
 
 

@@ -245,7 +245,7 @@ el("mode").onchange = () => { syncMode(); };
   try {
     const health = await (await fetch("/health")).json();
     el("dot").className = "dot ok";
-    el("target").textContent = `CLI: ${health.target} · backend: ${health.backend}`;
+    el("target").textContent = `CLI: ${health.target}`;
     const models = await (await fetch("/v1/models", {
       headers: { Authorization: "Bearer " + TOKEN } })).json();
     el("model").innerHTML = models.data.map((m) => `<option>${m.id}</option>`).join("");

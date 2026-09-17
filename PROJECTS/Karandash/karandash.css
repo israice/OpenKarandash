@@ -116,12 +116,12 @@ body.karandash-mode .comment-popover__button {
 .comment-popover__button:hover { background: #2a2e35; }
 
 .comment-popover__button--primary {
-    border-color: #e5484d;
-    background: #e5484d;
-    color: #fff;
+    border-color: #3b6ea8;
+    background: #2b4d78;
+    color: #f2f2f4;
 }
 
-.comment-popover__button--primary:hover { background: #d43b40; }
+.comment-popover__button--primary:hover { background: #33598a; }
 
 .comment-popover__button:focus-visible {
     outline: 2px solid #6ea8fe;

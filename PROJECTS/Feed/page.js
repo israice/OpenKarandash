@@ -486,6 +486,7 @@ export default function build(page, { panel, signal }) {
                 kv(body, true);
                 addBlock(body, 'hook_id / hook_event (toolInput)', prettyJson(message.toolInput));
                 addBlock(body, 'Hook output (stdout/stderr/output)', message.toolResult, message.toolError ? 'session-feed__block--error' : '');
+                if (message.extraMeta) addBlock(body, 'Extra metadata (extra_meta)', prettyJson(message.extraMeta));
             });
             return;
         }
@@ -519,21 +520,28 @@ export default function build(page, { panel, signal }) {
             };
             addCard(container, {
                 icon: message.role === 'top_level' ? 'unknown' : message.role,
-                title: message.toolName || message.text || titleByRole[message.role],
+                // у пометки хода (server.js recordNotice) имя источника — в toolName,
+                // а что произошло — в text: в заголовке нужны оба
+                title: [message.toolName, message.text !== message.toolName ? truncate(message.text, 120) : '']
+                    .filter(Boolean).join(' — ') || titleByRole[message.role],
                 subtitle: fmtTime(message.createdAt),
                 extraClass: `session-feed__card--${message.role === 'top_level' ? 'unknown' : message.role} session-feed__card--dense`,
             }, (body) => {
                 kv(body, true);
                 addBlock(body, 'Raw event (toolInput)', prettyJson(message.toolInput));
+                // откуда строка: id сообщения Hermes, дочерняя сессия помощника и т.п.
+                if (message.extraMeta) addBlock(body, 'Extra metadata (extra_meta)', prettyJson(message.extraMeta));
             });
             return;
         }
 
         const kind = message.role === 'user' ? 'user' : 'assistant';
         const isError = message.stopReason === 'error';
+        // ответ, данный внутри вызова помощника (parent_tool_use_id), — не ответ основной модели
+        const who = kind === 'user' ? 'You' : (message.parentToolUseId ? 'Subagent' : 'Assistant');
         addCard(container, {
             icon: kind,
-            title: `${kind === 'user' ? 'You' : 'Assistant'}${isError ? ' · turn error' : ''}`,
+            title: `${who}${isError ? ' · turn error' : ''}`,
             subtitle: `${truncate(message.text, 60)} · ${fmtTime(message.createdAt)}`,
             extraClass: `session-feed__card--${kind}${isError ? ' session-feed__card--error' : ''}`,
         }, (body) => {
@@ -551,6 +559,7 @@ export default function build(page, { panel, signal }) {
             if (message.resultMeta) {
                 addBlock(body, 'Turn diagnostics (result_meta)', prettyJson(message.resultMeta));
             }
+            if (message.extraMeta) addBlock(body, 'Extra metadata (extra_meta)', prettyJson(message.extraMeta));
         });
     }
 

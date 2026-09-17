@@ -198,14 +198,53 @@ function toolTagHue(name) {
     return hash % 360;
 }
 
+// шаги-инструментов сворачиваются гармошкой: открыт может быть только один —
+// клик по свёрнутому открывает его и закрывает ранее открытый (если был);
+// клик по открытому сворачивает его обратно. Открывать нечего у шагов без
+// detail (живой поток шлёт только короткую сводку, без сырых args/result —
+// см. toolLabel/hermesToolDetail на сервере) — такие клика не ловят
+function setStepOpen(step, open) {
+    if (open) {
+        const prevOpen = state.chatList.querySelector('.chat__message--tool.is-open');
+        if (prevOpen && prevOpen !== step) prevOpen.classList.remove('is-open');
+        step.classList.add('is-open');
+    } else {
+        step.classList.remove('is-open');
+    }
+}
+
+function prettyJson(raw) {
+    if (!raw) return '';
+    try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return String(raw); }
+}
+
+function addToolSection(body, label, text, isError) {
+    if (!text) return;
+    const section = document.createElement('div');
+    section.className = 'chat__tool-section';
+    const lbl = document.createElement('div');
+    lbl.className = 'chat__tool-section-label';
+    lbl.textContent = label;
+    const pre = document.createElement('pre');
+    pre.className = `chat__tool-section-pre${isError ? ' chat__tool-section-pre--error' : ''}`;
+    pre.textContent = text;
+    section.append(lbl, pre);
+    body.append(section);
+}
+
 // строка шага: что Claude сделал (Read index.html, Bash npm test).
 // text приходит уже склеенным «имя деталь» (см. toolLabel/hermesToolDetail
-// на сервере) — имя инструмента выделяем цветным тегом, разбирая первое слово
-export function addStep(text, before) {
+// на сервере) — имя инструмента выделяем цветным тегом, разбирая первое слово.
+// detail — { input, result, error } из строки сессии (toolInput/toolResult/
+// toolError в /api/sessions/messages): полные аргументы и вывод инструмента,
+// не обрезанные до короткой сводки — тело гармошки строится из них
+export function addStep(text, before, detail) {
     const stick = isChatNearBottom();
     const step = document.createElement('div');
     step.className = 'chat__message chat__message--tool';
 
+    const head = document.createElement('div');
+    head.className = 'chat__tool-head';
     const match = String(text).match(/^(\S+)(\s+([\s\S]*))?$/);
     if (match) {
         const hue = toolTagHue(match[1]);
@@ -214,10 +253,23 @@ export function addStep(text, before) {
         tag.style.color = `hsl(${hue}, 70%, 68%)`;
         tag.style.background = `hsl(${hue}, 45%, 18%)`;
         tag.textContent = match[1];
-        step.append(tag);
-        if (match[3]) step.append(document.createTextNode(` ${match[3]}`));
+        head.append(tag);
+        if (match[3]) head.append(document.createTextNode(` ${match[3]}`));
     } else {
-        step.textContent = text;
+        head.textContent = text;
+    }
+    step.append(head);
+
+    const body = document.createElement('div');
+    body.className = 'chat__tool-body';
+    addToolSection(body, 'Input', prettyJson(detail?.input));
+    addToolSection(body, detail?.error ? 'Error' : 'Output', detail?.result, detail?.error);
+    const hasBody = body.children.length > 0;
+    if (hasBody) {
+        step.append(body);
+        step.addEventListener('click', () => setStepOpen(step, !step.classList.contains('is-open')));
+    } else {
+        step.classList.add('chat__message--tool-plain');
     }
 
     if (before && before.parentNode === state.chatList) state.chatList.insertBefore(step, before);

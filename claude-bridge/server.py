@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
-import threading
 import time
 import urllib.error
 import urllib.request
@@ -28,27 +27,8 @@ logger = logging.getLogger("claude_bridge.server")
 
 CFG = BridgeConfig()
 
-# The ACP backend owns a long-lived subprocess and a session pool, so exactly
-# one instance is shared by every request; the CLI backend is stateless and is
-# called as a module.
-_ACP: "acp_backend.AcpBackend | None" = None
-_ACP_LOCK = threading.Lock()
-
-
-def _backend():
-    """Return an object exposing run_turn/stream_turn for the configured backend."""
-    if CFG.backend != "acp":
-        return cli_backend_adapter
-    global _ACP
-    with _ACP_LOCK:
-        if _ACP is None:
-            import acp_backend
-            _ACP = acp_backend.AcpBackend(CFG)
-    return _ACP
-
-
-class cli_backend_adapter:
-    """Bind CFG into the stateless CLI backend so both share one call shape."""
+class _backend_adapter:
+    """Bind CFG into the stateless CLI backend."""
 
     @staticmethod
     def run_turn(messages, model, tools=None, tool_choice=None):
@@ -100,16 +80,28 @@ def _completion_envelope(result: cli_backend.BridgeResult, model: str) -> dict:
         "created": int(time.time()),
         "model": model,
         "choices": [{"index": 0, "message": message, "finish_reason": _finish_reason(result)}],
-        "usage": {
-            "prompt_tokens": result.input_tokens,
-            "completion_tokens": result.output_tokens,
-            "total_tokens": result.input_tokens + result.output_tokens,
-        },
+        "usage": _usage(result),
         # Non-standard but harmless, and it makes CLI-side debugging possible.
         "claude_bridge": {
             "session_id": result.session_id,
-            "backend": CFG.backend,
             "cache_read_tokens": result.cache_read,
+            "cache_write_tokens": result.cache_write,
+        },
+    }
+
+
+def _usage(result: cli_backend.BridgeResult) -> dict:
+    """usage в OpenAI-виде, с кешем там, где его ищет Hermes.
+
+    prompt_tokens — весь ввод, включая кеш; разбивку Hermes берёт из
+    prompt_tokens_details. Без неё он записывал cache_read=0 на каждый ход, и
+    по учёту нельзя было понять, работает ли кеш вообще."""
+    return {
+        "prompt_tokens": result.input_tokens,
+        "completion_tokens": result.output_tokens,
+        "total_tokens": result.input_tokens + result.output_tokens,
+        "prompt_tokens_details": {
+            "cached_tokens": result.cache_read,
             "cache_write_tokens": result.cache_write,
         },
     }
@@ -205,7 +197,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if self.path.rstrip("/") in ("/health", "/v1/health"):
-            self._send_json(200, {"status": "ok", "target": CFG.target, "backend": CFG.backend})
+            self._send_json(200, {"status": "ok", "target": CFG.target})
             return
         if not self._authorized():
             self._error(401, "missing or invalid bridge token", "authentication_error")
@@ -302,7 +294,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         try:
-            result = _backend().run_turn(messages, model, tools, tool_choice)
+            result = _backend_adapter.run_turn(messages, model, tools, tool_choice)
         except Exception as exc:
             logger.exception("turn failed")
             self._error(502, f"claude backend failed: {exc}", "upstream_error")
@@ -323,7 +315,7 @@ class Handler(BaseHTTPRequestHandler):
         started = False
 
         try:
-            for kind, value in _backend().stream_turn(messages, model, tools, tool_choice):
+            for kind, value in _backend_adapter.stream_turn(messages, model, tools, tool_choice):
                 if not started:
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream")
@@ -337,6 +329,11 @@ class Handler(BaseHTTPRequestHandler):
 
                 if kind == "delta":
                     self._sse(_chunk_envelope(cid, label, created, {"content": value}))
+                elif kind == "reasoning":
+                    self._sse(_chunk_envelope(cid, label, created, {"reasoning_content": value}))
+                elif kind == "ping":
+                    # пустой кусок: модель ещё думает, ход жив
+                    self._sse(_chunk_envelope(cid, label, created, {}))
                 elif kind == "done":
                     if value.reasoning:
                         self._sse(_chunk_envelope(cid, label, created, {"reasoning_content": value.reasoning}))
@@ -350,11 +347,7 @@ class Handler(BaseHTTPRequestHandler):
                     final = _chunk_envelope(cid, label, created, {}, _finish_reason(value))
                     # stream_options.include_usage is the OpenAI convention;
                     # Hermes reads usage off the terminal chunk for accounting.
-                    final["usage"] = {
-                        "prompt_tokens": value.input_tokens,
-                        "completion_tokens": value.output_tokens,
-                        "total_tokens": value.input_tokens + value.output_tokens,
-                    }
+                    final["usage"] = _usage(value)
                     self._sse(final)
         except Exception as exc:
             logger.exception("stream failed")
@@ -381,10 +374,11 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     logger.info(
-        "claude-bridge listening on http://%s:%s (backend=%s, target=%s, auth=%s)",
-        CFG.host, CFG.port, CFG.backend, CFG.target,
-        "on" if CFG.auth_token else "OFF",
+        "claude-bridge listening on http://%s:%s (target=%s, auth=%s, effort=%s, session reuse=%s)",
+        CFG.host, CFG.port, CFG.target,
+        "on" if CFG.auth_token else "OFF", CFG.effort or "default", CFG.session_reuse,
     )
+    cli_backend.sweep_prompt_files(CFG)
     ThreadingHTTPServer((CFG.host, CFG.port), Handler).serve_forever()
 
 

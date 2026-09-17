@@ -50,6 +50,13 @@ HOST_DEPS=1
 # CLAUDE_BIN=
 # External Obsidian vault instead of the DATA/vault/ folder inside the project
 # OBSIDIAN_VAULT=
+
+# exec-bridge pilot (DOCS/decisions/037, DOCS/план-докеризации-коннекторов.md):
+# EXEC_MODE=remote makes spawn() go through the host bridge instead of the
+# local process — only meaningful when server.js itself runs in a container
+# EXEC_MODE=remote
+# EXEC_BRIDGE_URL=http://host.docker.internal:8789
+# EXEC_BRIDGE_TOKEN=
 `;
 
 function loadEnv() {
@@ -377,6 +384,7 @@ const MIME = {
     '.html': 'text/html; charset=utf-8',
     '.css': 'text/css; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8', // ES-модули из node_modules без обёртки .js (rapier.mjs)
     '.json': 'application/json; charset=utf-8',
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
@@ -644,6 +652,106 @@ function killProcessTree(child, target) {
             .on('error', () => {}); // процесс мог завершиться сам, пока мы собирались
     }
     child.kill();
+}
+
+// ---------- exec-bridge: удалённый spawn, когда сам server.js в контейнере ----------
+// Пока server.js работает на голом хосте, ничего не меняется — spawn() остаётся
+// локальным. EXEC_MODE=remote включает пилот из DOCS/decisions/037: единственная
+// точка, которая физически спавнит процесс, подменяется HTTP-вызовом к exec-bridge
+// (exec-bridge/server.py, живёт на хосте) с тем же внешним контрактом (Promise,
+// onLine, onSpawn с .kill(), таймаут) — коннектор (runOpenCode и далее прочие)
+// не знает, локальный это spawn или поход через мост.
+const EXEC_MODE = process.env.EXEC_MODE || null;
+const EXEC_BRIDGE_URL = (process.env.EXEC_BRIDGE_URL || 'http://host.docker.internal:8789').replace(/\/+$/, '');
+const EXEC_BRIDGE_TOKEN = process.env.EXEC_BRIDGE_TOKEN || '';
+
+function execBridgeHeaders() {
+    return EXEC_BRIDGE_TOKEN ? { Authorization: `Bearer ${EXEC_BRIDGE_TOKEN}` } : {};
+}
+
+// shellPrefix — не None, только когда исходная цель viaShell (wsl.exe bash -lc):
+// мосту он нужен исключительно чтобы переиздать kill внутри той же виртуалки
+// (см. exec-bridge/server.py, Run.kill) — саму команду сервер уже собрал целиком
+function execViaBridge(cmd, args, { timeoutMs, onLine, onSpawn, shellPrefix } = {}) {
+    return new Promise((resolve, reject) => {
+        const url = new URL(`${EXEC_BRIDGE_URL}/exec`);
+        const payload = JSON.stringify({ cmd, args, timeoutMs, shellPrefix });
+        const req = http.request({
+            hostname: url.hostname,
+            port: url.port || 80,
+            path: url.pathname,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...execBridgeHeaders() },
+        });
+
+        // мост сам применяет timeoutMs к процессу — это лишь страховка на случай,
+        // если сам HTTP-запрос к мосту повиснет (сеть недоступна, мост завис)
+        if (timeoutMs) {
+            req.setTimeout(timeoutMs + 30_000, () => {
+                req.destroy(new Error(`exec-bridge did not respond within ${Math.round(timeoutMs / 1000)}s (+30s grace)`));
+            });
+        }
+
+        // тот же контракт onSpawn(child)/child.kill(), что и у локального spawn —
+        // Stop (killProcessTree) не знает и не должен знать, что цель удалённая
+        const fakeChild = {
+            __stoppedByUser: false,
+            __runId: null,
+            kill() {
+                this.__stoppedByUser = true;
+                if (!this.__runId) { req.destroy(new Error('Stopped by the user')); return; } // мост ещё не ответил started
+                const killUrl = new URL(`${EXEC_BRIDGE_URL}/exec/${this.__runId}/kill`);
+                http.request({ hostname: killUrl.hostname, port: killUrl.port || 80, path: killUrl.pathname, method: 'POST', headers: execBridgeHeaders() })
+                    .on('error', () => {}) // мост мог уже погасить процесс сам — обычная гонка со Stop
+                    .end();
+            },
+        };
+        onSpawn?.(fakeChild);
+
+        let stdout = '';
+        let finished = false;
+        const done = (err, value) => {
+            if (finished) return;
+            finished = true;
+            err ? reject(err) : resolve(value);
+        };
+
+        req.on('error', (err) => {
+            done(fakeChild.__stoppedByUser ? new Error('Stopped by the user') : new Error(`exec-bridge unreachable: ${err.message}`));
+        });
+
+        req.on('response', (res) => {
+            if (res.statusCode >= 400) {
+                let body = '';
+                res.on('data', (c) => { body += c; });
+                res.on('end', () => done(new Error(body.trim() || `exec-bridge returned ${res.statusCode}`)));
+                return;
+            }
+            // NDJSON: одна строка — одно событие (started/line/done), см. exec-bridge/README.md
+            let tail = '';
+            res.on('data', (chunk) => {
+                tail += chunk;
+                let cut;
+                while ((cut = tail.indexOf('\n')) !== -1) {
+                    const raw = tail.slice(0, cut);
+                    tail = tail.slice(cut + 1);
+                    if (!raw.trim()) continue;
+                    let event;
+                    try { event = JSON.parse(raw); } catch { continue; }
+                    if (event.type === 'started') fakeChild.__runId = event.runId;
+                    else if (event.type === 'line') onLine ? onLine(event.text) : (stdout += event.text + '\n');
+                    else if (event.type === 'done') {
+                        if (event.timedOut) return done(new Error(`Timed out (${Math.round((timeoutMs || 0) / 1000)}s)`));
+                        if (event.code === 0) return done(null, stdout);
+                        done(new Error(fakeChild.__stoppedByUser ? 'Stopped by the user' : ((event.stderr || '').trim() || `CLI exited with code ${event.code}`)));
+                    }
+                }
+            });
+            res.on('end', () => done(new Error('exec-bridge closed the connection before finishing')));
+        });
+
+        req.end(payload);
+    });
 }
 
 // промпт всегда идёт через stdin: так он не попадает в командную строку
@@ -1328,11 +1436,23 @@ function shQuote(value) {
 // но prompt здесь не идёт через stdin: opencode run принимает его позиционным
 // аргументом (проверено вживую, см. память команды), stdin CLI не читает вовсе
 function runOpenCode(target, cliArgs, { timeoutMs, onLine, onSpawn } = {}) {
-    return new Promise((resolve, reject) => {
-        const args = target.viaShell
-            ? [...target.args, shellLaunch([target.binName || 'opencode', ...cliArgs].map(shQuote).join(' '))]
-            : [...target.args, ...cliArgs];
+    const args = target.viaShell
+        ? [...target.args, shellLaunch([target.binName || 'opencode', ...cliArgs].map(shQuote).join(' '))]
+        : [...target.args, ...cliArgs];
 
+    // пилот из DOCS/decisions/037: сам server.js в контейнере, opencode остаётся
+    // на хосте — единственная точка spawn подменяется HTTP-вызовом к exec-bridge
+    // с тем же внешним контрактом (Promise, onLine, onSpawn с .kill()); shellPrefix
+    // передаём только для viaShell-цели (wsl.exe) — мосту он нужен лишь для kill
+    // внутри той же виртуалки (exec-bridge/server.py, Run.kill)
+    if (EXEC_MODE === 'remote') {
+        return execViaBridge(target.cmd, args, {
+            timeoutMs, onLine, onSpawn,
+            shellPrefix: target.viaShell ? target.args : null,
+        });
+    }
+
+    return new Promise((resolve, reject) => {
         const child = spawn(target.cmd, args, { windowsHide: true });
         onSpawn?.(child);
 
@@ -2015,18 +2135,20 @@ function hermesRequest(url, { method = 'POST', body, timeoutMs, onSpawn, onEvent
 }
 
 // текст, который на самом деле — запрос инструмента по текстовому протоколу
-// моста ({"tool_calls": [...]}). Перед объектом модель повторяет то, что стояло
-// в конце запроса: подпись «Assistant:» и напоминание о протоколе
-// («[Protocol reminder: …]»). Разбирать такой ответ и выполнять вызов — дело
-// моста (claude-bridge/tool_protocol.py); здесь только распознаём, чтобы сырой
-// объект не ушёл человеку в ленту и в телеграм под видом ответа
-const RAW_TOOL_CALL_ECHO = /^(?:\s*(?:Assistant|Model)\s*:|\s*\[\s*Protocol reminder\b[^\n]*\])+/i;
-function isRawToolCall(text) {
-    const body = String(text || '').replace(RAW_TOOL_CALL_ECHO, '').trimStart();
-    // обёртка с ключом tool_calls — и голый список вызовов без неё: модель
-    // пишет и так, и так (сессия hermes-docker-mtqy9nps встала именно на списке)
-    return /^\{\s*"tool_calls"\s*:/.test(body) || /^\[\s*\{\s*"name"\s*:/.test(body);
-}
+// моста: распознавание общее с разбором истории (SYSTEM/core/hermes-history.js),
+// чтобы сырой объект не ушёл человеку в ленту и в телеграм под видом ответа
+const { isRawToolCall } = hermesHistoryModule;
+
+// Раньше единственный нераспознанный текстовый вызов сразу обрывал весь ход
+// («Hermes ended the turn with a tool call written as text…»). Внутри моста
+// уже есть своя коррекция (MAX_CORRECTIONS в claude-bridge/cli_backend.py) —
+// это вторая, внешняя линия защиты: если и после неё ответ всё равно похож на
+// нераспознанный вызов, просим модель переоформить его в той же сессии Hermes,
+// ограниченное число раз, а не сдаёмся на первом сорвавшемся вызове.
+const MAX_RAW_TOOL_CALL_RETRIES = 2;
+const RAW_TOOL_CALL_RETRY_NUDGE = 'Your previous reply looked like a tool call, but it was delivered as plain '
+    + 'text and NOTHING was executed. If you meant to call a tool, do it properly now. If that was your real '
+    + 'final answer, restate it in plain prose without any tool-call-looking JSON.';
 
 // короткая подпись вызова для строки шага — как toolLabel у Claude
 function hermesToolDetail(args) {
@@ -2035,55 +2157,119 @@ function hermesToolDetail(args) {
     return String(detail).slice(0, 120);
 }
 
-// ---------- дотягивание истории Hermes ----------
+// ---------- история Hermes → лента ----------
 //
-// Ход в сессию Hermes может прийти не от нас: из его дашборда, по его же API,
-// заданием по расписанию. В нашей ленте такой ход не появлялся вовсе, и
-// пользователь видел обрывок работы вместо целого разговора. Разбор истории и
-// правило «что считать новым» живут в SYSTEM/core/hermes-history.js — здесь
-// только доступ к нашей базе и адрес Hermes.
+// Поток сессии Hermes отдаёт только старт и конец инструментов верхнего уровня.
+// Тексты между вызовами, размышления, сжатие контекста, шаги помощников, пометки
+// моста и ходы, пришедшие мимо нас, есть только в его истории — поэтому ход
+// после завершения пересобирается по ней, а сессия перед показом добирает
+// недостающее (DOCS/decisions/039). Разбор живёт в SYSTEM/core/hermes-history.js —
+// здесь только доступ к нашей базе и адрес Hermes.
+// доступ разбора истории к нашей базе; им же пишет ход Hermes вживую
+// (размышления и шаги помощников), чтобы Sessions, Feed и Flow читали одно и то же
+const hermesStore = {
+    cursor: (sessionId) => hermesSyncCursor.get(sessionId)?.id ?? null,
+    childCursor: (sessionId, childId) => hermesChildCursor.get(sessionId, childId)?.id ?? null,
+    lastMessageTime: (sessionId) => Date.parse(lastMessageTime.get(sessionId)?.at || ''),
+    touch: (sessionId) => touchSession.run(new Date().toISOString(), sessionId),
+    truncate: (sessionId, fromPosition) => deleteMessagesFrom.run(sessionId, fromPosition),
+    append: (sessionId, entry, { parentToolUseId = null, childSession = null, model = null } = {}) => {
+        let position = null;
+        if (entry.kind === 'user') {
+            position = countMessages.get(sessionId).n;
+            upsertMessage.run(sessionId, position, 'user', entry.text, entry.at, null, null);
+        } else if (entry.kind === 'assistant') {
+            position = recordAssistantText(sessionId, entry.text, model || 'hermes', null, parentToolUseId);
+        } else if (entry.kind === 'thinking') {
+            position = recordThinking(sessionId, entry.text);
+            if (parentToolUseId) setMessageToolIds.run(null, parentToolUseId, sessionId, position);
+        } else if (entry.kind === 'notice') {
+            position = recordNotice(sessionId, entry.name, entry.text, parentToolUseId);
+        } else {
+            position = recordStep(
+                sessionId,
+                // шаг помощника — с «↳», как и вживую: в плоской ленте чата иначе не отличить
+                `${childSession ? '↳ ' : ''}${entry.name} ${hermesToolDetail(entry.args)}`.trim(),
+                entry.name, entry.args, entry.toolCallId || null, parentToolUseId, null,
+            );
+            setMessageToolResult.run(clip(entry.result) || null, entry.failed ? 1 : 0, null, sessionId, position);
+        }
+        // время строки — когда это было у Hermes, а не когда мы перенесли
+        if (entry.at) setMessageCreatedAt.run(entry.at, sessionId, position);
+        // отметка «эта строка перенесена из истории Hermes» и есть курсор
+        setMessageExtraMeta.run(JSON.stringify({
+            hermesMessageId: entry.hermesMessageId,
+            viaHermesHistory: true,
+            ...(childSession ? { hermesChildSession: childSession } : {}),
+        }), sessionId, position);
+        return position;
+    },
+};
 const hermesHistory = hermesHistoryModule.createHermesHistory({
     request: (url, opts) => hermesRequest(url, opts),
     log: (message) => console.error(message),
-    store: {
-        cursor: (sessionId) => hermesSyncCursor.get(sessionId)?.id ?? null,
-        lastMessageTime: (sessionId) => Date.parse(lastMessageTime.get(sessionId)?.at || ''),
-        touch: (sessionId) => touchSession.run(new Date().toISOString(), sessionId),
-        append: (sessionId, entry) => {
-            let position = null;
-            if (entry.kind === 'user') {
-                position = countMessages.get(sessionId).n;
-                upsertMessage.run(sessionId, position, 'user', entry.text, entry.at, null, null);
-            } else if (entry.kind === 'assistant') {
-                position = recordAssistantText(sessionId, entry.text, entry.model || 'hermes', null, null);
-            } else if (entry.kind === 'thinking') {
-                position = recordThinking(sessionId, entry.text);
-            } else {
-                position = recordStep(
-                    sessionId,
-                    `${entry.name} ${hermesToolDetail(entry.args)}`.trim(),
-                    entry.name, entry.args, null, null, null,
-                );
-                setMessageToolResult.run(clip(entry.result) || null, 0, null, sessionId, position);
-            }
-            // отметка «эта строка добрана из истории Hermes» и есть курсор
-            setMessageExtraMeta.run(
-                JSON.stringify({ hermesMessageId: entry.hermesMessageId, viaHermesHistory: true }),
-                sessionId, position,
-            );
-        },
-    },
+    store: hermesStore,
 });
 
-// Дотянуть переписку сессии, если она принадлежит Hermes и сейчас по ней не
-// идёт наш собственный ход: во время хода строки шагов пишет стрим, и
-// дотягивание добавило бы их вторым экземпляром.
-async function syncHermesHistory(sessionId, target) {
-    const hermesId = getCliSession.get(sessionId, target.id)?.id;
-    if (!hermesId) return 0;
-    for (const run of activeRuns.values()) if (run.sessionId === sessionId) return 0;
-    return hermesHistory(sessionId, hermesId, hermesSessionsBase(target.url));
+// сессия Hermes, связанная с нашей: по любой цели Hermes, а не только по той,
+// что завела сессию, — сессию, начатую Claude и продолженную Hermes, тоже надо добирать
+function hermesLinkFor(sessionId) {
+    for (const target of HERMES_TARGETS) {
+        const hermesId = getCliSession.get(sessionId, target.id)?.id;
+        if (hermesId) return { target, hermesId };
+    }
+    return null;
 }
+
+// Дотянуть переписку сессии, если по ней не идёт наш собственный ход: во время
+// хода строки пишет поток, а по его окончании — пересборка хода.
+async function syncHermesHistory(sessionId) {
+    const link = hermesLinkFor(sessionId);
+    if (!link) return 0;
+    for (const run of activeRuns.values()) if (run.sessionId === sessionId) return 0;
+    return hermesHistory.sync(sessionId, link.hermesId, hermesSessionsBase(link.target.url));
+}
+
+// Сессии Hermes, начатые не из интерфейса (его дашборд, API, расписание), тоже
+// попадают в список: заводим нашу сессию, связь в session_cli и добираем
+// историю. Сессию, у которой связь уже есть, не трогаем — в том числе ту, что
+// человек у нас удалил: связь остаётся, и удалённая не воскресает.
+const HERMES_IMPORT_EVERY_MS = 60_000;
+let hermesImportAt = 0;
+async function importForeignHermesSessions() {
+    if (!activeHermesTarget || Date.now() - hermesImportAt < HERMES_IMPORT_EVERY_MS) return 0;
+    hermesImportAt = Date.now();
+    const target = activeHermesTarget;
+    const base = hermesSessionsBase(target.url);
+    let sessions;
+    try {
+        sessions = await hermesHistoryModule.fetchTopSessions((url, opts) => hermesRequest(url, opts), base);
+    } catch (err) {
+        console.error(`hermes session import failed: ${err.message}`);
+        return 0;
+    }
+    let imported = 0;
+    for (const s of sessions) {
+        if (!s.id || hasCliSessionLink.get(s.id)) continue;
+        // ok-<наш id> — сессия, которую завели мы сами, но связь на неё потерялась
+        const sessionId = String(s.id).startsWith('ok-')
+            ? String(s.id).slice(3)
+            : `${target.id}-import-${String(s.id).replace(/[^\w-]/g, '_')}`;
+        const at = new Date((Number(s.last_active || s.started_at) || Date.now() / 1000) * 1000).toISOString();
+        upsertSession.run(sessionId, extractTitle(s.title || s.preview || s.id, 300), at, target.id);
+        setCliSession.run(sessionId, target.id, s.id);
+        await hermesHistory.sync(sessionId, s.id, base);
+        touchSession.run(at, sessionId);
+        imported++;
+    }
+    if (imported && clients.size) notifyClients('fragment:chat-sessions');
+    return imported;
+}
+// раз в минуту, пока Hermes подключён: новая сессия у него появляется в нашем
+// списке сама, без действий человека
+setInterval(() => {
+    importForeignHermesSessions().catch((err) => console.error(`hermes session import failed: ${err.message}`));
+}, HERMES_IMPORT_EVERY_MS).unref();
 
 // Название сессии у Hermes обязано быть неповторимым: на второй такой же он
 // отвечает отказом `invalid_title` («Title already in use by session …»).
@@ -2135,101 +2321,248 @@ async function askHermes({ prompt, sessionId, mode }, send) {
         }
         if (handoff) setMessageInputSent.run(handoff + prompt, ctx.session, ctx.userPosition);
 
-        // позиции строк шагов по порядку вызовов: результат инструмента приходит
-        // не в tool.completed (там нет вывода), а в расшифровке run.completed —
-        // сообщения роли tool идут в том же порядке, что вызовы
-        const steps = []; // { position, name, done }
-        const texts = []; // тексты ассистента из расшифровки, последний — итог
-        let finalText = '';
-        let failure = null;
+        // Помощники (delegate_task) работают в своих дочерних сессиях Hermes, и
+        // его поток о них молчит — пока идёт вызов, опрашиваем их историю и
+        // показываем новые шаги вживую. В базу пишет пересборка хода в конце.
+        const shownChild = new Set();
+        let childPoll = null;
+        // id живой строки вызова delegate_task: к нему вкладываются шаги помощника,
+        // пока пересборка хода не заменит его настоящим id вызова у Hermes
+        let liveDelegateId = null;
+        // опрос, начатый до конца хода, не должен дописать строки после пересборки —
+        // они легли бы дублями поверх перенесённых из истории
+        let pollStopped = false;
+        let pollInFlight = null;
+        const pollChildren = () => {
+            if (pollInFlight || pollStopped) return pollInFlight;
+            pollInFlight = pollChildrenOnce().finally(() => { pollInFlight = null; });
+            return pollInFlight;
+        };
+        const pollChildrenOnce = async () => {
+            let entries;
+            try { entries = await hermesHistory.peekChildren(hermesId, base); } catch { return; }
+            if (pollStopped) return;
+            for (const entry of entries) {
+                const key = entry.hermesMessageId;
+                if (!key || shownChild.has(key)) continue;
+                shownChild.add(key);
+                // в базу сразу, а не только в поток: Feed и Flow строятся из базы
+                const shown = entry.kind === 'user'
+                    ? { ...entry, kind: 'notice', name: 'hermes.subagent-task', text: `Задача помощнику: ${entry.text}` }
+                    : entry;
+                hermesStore.append(ctx.session, shown, { parentToolUseId: liveDelegateId, childSession: entry.childSession, model: ctx.meta.model });
+                emitHermesEntry(ctx, shown, true);
+            }
+        };
+        const startChildPoll = () => {
+            if (childPoll) return;
+            childPoll = setInterval(pollChildren, HERMES_CHILD_POLL_MS);
+            childPoll.unref?.();
+        };
+        let liveThinking = false;
+        let liveToolCount = 0;
 
-        const onEvent = (name, ev) => {
-            if (name === 'tool.started') {
-                const detail = hermesToolDetail(ev.args);
-                const toolName = ev.tool_name || 'tool';
-                const position = recordStep(ctx.session, `${toolName} ${detail}`.trim(), toolName, ev.args ?? null, null, null, null);
-                steps.push({ position, name: toolName, done: false });
-                ctx.emit({ type: 'tool', name: toolName, detail });
-                return;
-            }
-            if (name === 'tool.completed' || name === 'tool.failed') {
-                const step = steps.find((s) => !s.done && s.name === ev.tool_name) || steps.find((s) => !s.done);
-                if (step) {
-                    step.done = true;
-                    step.failed = name === 'tool.failed';
-                    // вывода в событии нет — пока только факт; текст дойдёт из расшифровки
-                    setMessageToolResult.run(ev.preview ? clip(String(ev.preview)) : null, step.failed ? 1 : 0, null, ctx.session, step.position);
-                }
-                return;
-            }
-            if (name === 'assistant.completed') { finalText = ev.content || ''; return; }
-            if (name === 'run.completed') {
-                const usage = ev.usage || {};
-                ctx.meta.usage.inputTokens = usage.input_tokens || 0;
-                ctx.meta.usage.outputTokens = usage.output_tokens || 0;
-                // модель Hermes выбирает сам — узнаём её из runtime-метаданных ответа,
-                // чтобы окно контекста (contextWindowFor) считалось по реальной модели,
-                // а не оставалось неизвестным всю сессию
-                if (!ctx.meta.model && ev.runtime?.model) ctx.meta.model = ev.runtime.model;
-                let toolIndex = 0;
-                for (const m of ev.messages || []) {
-                    if (m.role === 'tool') {
-                        const step = steps[toolIndex++];
-                        if (!step) continue;
-                        const output = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '');
-                        setMessageToolResult.run(clip(output), step.failed ? 1 : 0, null, ctx.session, step.position);
-                    } else if (m.role === 'assistant') {
-                        // размышление модели идёт своим полем, а не текстом ответа:
-                        // мост достаёт его из потока Claude и отдаёт как
-                        // reasoning_content (claude-bridge/server.py). Пишем строкой
-                        // роли thinking — лента показывает её курсивом рядом с шагами
-                        const reasoning = m.reasoning_content || m.reasoning || '';
-                        if (typeof reasoning === 'string' && reasoning.trim()) {
-                            recordThinking(ctx.session, reasoning);
-                            ctx.emit({ type: 'thinking', text: reasoning });
-                        }
-                        if (typeof m.content === 'string' && m.content.trim()) texts.push(m.content);
+        // один запрос к Hermes и разбор его расшифровки в тексты/шаги. Вынесено в
+        // функцию, чтобы при сорвавшемся текстовом вызове инструмента (весь ответ —
+        // isRawToolCall) можно было отправить в ту же сессию поправку и повторить,
+        // а не обрывать ход на первом же таком случае
+        const runOnce = async (message) => {
+            // позиции строк шагов по порядку вызовов: результат инструмента приходит
+            // не в tool.completed (там нет вывода), а в расшифровке run.completed —
+            // сообщения роли tool идут в том же порядке, что вызовы
+            const steps = []; // { position, name, done }
+            const texts = []; // тексты ассистента из расшифровки, последний — итог
+            let finalText = '';
+            let failure = null;
+
+            const onEvent = (name, ev) => {
+                if (name === 'tool.started') {
+                    const detail = hermesToolDetail(ev.args);
+                    const toolName = ev.tool_name || 'tool';
+                    const position = recordStep(ctx.session, `${toolName} ${detail}`.trim(), toolName, ev.args ?? null, null, null, null);
+                    steps.push({ position, name: toolName, done: false });
+                    liveToolCount++;
+                    ctx.emit({ type: 'tool', name: toolName, detail });
+                    if (toolName === 'delegate_task') {
+                        liveDelegateId = `live-delegate-${ctx.session}-${position}`;
+                        setMessageToolIds.run(liveDelegateId, null, ctx.session, position);
+                        startChildPoll();
                     }
+                    return;
                 }
-                // у askClaude (askHermes её замена, DOCS/decisions/029) заполнение окна
-                // считается и шлётся отсюда же, событием result — здесь его аналог
-                // run.completed. Без этого датчик контекста в шапке чата навсегда
-                // застревал на значении первого хода (или на «—», пока хода не было)
-                const window = contextWindowFor(ctx.meta.model);
-                const percent = Math.min(100, Math.round((usage.input_tokens || 0) / window * 100));
-                if (ctx.session) setSessionContext.run(percent, window, ctx.session);
-                ctx.emit({ type: 'context', percent, window, used: usage.input_tokens || 0 });
-                return;
-            }
-            if (name === 'error') failure = ev.message || 'Hermes run failed';
+                // размышление модели по ходу: Hermes шлёт его событием прогресса
+                // с именем _thinking (до 500 символов) — показываем сразу, полный
+                // текст запишет пересборка хода
+                if (name === 'tool.progress' && ev.tool_name === '_thinking' && ev.delta) {
+                    liveThinking = true;
+                    // и в базу: Feed и Flow видят ход по базе, а не по потоку
+                    recordThinking(ctx.session, String(ev.delta));
+                    ctx.emit({ type: 'thinking', text: String(ev.delta) });
+                    return;
+                }
+                if (name === 'tool.completed' || name === 'tool.failed') {
+                    const step = steps.find((s) => !s.done && s.name === ev.tool_name) || steps.find((s) => !s.done);
+                    if (step) {
+                        step.done = true;
+                        step.failed = name === 'tool.failed';
+                        // вывода в событии нет — пока только факт; текст дойдёт из расшифровки
+                        setMessageToolResult.run(ev.preview ? clip(String(ev.preview)) : null, step.failed ? 1 : 0, null, ctx.session, step.position);
+                    }
+                    return;
+                }
+                if (name === 'assistant.completed') { finalText = ev.content || ''; return; }
+                if (name === 'run.completed') {
+                    const usage = ev.usage || {};
+                    // автоповтор — это ещё один запрос в том же ходе: расход складываем,
+                    // а не перезаписываем последним
+                    ctx.meta.usage.inputTokens += usage.input_tokens || 0;
+                    ctx.meta.usage.outputTokens += usage.output_tokens || 0;
+                    // модель Hermes выбирает сам — узнаём её из runtime-метаданных ответа,
+                    // чтобы окно контекста (contextWindowFor) считалось по реальной модели,
+                    // а не оставалось неизвестным всю сессию
+                    if (!ctx.meta.model && ev.runtime?.model) ctx.meta.model = ev.runtime.model;
+                    let toolIndex = 0;
+                    for (const m of ev.messages || []) {
+                        if (m.role === 'tool') {
+                            const step = steps[toolIndex++];
+                            if (!step) continue;
+                            const output = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '');
+                            setMessageToolResult.run(clip(output), step.failed ? 1 : 0, null, ctx.session, step.position);
+                        } else if (m.role === 'assistant') {
+                            // размышление модели идёт своим полем, а не текстом ответа:
+                            // мост достаёт его из потока Claude и отдаёт как
+                            // reasoning_content (claude-bridge/server.py). Пишем строкой
+                            // роли thinking — лента показывает её курсивом рядом с шагами
+                            const reasoning = m.reasoning_content || m.reasoning || '';
+                            // уже записанное по потоку не дублируем
+                            if (typeof reasoning === 'string' && reasoning.trim() && !liveThinking) {
+                                recordThinking(ctx.session, reasoning);
+                                ctx.emit({ type: 'thinking', text: reasoning });
+                            }
+                            if (typeof m.content === 'string' && m.content.trim()) texts.push(m.content);
+                        }
+                    }
+                    // у askClaude (askHermes её замена, DOCS/decisions/029) заполнение окна
+                    // считается и шлётся отсюда же, событием result — здесь его аналог
+                    // run.completed. Без этого датчик контекста в шапке чата навсегда
+                    // застревал на значении первого хода (или на «—», пока хода не было)
+                    const window = contextWindowFor(ctx.meta.model);
+                    const percent = Math.min(100, Math.round((usage.input_tokens || 0) / window * 100));
+                    if (ctx.session) setSessionContext.run(percent, window, ctx.session);
+                    ctx.emit({ type: 'context', percent, window, used: usage.input_tokens || 0 });
+                    return;
+                }
+                if (name === 'error') failure = ev.message || 'Hermes run failed';
+            };
+
+            await hermesRequest(`${base}/api/sessions/${encodeURIComponent(hermesId)}/chat/stream`, {
+                body: { message },
+                timeoutMs: HERMES_ASK_TIMEOUT_MS,
+                onSpawn: (fakeChild) => { ctx.run.child = fakeChild; },
+                onEvent,
+            });
+
+            if (failure) return { failure };
+            // тексты между вызовами — своими строками, как у Claude; итог — последний
+            if (!texts.length && finalText) texts.push(finalText);
+            return { texts };
         };
 
-        await hermesRequest(`${base}/api/sessions/${encodeURIComponent(hermesId)}/chat/stream`, {
-            body: { message: handoff + prompt },
-            timeoutMs: HERMES_ASK_TIMEOUT_MS,
-            onSpawn: (fakeChild) => { ctx.run.child = fakeChild; },
-            onEvent,
-        });
-
-        if (failure) return ctx.fail(failure);
-        // тексты между вызовами — своими строками, как у Claude; итог — последний
-        if (!texts.length && finalText) texts.push(finalText);
         // вызов инструмента, который модель написала текстом (мост его не
-        // разобрал), — не ответ: в ленту и в телеграм он уйдёт сырым JSON, а в
-        // пересказ следующего хода — примером, который модель повторит
-        const rawCalls = texts.filter(isRawToolCall);
-        if (rawCalls.length) texts.splice(0, texts.length, ...texts.filter((t) => !isRawToolCall(t)));
+        // разобрал), — не ответ: в ленту и в телеграм он ушёл бы сырым JSON, а в
+        // пересказ следующего хода — примером, который модель повторит. Раньше
+        // единственный такой ответ сразу обрывал ход; теперь просим Hermes
+        // переоформить вызов в той же сессии, ограниченное число раз — вторая,
+        // внешняя линия защиты поверх коррекции внутри самого моста
+        // (MAX_CORRECTIONS в claude-bridge/cli_backend.py)
+        const sentText = handoff + prompt;
+        let message = sentText;
+        let texts = [];
+        let hadRawCalls = false;
+        let failure = null;
+        // остановка человеком или обрыв связи: пересборку всё равно делаем — иначе
+        // следующее открытие сессии дотянуло бы этот ход из истории Hermes вторым
+        // экземпляром поверх записанных по потоку строк
+        let thrown = null;
+        try {
+            for (let attempt = 0; attempt <= MAX_RAW_TOOL_CALL_RETRIES; attempt++) {
+                const result = await runOnce(message);
+                if (result.failure) { failure = result.failure; break; }
+                const rawCalls = result.texts.filter(isRawToolCall);
+                hadRawCalls = rawCalls.length > 0;
+                texts = result.texts.filter((t) => !isRawToolCall(t));
+                if (texts.length || !hadRawCalls || attempt === MAX_RAW_TOOL_CALL_RETRIES) break;
+                message = RAW_TOOL_CALL_RETRY_NUDGE;
+                // поправка ушла модели от имени сервера — человек должен это видеть,
+                // на всех страницах сразу, поэтому и в базу
+                const nudgeNotice = `Сервер попросил модель переоформить вызов инструмента: ${message}`;
+                recordNotice(ctx.session, 'server.retry-nudge', nudgeNotice, null);
+                ctx.emit({ type: 'notice', name: 'server.retry-nudge', text: nudgeNotice });
+            }
+        } catch (err) {
+            thrown = err;
+        } finally {
+            if (childPoll) clearInterval(childPoll);
+            pollStopped = true;
+            if (pollInFlight) await pollInFlight;
+        }
+
+        // Ход целиком — по истории Hermes: тексты между вызовами на своих местах,
+        // размышления, пометки моста, автоповторы, сжатие контекста, шаги
+        // помощников. Всё, что человек ещё не видел вживую, показываем сейчас.
+        // Не удалось (Hermes недоступен) — остаются строки, записанные по потоку.
+        const rebuilt = await hermesHistory.rebuild(ctx.session, hermesId, base, {
+            fromPosition: ctx.userPosition + 1,
+            sentText,
+            nudgeText: RAW_TOOL_CALL_RETRY_NUDGE,
+            model: ctx.meta.model,
+            liveToolCount,
+        });
+        if (rebuilt) {
+            for (const entry of rebuilt.entries) {
+                if (entry.kind === 'notice' && entry.name !== 'server.retry-nudge') emitHermesEntry(ctx, entry, false);
+                if (entry.kind === 'thinking' && !liveThinking && !rebuilt.partial) emitHermesEntry(ctx, entry, false);
+            }
+            for (const entry of rebuilt.children) {
+                if (!shownChild.has(entry.hermesMessageId)) emitHermesEntry(ctx, entry, true);
+            }
+        }
+
+        if (thrown) throw thrown;
+        if (failure) return ctx.fail(failure);
+        const answers = rebuilt && !rebuilt.partial ? rebuilt.entries.filter((e) => e.kind === 'assistant') : [];
+        if (answers.length) {
+            // тексты между вызовами уже на своих местах в базе — вживую их ещё не было
+            for (const entry of answers) ctx.emit({ type: 'text', text: entry.text });
+            const last = answers[answers.length - 1];
+            ctx.answer = last.text;
+            ctx.assistantPosition = last.position;
+            return;
+        }
         if (!texts.length) {
-            return ctx.fail(rawCalls.length
+            return ctx.fail(hadRawCalls
                 ? 'Hermes ended the turn with a tool call written as text instead of executing it — retry the request'
                 : 'Hermes returned an empty answer');
         }
         for (const [i, text] of texts.entries()) {
-            const position = recordAssistantText(ctx.session, text, 'hermes', null, null);
+            const position = recordAssistantText(ctx.session, text, ctx.meta.model || 'hermes', null, null);
             if (i === texts.length - 1) { ctx.answer = text; ctx.assistantPosition = position; }
             ctx.emit({ type: 'text', text });
         }
     });
+}
+
+// как часто смотреть шаги помощников, пока идёт delegate_task
+const HERMES_CHILD_POLL_MS = 3000;
+
+// строка истории Hermes → событие потока для открытой ленты. Шаги помощника
+// подписаны «↳», чтобы в плоской ленте чата было видно, чьи они
+function emitHermesEntry(ctx, entry, fromChild) {
+    const mark = fromChild ? '↳ ' : '';
+    if (entry.kind === 'tool') ctx.emit({ type: 'tool', name: `${mark}${entry.name}`, detail: hermesToolDetail(entry.args) });
+    else if (entry.kind === 'thinking') ctx.emit({ type: 'thinking', text: `${mark}${entry.text}` });
+    else if (entry.kind === 'notice') ctx.emit({ type: 'notice', name: `${mark}${entry.name}`, text: entry.text });
+    else if (entry.kind === 'assistant' && fromChild) ctx.emit({ type: 'notice', name: `${mark}subagent`, text: entry.text });
 }
 
 // ---------- хранилище сессий (SQLite) ----------
@@ -2268,6 +2601,12 @@ db.exec(`
         text TEXT NOT NULL,
         PRIMARY KEY (session_id, position)
     );
+
+    -- остаток удалённого оркестратора Hermes (DOCS/decisions/007, отменено 015):
+    -- в них никто не пишет, а выглядят как журнал запусков. Настоящий журнал
+    -- вызовов инструментов ведёт сам Hermes — см. SYSTEM/core/hermes-tool-runs.js
+    DROP TABLE IF EXISTS hermes_tasks;
+    DROP TABLE IF EXISTS hermes_runs;
 `);
 
 // колонка добавлена уже после первых версий базы — CREATE TABLE IF NOT EXISTS
@@ -2503,10 +2842,22 @@ const setSessionRateLimit = db.prepare('UPDATE sessions SET rate_limit = ? WHERE
 // курсор дотягивания истории Hermes (syncHermesHistory): докуда переписка его
 // сессии уже перенесена к нам. У сессий старше этого механизма отметок нет —
 // там порогом служит время последней нашей записи
+// Строки помощников (hermesChildSession) в курсор сессии не входят: id у
+// Hermes сквозные, и помощник, досчитавший позже, сдвинул бы курсор родителя
+// дальше его собственных ещё не перенесённых сообщений
 const hermesSyncCursor = db.prepare(`
     SELECT MAX(CAST(json_extract(extra_meta, '$.hermesMessageId') AS INTEGER)) AS id
-    FROM messages WHERE session_id = ?
+    FROM messages WHERE session_id = ? AND json_extract(extra_meta, '$.hermesChildSession') IS NULL
 `);
+const hermesChildCursor = db.prepare(`
+    SELECT MAX(CAST(json_extract(extra_meta, '$.hermesMessageId') AS INTEGER)) AS id
+    FROM messages WHERE session_id = ? AND json_extract(extra_meta, '$.hermesChildSession') = ?
+`);
+// есть ли у сессии Hermes наша связь — в том числе у удалённой у нас сессии
+const hasCliSessionLink = db.prepare('SELECT 1 AS yes FROM session_cli WHERE cli_session_id = ? LIMIT 1');
+// пересборка хода Hermes: строки хода, записанные по потоку, уходят целиком
+const deleteMessagesFrom = db.prepare('DELETE FROM messages WHERE session_id = ? AND position >= ?');
+const setMessageCreatedAt = db.prepare('UPDATE messages SET created_at = ? WHERE session_id = ? AND position = ?');
 const lastMessageTime = db.prepare('SELECT MAX(created_at) AS at FROM messages WHERE session_id = ?');
 
 const getSessionMeta = db.prepare('SELECT context_percent AS contextPercent, context_window AS contextWindow, session_info AS sessionInfo, rate_limit AS rateLimit, target, thumb FROM sessions WHERE id = ?');
@@ -2705,6 +3056,18 @@ function recordThinking(sessionId, text, signature) {
 function recordAssistantText(sessionId, text, model, effort, parentToolUseId) {
     const position = countMessages.get(sessionId).n;
     upsertMessage.run(sessionId, position, 'assistant', text, new Date().toISOString(), model || null, effort || null);
+    if (parentToolUseId) setMessageToolIds.run(null, parentToolUseId, sessionId, position);
+    return position;
+}
+
+// событие хода, которое не слова человека и не ответ модели: сервер сам
+// переспросил модель, мост поправил её вызов, Hermes сжал контекст, помощнику
+// поставлена задача. Роль system — как у неразобранных системных событий CLI;
+// name — откуда пометка (tool_name), text — что произошло, словами
+function recordNotice(sessionId, name, text, parentToolUseId) {
+    const position = countMessages.get(sessionId).n;
+    upsertMessage.run(sessionId, position, 'system', clip(text), new Date().toISOString(), null, null);
+    setMessageToolCall.run(name || null, clip(JSON.stringify({ notice: name, text })), sessionId, position);
     if (parentToolUseId) setMessageToolIds.run(null, parentToolUseId, sessionId, position);
     return position;
 }
@@ -3046,8 +3409,7 @@ async function handleApi(req, res, urlPath) {
             // сессию Hermes могли продолжить мимо нас (его дашборд, его API,
             // задание по расписанию) — перед показом добираем такие ходы,
             // иначе лента обрывается на последнем нашем
-            const hermesTarget = HERMES_TARGETS.find((t) => t.id === (getSessionMeta.get(id) || {}).target);
-            if (hermesTarget) await syncHermesHistory(id, hermesTarget);
+            await syncHermesHistory(id);
             const meta = getSessionMeta.get(id) || {};
             let sessionInfo = null;
             let rateLimit = null;

@@ -69,8 +69,8 @@ function createRoutes() {
         },
 
         '/api/search': async (req, res) => {
-            const { q, limit } = await readJson(req);
-            sendJson(res, searchProject(q, limit));
+            const { q, limit, kind } = await readJson(req);
+            sendJson(res, searchProject(q, limit, kind));
         },
     };
 }

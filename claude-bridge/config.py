@@ -102,26 +102,6 @@ class BridgeConfig:
     cwd: str = field(default_factory=lambda: os.environ.get(
         "CLAUDE_BRIDGE_CWD", "/mnt/c/0_PROJECTS/OpenKarandash"))
 
-    # "cli" -> one `claude -p` process per request. The supported path.
-    # "acp" -> long-lived claude-agent-acp subprocess with session reuse.
-    #          EXPERIMENTAL and not recommended: the ACP agent cannot be
-    #          stripped to a bare model (its `tools`/`settingSources` options do
-    #          not take effect through session/new), so it keeps its own toolbox
-    #          AND inherits the operator's MCP servers — Gmail, Drive and the
-    #          rest end up in the session. It is also more expensive per turn.
-    #          It wins only on latency for follow-up turns.
-    backend: str = field(default_factory=lambda: os.environ.get("CLAUDE_BRIDGE_BACKEND", "cli").strip().lower())
-
-    # Path to the ACP agent binary; defaults to the one npm installed here.
-    acp_binary: str = field(default_factory=lambda: os.environ.get("CLAUDE_BRIDGE_ACP_BINARY", "").strip())
-
-    # CLAUDE_CONFIG_DIR for the ACP agent. Isolating it keeps the host user's
-    # skills, plugins and MCP servers out of the session (35.7k -> 12.3k prompt
-    # tokens measured). Empty disables the override.
-    acp_config_dir: str = field(default_factory=lambda: os.environ.get(
-        "CLAUDE_BRIDGE_ACP_CONFIG_DIR",
-        str(pathlib.Path(__file__).with_name("claude-config"))))
-
     # Hermes' own OpenAI-compatible API server. The console proxies to it when
     # the user wants the AGENT (tools, skills, memory) rather than a bare model.
     hermes_api_url: str = field(default_factory=lambda: os.environ.get(
@@ -130,6 +110,20 @@ class BridgeConfig:
 
     timeout: float = field(default_factory=lambda: float(os.environ.get("CLAUDE_BRIDGE_TIMEOUT", "600")))
     debug: bool = field(default_factory=lambda: _env_bool("CLAUDE_BRIDGE_DEBUG", False))
+
+    # Уровень рассуждений claude (low|medium|high|xhigh|max, пусто — как решит CLI).
+    # Один на весь мост: он часть кешируемого запроса, смена посреди разговора
+    # сбрасывает кеш целиком.
+    effort: str = field(default_factory=lambda: os.environ.get("CLAUDE_BRIDGE_EFFORT", "").strip().lower())
+
+    # Продолжать сессию CLI между ходами агента, чтобы история читалась из кеша
+    # (session_cache.py). 0 — прежний режим: каждый ход полной перепиской.
+    session_reuse: bool = field(default_factory=lambda: _env_bool("CLAUDE_BRIDGE_SESSION_REUSE", True))
+
+    @property
+    def sessions_dir(self) -> str:
+        """cwd запущенного CLI и место индекса сессий моста."""
+        return os.path.join(self.cwd, "DATA", "bridge-sessions")
 
     def resolve_binary(self) -> str:
         """Absolute path to the `claude` executable for the configured target."""
@@ -145,22 +139,6 @@ class BridgeConfig:
         raise RuntimeError(
             f"claude CLI not found for target={self.target!r}; "
             f"set CLAUDE_BRIDGE_BINARY to its absolute path"
-        )
-
-    def resolve_acp_binary(self) -> str:
-        """Absolute path to the claude-agent-acp executable."""
-        if self.acp_binary:
-            return self.acp_binary
-        local = pathlib.Path(__file__).with_name("node_modules") / ".bin" / "claude-agent-acp"
-        if local.is_file():
-            return str(local)
-        found = shutil.which("claude-agent-acp")
-        if found:
-            return found
-        raise RuntimeError(
-            "claude-agent-acp not found; install it with "
-            "`npm install --prefix claude-bridge @agentclientprotocol/claude-agent-acp` "
-            "or set CLAUDE_BRIDGE_ACP_BINARY"
         )
 
     def map_model(self, requested: str | None) -> str:
