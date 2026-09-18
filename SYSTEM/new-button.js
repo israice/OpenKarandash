@@ -116,7 +116,12 @@
         async function mount() {
             const controller = new AbortController();
             mounted = controller;
-            const url = `/PROJECTS/${encodeURIComponent(folder)}/page.js${version ? `?v=${version}` : ''}`;
+            // путь от адреса самой страницы, а не от корня: в предпросмотре ветки
+            // (`/branch/<ветка>/`) корневой адрес увёл бы модуль в главную копию
+            const url = new URL(
+                `PROJECTS/${encodeURIComponent(folder)}/page.js${version ? `?v=${version}` : ''}`,
+                document.baseURI,
+            ).href;
             try {
                 const mod = await import(url);
                 mod.default(page, { panel, signal: controller.signal });

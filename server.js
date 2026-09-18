@@ -11,6 +11,7 @@ const { reloadEvents } = require('./SYSTEM/core/reload.js');
 const hermesStack = require('./SYSTEM/core/hermes-stack.js');
 const hermesHistoryModule = require('./SYSTEM/core/hermes-history.js');
 const hostDeps = require('./SYSTEM/core/host-deps.js');
+const branchPreview = require('./SYSTEM/core/branch-preview.js');
 
 const ROOT = __dirname;
 
@@ -3460,6 +3461,7 @@ const featureRoutes = {
     ...require('./PROJECTS/Karandash/karandash-server.js').createRoutes({ setEnvValue }),
     ...telegram.createRoutes(),
     ...require('./SYSTEM/toolbar-icons-server.js').createRoutes({ db }),
+    ...branchPreview.createRoutes({ root: ROOT }),
 };
 
 // ---------- API коннектора ----------
@@ -3731,6 +3733,12 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // ветка исполнителя живьём: тот же клиент, но прочитанный из её рабочей копии.
+    // API сюда не попадает (оно выше и абсолютное), поэтому лента и база общие.
+    // Отдаёт модуль целиком — тогда эту развилку можно проверить настоящими
+    // запросами, не поднимая сервера (DOCS/decisions/042)
+    if (branchPreview.handle(res, urlPath, { root: ROOT, mime: MIME, renderHtml })) return;
+
     // страница лежит в SYSTEM, но отдаётся по «/»: адреса в браузере от этого не зависят
     const filePath = path.join(ROOT, urlPath === '/' ? 'SYSTEM/index.html' : urlPath);
 
@@ -3747,19 +3755,9 @@ const server = http.createServer((req, res) => {
         }
 
         const ext = path.extname(filePath).toLowerCase();
-        let body = data;
-
-        if (ext === '.html') {
-            let html = data.toString('utf8')
-                .replace('{{APP_VERSION}}', currentVersion())
-                .replace('{{VERSION_LIST}}', versionHistory());
-            if (LIVE_RELOAD) {
-                html = html.includes('</body>')
-                    ? html.replace('</body>', `${RELOAD_SNIPPET}</body>`)
-                    : html + RELOAD_SNIPPET;
-            }
-            body = Buffer.from(html, 'utf8');
-        }
+        const body = ext === '.html'
+            ? Buffer.from(renderHtml(data.toString('utf8'), LIVE_RELOAD ? RELOAD_SNIPPET : ''), 'utf8')
+            : data;
 
         res.writeHead(200, {
             'Content-Type': MIME[ext] || 'application/octet-stream',
@@ -3768,6 +3766,16 @@ const server = http.createServer((req, res) => {
         res.end(body);
     });
 });
+
+// подстановки страницы и хвост перед </body>: одинаковы для главной копии и для
+// предпросмотра ветки, поэтому живут одной функцией, а не двумя похожими
+function renderHtml(html, tail) {
+    const page = html
+        .replace('{{APP_VERSION}}', currentVersion())
+        .replace('{{VERSION_LIST}}', versionHistory());
+    if (!tail) return page;
+    return page.includes('</body>') ? page.replace('</body>', `${tail}</body>`) : page + tail;
+}
 
 // порт ровно один — тот, что записан в .env. соседние не пробуем: вторая копия
 // сервера на той же папке дерётся за .sessions.db и .index.db («database is locked»)
