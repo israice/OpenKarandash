@@ -4,6 +4,7 @@
 // работы, поэтому лежит тут, а не в chat-sessions.js, от которого этот файл
 // зависит. Вынесено из SYSTEM/app.js (DOCS/decisions/022)
 import { state } from './chat-state.js';
+import { addRowDetails } from './chat-details.js';
 import { api, restoreServerConnection } from '../../SYSTEM/app.js';
 import {
     PROVIDERS, connections, saveProviderState, saveAllProviderStates, getActiveProviderId,
@@ -171,20 +172,25 @@ export async function openSession(id, running = false) {
 function renderStoredMessage(message) {
     const nested = message.parentToolUseId ? '↳ ' : '';
     const text = message.text || '';
+    // row — строка целиком: шаг показывает из неё всё остальное в своём теле,
+    // реплика и размышление — блоком Details под собой (chat-details.js).
+    // Правило «всё, что сервер знает о строке, видно во всех трёх страницах» —
+    // DOCS/decisions/039
+    const detail = { input: message.toolInput, result: message.toolResult, error: message.toolError, row: message };
     if (message.role === 'user') {
-        addMessage(text, 'user');
+        addRowDetails(message, addMessage(text, 'user'));
     } else if (message.role === 'assistant') {
-        if (nested) addStep(`${nested}subagent ${text}`);
-        else addMessage(text, message.stopReason === 'error' ? 'error' : 'assistant');
+        if (nested) addStep(`${nested}subagent ${text}`, undefined, detail);
+        else addRowDetails(message, addMessage(text, message.stopReason === 'error' ? 'error' : 'assistant'));
     } else if (message.role === 'thinking') {
-        addThinkingStep(`${nested}${text}`);
+        addRowDetails(message, addThinkingStep(`${nested}${text}`));
     } else if (message.role === 'tool') {
-        addStep(text, undefined, { input: message.toolInput, result: message.toolResult, error: message.toolError });
+        addStep(text, undefined, detail);
     } else {
         // system (пометки хода recordNotice, системные события CLI), hook, unknown, top_level —
         // toolInput/toolResult бывают и здесь (хуки пишут вывод той же парой колонок)
         const tag = message.toolName || message.role;
-        addStep(`${nested}${tag} ${text === tag ? '' : text}`.trim(), undefined, { input: message.toolInput, result: message.toolResult, error: message.toolError });
+        addStep(`${nested}${tag} ${text === tag ? '' : text}`.trim(), undefined, detail);
     }
 }
 

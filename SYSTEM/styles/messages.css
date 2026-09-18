@@ -265,3 +265,50 @@
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
 }
+
+/* картинки результата в теле шага (addImagesSection в PROJECTS/Chat/chat-details.js) */
+.chat__tool-images {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 360px;
+    overflow: auto;
+}
+
+.chat__tool-images img {
+    max-width: 100%;
+    border-radius: 4px;
+    border: 1px solid #2e3138;
+}
+
+/* всё остальное о реплике и размышлении — модель, расход, поля Event Schema,
+   сырое событие (addRowDetails в chat-details.js). Свёрнуто и приглушено:
+   нужно для разбора, а не для чтения переписки. Встаёт на ту же сторону,
+   что и строка, к которой относится */
+.chat__details {
+    align-self: flex-start;
+    max-width: 80%;
+    margin-top: -4px;
+    font-size: 0.75rem;
+    color: #6a6f78;
+}
+
+.chat__details--user {
+    align-self: flex-end;
+}
+
+.chat__details-summary {
+    cursor: pointer;
+    opacity: 0.7;
+}
+
+.chat__details-summary:hover {
+    opacity: 1;
+}
+
+.chat__details-body {
+    margin-top: 6px;
+    padding: 8px 10px;
+    border: 1px solid #2e3138;
+    border-radius: 8px;
+}

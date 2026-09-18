@@ -63,6 +63,7 @@ Stop-Process -Id <pid> -Force
 | `PROJECTS/Chat/chat-state.js` | общее изменяемое состояние вкладки Chat одним объектом (`export const state`), ничего не импортирует | `state` |
 | `PROJECTS/Chat/chat-sessions.js` | панель сессий: список, выбор и удаление, черновики, индикатор «выполняется», занятость композера | ES-экспорты |
 | `PROJECTS/Chat/chat-feed.js` | лента сообщений: markdown, шаги и размышления, автопрокрутка, лайтбокс превью | ES-экспорты |
+| `PROJECTS/Chat/chat-details.js` | полнота строки в Sessions: сводка полей, сырое событие, картинки результата, блок Details под репликой (`DOCS/decisions/039`) | ES-экспорты |
 | `PROJECTS/Chat/chat-stream.js` | поток NDJSON: `ask`/`attach`/`stop`, разбор событий CLI в ленту | ES-экспорты |
 | `PROJECTS/Graph/file-editor.js` | редактор файла проекта: чтение, правка, автосохранение, связи узла карты. Своей вкладки у папки больше нет (`DOCS/decisions/023`), редактором живут Book, Chat и Flow (стили — `PROJECTS/Graph/file-editor.css`, серверная половина — `PROJECTS/Graph/graph-server.js` вместе с `graph-vault.js`/`graph-search.js`/`graph-files.js`, поиск из терминала — `PROJECTS/Graph/search.js`) | `window.MissionFiles` |
 | `PROJECTS/Flow/flow.js` | вкладка Flow целиком (стили — `PROJECTS/Flow/flow.css`) | `window.MissionFlow` |

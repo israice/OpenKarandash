@@ -2,7 +2,7 @@
 
 **Chat with an AI assistant right in the browser: every step is visible and nothing is lost on reload.**
 
-A Mission Control interface section. The toolbar button is `chatButton` (aria-label "PROJECTS"), the screen itself is `#chatView`, the logic is in `PROJECTS/Chat/chat*.js` — the entry point `chat.js` plus `chat-state.js`, `chat-sessions.js`, `chat-feed.js` and `chat-stream.js` (`DOCS/decisions/022`); it used to sit in `SYSTEM/app.js`, which now keeps only the shared core of `window.App`. The internal names are left over from the section's former name — `chat` — so that is what to look for in the code.
+A Mission Control interface section. The toolbar button is `chatButton` (aria-label "PROJECTS"), the screen itself is `#chatView`, the logic is in `PROJECTS/Chat/chat*.js` — the entry point `chat.js` plus `chat-state.js`, `chat-sessions.js`, `chat-feed.js`, `chat-details.js` and `chat-stream.js` (`DOCS/decisions/022`); it used to sit in `SYSTEM/app.js`, which now keeps only the shared core of `window.App`. The internal names are left over from the section's former name — `chat` — so that is what to look for in the code.
 
 ## 🧭 What this is
 
@@ -84,6 +84,7 @@ Endpoints (all `POST`, localhost only):
 | `PROJECTS/Chat/chat-state.js` | the tab's shared mutable state in one object (`export const state`); imports nothing |
 | `PROJECTS/Chat/chat-sessions.js` | the Tasks panel: the list, selecting and deleting sessions, drafts, the "running" indicator, composer busy state |
 | `PROJECTS/Chat/chat-feed.js` | the message feed: markdown, tool steps and thinking, autoscroll, the preview lightbox |
+| `PROJECTS/Chat/chat-details.js` | everything else the server knows about a row: field summary, raw event, result images, the Details block under a message (`DOCS/decisions/039`) |
 | `PROJECTS/Chat/chat-stream.js` | the NDJSON stream: `ask`/`attach`/`stop` and turning CLI events into feed rows |
 | `SYSTEM/app.js` | the shared core the tab imports: `api()`, modals, the lightbox, `App.VIEWS`, restoring the CLI connection, `escapeHtml` |
 | `SYSTEM/providers.js` | providers and connections, subscription limits, the session header with model and effort, the context gauge |

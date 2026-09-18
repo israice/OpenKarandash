@@ -3,6 +3,7 @@
 // карточке задачи. Вынесено из SYSTEM/app.js (DOCS/decisions/022)
 import { state } from './chat-state.js';
 import { escapeHtml } from '../../SYSTEM/app.js';
+import { prettyJson, addToolSection, addImagesSection, addRowSections } from './chat-details.js';
 
 // Профиль каждого исполнителя на шкале: чем он владеет и что из этого
 // задействовано именно в текущей задаче (used) — это решает глава компании,
@@ -213,31 +214,14 @@ function setStepOpen(step, open) {
     }
 }
 
-function prettyJson(raw) {
-    if (!raw) return '';
-    try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return String(raw); }
-}
-
-function addToolSection(body, label, text, isError) {
-    if (!text) return;
-    const section = document.createElement('div');
-    section.className = 'chat__tool-section';
-    const lbl = document.createElement('div');
-    lbl.className = 'chat__tool-section-label';
-    lbl.textContent = label;
-    const pre = document.createElement('pre');
-    pre.className = `chat__tool-section-pre${isError ? ' chat__tool-section-pre--error' : ''}`;
-    pre.textContent = text;
-    section.append(lbl, pre);
-    body.append(section);
-}
-
 // строка шага: что Claude сделал (Read index.html, Bash npm test).
 // text приходит уже склеенным «имя деталь» (см. toolLabel/hermesToolDetail
 // на сервере) — имя инструмента выделяем цветным тегом, разбирая первое слово.
 // detail — { input, result, error } из строки сессии (toolInput/toolResult/
 // toolError в /api/sessions/messages): полные аргументы и вывод инструмента,
-// не обрезанные до короткой сводки — тело гармошки строится из них
+// не обрезанные до короткой сводки — тело гармошки строится из них.
+// detail.row — строка сессии целиком: из неё тело получает картинки
+// результата, сводку остальных полей и сырое событие (chat-details.js)
 export function addStep(text, before, detail) {
     const stick = isChatNearBottom();
     const step = document.createElement('div');
@@ -264,6 +248,10 @@ export function addStep(text, before, detail) {
     body.className = 'chat__tool-body';
     addToolSection(body, 'Input', prettyJson(detail?.input));
     addToolSection(body, detail?.error ? 'Error' : 'Output', detail?.result, detail?.error);
+    if (detail?.row) {
+        addImagesSection(body, detail.row.toolResultImages);
+        addRowSections(body, detail.row);
+    }
     const hasBody = body.children.length > 0;
     if (hasBody) {
         step.append(body);

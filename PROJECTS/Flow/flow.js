@@ -2722,16 +2722,39 @@
                         ['Input', input, false],
                         ['What happened', m.text || '', false],
                         ['Output', m.toolResult || '', !!m.toolError],
+                        // скриншоты и прочие картинки результата: JSON-массив data-URL
+                        // (toolResultImages в server.js). Секция рисует их картинками
+                        ['Images', m.toolResultImages || '', false],
                         // всё остальное, что сервер знает о строке (модель, токены, id
                         // вызовов, откуда перенесена): ни одно поле не должно быть скрыто
                         ['Metadata', sessionMetadata(m), false],
+                        // исходное событие целиком (DOCS/decisions/040, этап 2). Секция
+                        // свёрнута, как и остальные, поэтому экран не занимает, а
+                        // прятать поле нельзя: правило «всё, что сервер знает о строке,
+                        // видно во всех трёх страницах» — DOCS/decisions/039
+                        ['Raw event', rawText(m.raw), false],
                     ];
                 }
 
+                // raw бывает до 400 тысяч знаков, а нода живого хода перестраивается
+                // раз в секунду: разбирать и форматировать его каждый раз заново
+                // дорого, поэтому помним последние разобранные
+                const rawTextCache = new Map();
+                function rawText(raw) {
+                    if (!raw) return '';
+                    let text = rawTextCache.get(raw);
+                    if (text === undefined) {
+                        text = prettyJson(raw);
+                        if (rawTextCache.size >= 300) rawTextCache.delete(rawTextCache.keys().next().value);
+                        rawTextCache.set(raw, text);
+                    }
+                    return text;
+                }
+
                 function sessionMetadata(m) {
-                    // raw — исходное событие целиком (DOCS/decisions/040, этап 2):
-                    // в сводке ноды оно заняло бы весь экран, а поля Event Schema
-                    // (source/actor/eventType/provider/taskId) попадают сюда сами
+                    // raw и картинки результата показываются своими секциями (Raw event,
+                    // Images), а поля Event Schema (source/actor/eventType/provider/taskId)
+                    // попадают сюда сами
                     const skip = new Set(['text', 'toolInput', 'toolResult', 'inputSent', 'extraMeta', 'resultMeta', 'toolResultImages', 'raw']);
                     const meta = {};
                     for (const [key, value] of Object.entries(m)) {
@@ -2763,6 +2786,11 @@
                     const items = [];
                     for (const [label, text, isError] of sections) {
                         let item = [...box.children].find((el) => el.dataset.label === label);
+                        if (label === 'Images') {
+                            item = applyNodeImages(item, text);
+                            if (item) items.push(item);
+                            continue;
+                        }
                         if (!item) {
                             item = document.createElement('details');
                             item.className = 'flow-node__fact';
@@ -2804,6 +2832,38 @@
                     const ordered = items.length === box.children.length
                         && items.every((el, i) => box.children[i] === el);
                     if (!ordered) box.append(...items);
+                }
+
+                // секция картинок результата. Перерисовывается, только когда набор
+                // картинок сменился: иначе живая перестройка раз в секунду заново
+                // декодировала бы их и мигала
+                function applyNodeImages(item, raw) {
+                    let images;
+                    try { images = JSON.parse(raw); } catch { return null; }
+                    if (!Array.isArray(images) || !images.length) return null;
+                    if (!item) {
+                        item = document.createElement('details');
+                        item.className = 'flow-node__fact';
+                        item.dataset.label = 'Images';
+                        const summary = document.createElement('summary');
+                        summary.className = 'flow-node__fact-summary';
+                        const list = document.createElement('div');
+                        list.className = 'flow-node__fact-images';
+                        item.append(summary, list);
+                    }
+                    if (item.dataset.saved !== raw) {
+                        item.dataset.saved = raw;
+                        item.querySelector('.flow-node__fact-summary').textContent = `Images (${images.length})`;
+                        const list = item.querySelector('.flow-node__fact-images');
+                        list.replaceChildren(...images.map((src) => {
+                            const img = document.createElement('img');
+                            img.src = src;
+                            img.alt = 'tool result image';
+                            img.loading = 'lazy';
+                            return img;
+                        }));
+                    }
+                    return item;
                 }
 
                 // файл, которого коснулся шаг: путь берём из аргументов вызова.
