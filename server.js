@@ -2324,7 +2324,25 @@ async function createHermesSession(base, hermesId, prompt) {
     }
 }
 
-async function askHermes({ prompt, sessionId, mode }, send) {
+async function askHermes({ prompt, sessionId, mode, model, effort }, send) {
+    // Правило «исполнитель хода = выбранный в Settings агент» (DOCS/decisions/043):
+    // Hermes — оркестратор, но мозгом ему по умолчанию служит claude через
+    // claude-bridge. Если сессию ведёт другой прямой CLI (opencode/codex/pi),
+    // продолжать её обязан он — своей историей и своими моделями, а не Hermes
+    // с всегда-клодом за спиной. Иначе «сделал, проверь» уходит в
+    // claude-bridge-sonnet и падает, когда подписка claude исчерпана, хотя
+    // выбранный в Settings агент жив (случай 2026-09-18). Для Claude-сессии
+    // Hermes остаётся как в DOCS/decisions/029: мозг и есть тот же claude.
+    if (sessionId) {
+        const owner = agentNameByTarget(getSessionMeta.get(sessionId)?.target);
+        if (owner && owner !== 'hermes' && owner !== 'claude') {
+            const adapter = AGENTS[owner];
+            if (!adapter.connected()) {
+                return send({ type: 'error', error: `${owner} is not connected — open Settings and connect it` });
+            }
+            return adapter.ask({ prompt, sessionId, mode, model, effort }, (event) => send(event));
+        }
+    }
     if (!activeHermesTarget) return send({ type: 'error', error: 'Hermes is not connected' });
     const target = activeHermesTarget;
     if (!prompt) return send({ type: 'error', error: 'Empty request' });
