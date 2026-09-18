@@ -2729,7 +2729,10 @@
                 }
 
                 function sessionMetadata(m) {
-                    const skip = new Set(['text', 'toolInput', 'toolResult', 'inputSent', 'extraMeta', 'resultMeta', 'toolResultImages']);
+                    // raw — исходное событие целиком (DOCS/decisions/040, этап 2):
+                    // в сводке ноды оно заняло бы весь экран, а поля Event Schema
+                    // (source/actor/eventType/provider/taskId) попадают сюда сами
+                    const skip = new Set(['text', 'toolInput', 'toolResult', 'inputSent', 'extraMeta', 'resultMeta', 'toolResultImages', 'raw']);
                     const meta = {};
                     for (const [key, value] of Object.entries(m)) {
                         if (skip.has(key) || value === null || value === undefined || value === '') continue;

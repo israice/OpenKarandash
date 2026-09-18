@@ -1281,7 +1281,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
                     if (part.type === 'tool_use') {
                         const step = toolLabel(part);
                         if (ctx.session) {
-                            const position = recordStep(ctx.session, `${step.name} ${step.detail}`.trim(), part.name, part.input, part.id, parentToolUseId, part.caller);
+                            const position = recordStep(ctx.session, `${step.name} ${step.detail}`.trim(), part.name, part.input, part.id, parentToolUseId, part.caller, part);
                             toolPositions.set(part.id, position);
                         }
                         ctx.emit(step);
@@ -1292,7 +1292,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
                         // answer на весь ход: за один ход модель может выдать текст
                         // несколько раз подряд (реплика -> инструмент -> ещё текст -> ...),
                         // и в чате каждый кусок — свой пузырь
-                        if (ctx.session) ctx.assistantPosition = recordAssistantText(ctx.session, part.text, ctx.meta.model, ctx.meta.effort, parentToolUseId);
+                        if (ctx.session) ctx.assistantPosition = recordAssistantText(ctx.session, part.text, ctx.meta.model, ctx.meta.effort, parentToolUseId, part);
                         ctx.emit({ type: 'text', text: part.text });
                     }
                     else if (part.type === 'thinking') {
@@ -1302,7 +1302,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
                         // пустой кусок проваливался в recordUnknownPart ниже, где текстом
                         // писалось буквально "thinking" — само имя типа, а не рассуждение)
                         if (part.thinking?.trim()) {
-                            if (ctx.session) recordThinking(ctx.session, part.thinking, part.signature);
+                            if (ctx.session) recordThinking(ctx.session, part.thinking, part.signature, part);
                             ctx.emit({ type: 'thinking', text: part.thinking });
                         }
                     }
@@ -1310,7 +1310,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
                         // API само решило скрыть рассуждение (data — непрозрачный
                         // зашифрованный блок для контекста, а не текст)
                         if (ctx.session) {
-                            recordThinking(ctx.session, '[reasoning redacted by the Anthropic API (redacted_thinking) — no content, just an opaque block for the model context]');
+                            recordThinking(ctx.session, '[reasoning redacted by the Anthropic API (redacted_thinking) — no content, just an opaque block for the model context]', null, part);
                         }
                     }
                     else {
@@ -1562,7 +1562,7 @@ async function askOpenCode({ prompt, model, sessionId, mode }, send) {
 
             if (event.type === 'text' && event.part?.text?.trim()) {
                 ctx.answer = event.part.text;
-                if (ctx.session) ctx.assistantPosition = recordAssistantText(ctx.session, event.part.text, ctx.meta.model, null, null);
+                if (ctx.session) ctx.assistantPosition = recordAssistantText(ctx.session, event.part.text, ctx.meta.model, null, null, event.part);
                 ctx.emit({ type: 'text', text: event.part.text });
                 return;
             }
@@ -1574,7 +1574,7 @@ async function askOpenCode({ prompt, model, sessionId, mode }, send) {
                 let position = toolPositions.get(part.callID);
                 if (position === undefined && ctx.session) {
                     const detail = state.title || state.input?.command || state.input?.filePath || '';
-                    position = recordStep(ctx.session, `${toolName} ${detail}`.trim(), toolName, state.input, part.callID, null, null);
+                    position = recordStep(ctx.session, `${toolName} ${detail}`.trim(), toolName, state.input, part.callID, null, null, part);
                     toolPositions.set(part.callID, position);
                     ctx.emit(toolLabel({ name: toolName, input: state.input || {} }));
                 }
@@ -1926,7 +1926,7 @@ async function askPi({ prompt, model, effort, sessionId, mode }, send) {
                 const toolArgs = event.args || {};
                 const detail = toolArgs.path || toolArgs.file_path || toolArgs.command || toolArgs.pattern || '';
                 const step = { type: 'tool', name: event.toolName || 'tool', detail: String(detail).slice(0, 120) };
-                const position = recordStep(ctx.session, `${step.name} ${step.detail}`.trim(), step.name, toolArgs, event.toolCallId, null, null);
+                const position = recordStep(ctx.session, `${step.name} ${step.detail}`.trim(), step.name, toolArgs, event.toolCallId, null, null, event);
                 toolPositions.set(event.toolCallId, position);
                 ctx.emit(step);
                 return;
@@ -1960,10 +1960,10 @@ async function askPi({ prompt, model, effort, sessionId, mode }, send) {
                 for (const part of message.content || []) {
                     if (part.type === 'text' && part.text?.trim()) {
                         ctx.answer = part.text;
-                        if (ctx.session) ctx.assistantPosition = recordAssistantText(ctx.session, part.text, ctx.meta.model, ctx.meta.effort, null);
+                        if (ctx.session) ctx.assistantPosition = recordAssistantText(ctx.session, part.text, ctx.meta.model, ctx.meta.effort, null, part);
                         ctx.emit({ type: 'text', text: part.text });
                     } else if (part.type === 'thinking' && part.thinking?.trim() && ctx.session) {
-                        recordThinking(ctx.session, part.thinking, part.thinkingSignature);
+                        recordThinking(ctx.session, part.thinking, part.thinkingSignature, part);
                     }
                     // part.type === 'toolCall' пропускаем: свою строку шаг уже
                     // получил на tool_execution_start, с результатом в придачу
@@ -2178,19 +2178,25 @@ const hermesStore = {
         if (entry.kind === 'user') {
             position = countMessages.get(sessionId).n;
             upsertMessage.run(sessionId, position, 'user', entry.text, entry.at, null, null);
+            // эта ветка пишет строку человека мимо startExchange, поэтому
+            // помечаем её здесь — иначе перенесённые из Hermes вопросы
+            // оказались бы единственными строками без источника
+            stampEvent(sessionId, position, 'text', 'human', { source: 'user', provider: null });
         } else if (entry.kind === 'assistant') {
-            position = recordAssistantText(sessionId, entry.text, model || 'hermes', null, parentToolUseId);
+            // сырым событием для перенесённой строки служит запись истории Hermes:
+            // это и есть то, что источник нам отдал, до нашего разбора
+            position = recordAssistantText(sessionId, entry.text, model || 'hermes', null, parentToolUseId, entry);
         } else if (entry.kind === 'thinking') {
-            position = recordThinking(sessionId, entry.text);
+            position = recordThinking(sessionId, entry.text, null, entry);
             if (parentToolUseId) setMessageToolIds.run(null, parentToolUseId, sessionId, position);
         } else if (entry.kind === 'notice') {
-            position = recordNotice(sessionId, entry.name, entry.text, parentToolUseId);
+            position = recordNotice(sessionId, entry.name, entry.text, parentToolUseId, entry);
         } else {
             position = recordStep(
                 sessionId,
                 // шаг помощника — с «↳», как и вживую: в плоской ленте чата иначе не отличить
                 `${childSession ? '↳ ' : ''}${entry.name} ${hermesToolDetail(entry.args)}`.trim(),
-                entry.name, entry.args, entry.toolCallId || null, parentToolUseId, null,
+                entry.name, entry.args, entry.toolCallId || null, parentToolUseId, null, entry,
             );
             setMessageToolResult.run(clip(entry.result) || null, entry.failed ? 1 : 0, null, sessionId, position);
         }
@@ -2202,6 +2208,11 @@ const hermesStore = {
             viaHermesHistory: true,
             ...(childSession ? { hermesChildSession: childSession } : {}),
         }), sessionId, position);
+        // подзадача — это дочерняя сессия помощника у Hermes, её id и есть
+        // настоящий task_id. Своих идентификаторов не выдумываем: граф задач
+        // живёт у оркестратора (DOCS/decisions/040). Номера попытки Hermes
+        // сегодня не отдаёт — attempt_id остаётся пустым до этапа 9
+        stampTask(sessionId, position, childSession, null);
         return position;
     },
 };
@@ -2379,7 +2390,7 @@ async function askHermes({ prompt, sessionId, mode }, send) {
                 if (name === 'tool.started') {
                     const detail = hermesToolDetail(ev.args);
                     const toolName = ev.tool_name || 'tool';
-                    const position = recordStep(ctx.session, `${toolName} ${detail}`.trim(), toolName, ev.args ?? null, null, null, null);
+                    const position = recordStep(ctx.session, `${toolName} ${detail}`.trim(), toolName, ev.args ?? null, null, null, null, ev);
                     steps.push({ position, name: toolName, done: false });
                     liveToolCount++;
                     ctx.emit({ type: 'tool', name: toolName, detail });
@@ -2396,7 +2407,7 @@ async function askHermes({ prompt, sessionId, mode }, send) {
                 if (name === 'tool.progress' && ev.tool_name === '_thinking' && ev.delta) {
                     liveThinking = true;
                     // и в базу: Feed и Flow видят ход по базе, а не по потоку
-                    recordThinking(ctx.session, String(ev.delta));
+                    recordThinking(ctx.session, String(ev.delta), null, ev);
                     ctx.emit({ type: 'thinking', text: String(ev.delta) });
                     return;
                 }
@@ -2436,7 +2447,7 @@ async function askHermes({ prompt, sessionId, mode }, send) {
                             const reasoning = m.reasoning_content || m.reasoning || '';
                             // уже записанное по потоку не дублируем
                             if (typeof reasoning === 'string' && reasoning.trim() && !liveThinking) {
-                                recordThinking(ctx.session, reasoning);
+                                recordThinking(ctx.session, reasoning, null, m);
                                 ctx.emit({ type: 'thinking', text: reasoning });
                             }
                             if (typeof m.content === 'string' && m.content.trim()) texts.push(m.content);
@@ -2576,6 +2587,38 @@ const db = new DatabaseSync(DB_FILE);
 // транзакцию, а не падаем сразу с «database is locked»
 db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
 
+// копия базы перед необратимой правкой схемы. Нужна потому, что ALTER TABLE в
+// SQLite не откатывается, а в этом файле лежит вся история работы: вернуться к
+// прежнему состоянию можно только из копии. Копируем по метке — имени колонки,
+// которой в старой базе ещё нет: как только она появилась, копия больше не
+// делается, поэтому каждый следующий запуск ничего не копирует
+function backupBeforeSchemaChange(marker) {
+    let columns;
+    try {
+        columns = db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
+    } catch {
+        return; // таблицы ещё нет — база свежая, копировать нечего
+    }
+    if (!columns.length || columns.includes(marker)) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const dir = path.join(ROOT, DATA_DIR, 'backups');
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+        // -wal и -shm копируются вместе с базой: в режиме WAL часть уже
+        // записанного лежит в журнале, и копия одного .db окажется старее самой базы
+        for (const suffix of ['', '-wal', '-shm']) {
+            const from = `${DB_FILE}${suffix}`;
+            if (fs.existsSync(from)) fs.copyFileSync(from, path.join(dir, `sessions-${stamp}.db${suffix}`));
+        }
+        console.log(`База сессий скопирована перед изменением схемы: ${DATA_DIR}/backups/sessions-${stamp}.db`);
+    } catch (e) {
+        // не смогли скопировать — говорим и не трогаем схему: потерять историю
+        // молча хуже, чем не получить новые поля
+        console.error(`Не удалось скопировать базу перед изменением схемы: ${e.message}`);
+        throw e;
+    }
+}
+
 db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -2680,7 +2723,30 @@ for (const [col, type] of [
     // чтения) — держим одной универсальной JSON-колонкой, а не заводим по
     // колонке на каждое такое поле
     ['extra_meta', 'TEXT'],
+    // ---- Event Schema (DOCS/decisions/040) ----
+    // общий формат событий: по нему фильтруют ленту и строят сводки, поэтому
+    // каждое из этих полей — своя колонка, а не ключ в extra_meta. Разделение
+    // с уже имеющимися полями: role — «как рисовать» (его читают Chat, Feed и
+    // Flow), event_type — «что произошло» по протоколу; tool_name — имя
+    // инструмента, source — кто прислал строку. Заполняет одно место — stampEvent
+    ['source', 'TEXT'],
+    ['actor', 'TEXT'],
+    ['event_type', 'TEXT'],
+    // id подзадачи и попытки внутри неё. Рождает их оркестратор, а не мы
+    // (DOCS/decisions/040: «завести» читается как «отразить»): сегодня
+    // единственный настоящий источник — дочерние сессии помощников Hermes,
+    // у строк вне графа задач поля пустые до этапа 9
+    ['task_id', 'TEXT'],
+    ['attempt_id', 'TEXT'],
+    ['provider', 'TEXT'],
+    // исходное событие целиком. Колонка заводится здесь, чтобы схема менялась
+    // один раз, а заполняется на следующем шаге (этап 2 плана)
+    ['raw', 'TEXT'],
 ]) {
+    // ALTER TABLE в SQLite не отменяется, а база — единственное место, где
+    // живёт история работы. Поэтому перед первым добавлением полей Event Schema
+    // делаем копию: условие срабатывает ровно один раз, дальше колонка уже есть
+    if (col === 'source') backupBeforeSchemaChange('source');
     try {
         db.exec(`ALTER TABLE messages ADD COLUMN ${col} ${type}`);
     } catch { /* колонка уже есть */ }
@@ -2833,6 +2899,9 @@ const setMessageMode = db.prepare('UPDATE messages SET mode = ? WHERE session_id
 const setMessageInputSent = db.prepare('UPDATE messages SET input_sent = ? WHERE session_id = ? AND position = ?');
 const setMessageResultMeta = db.prepare('UPDATE messages SET result_meta = ? WHERE session_id = ? AND position = ?');
 const setMessageExtraMeta = db.prepare('UPDATE messages SET extra_meta = ? WHERE session_id = ? AND position = ?');
+const setMessageOrigin = db.prepare('UPDATE messages SET source = ?, actor = ?, event_type = ?, provider = ? WHERE session_id = ? AND position = ?');
+const setMessageTaskIds = db.prepare('UPDATE messages SET task_id = ?, attempt_id = ? WHERE session_id = ? AND position = ?');
+const setMessageRaw = db.prepare('UPDATE messages SET raw = ? WHERE session_id = ? AND position = ?');
 
 const touchSession = db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?');
 const setSessionThumb = db.prepare('UPDATE sessions SET thumb = ? WHERE id = ?');
@@ -2887,7 +2956,8 @@ const listMessages = db.prepare(`
            tool_name AS toolName, tool_input AS toolInput, tool_result AS toolResult, tool_error AS toolError,
            tool_result_images AS toolResultImages,
            tool_use_id AS toolUseId, parent_tool_use_id AS parentToolUseId, stop_reason AS stopReason,
-           mode, input_sent AS inputSent, result_meta AS resultMeta, extra_meta AS extraMeta
+           mode, input_sent AS inputSent, result_meta AS resultMeta, extra_meta AS extraMeta,
+           source, actor, event_type AS eventType, task_id AS taskId, attempt_id AS attemptId, provider, raw
     FROM messages WHERE session_id = ? ORDER BY position
 `);
 
@@ -2917,6 +2987,24 @@ const DETAIL_CLIP_LEN = 50000;
 function clip(text) {
     if (typeof text !== 'string') return text;
     return text.length > DETAIL_CLIP_LEN ? text.slice(0, DETAIL_CLIP_LEN) + '…' : text;
+}
+
+// у сырого события своя граница, и она выше: смысл raw в том, чтобы к событию
+// можно было вернуться, когда наш разбор окажется неполным, а обрезка по общей
+// границе как раз и лишила бы нас этой возможности. Совсем без границы нельзя:
+// один ответ с большим файлом иначе кладёт в базу десятки мегабайт. Обрезанное
+// помечаем явно, чтобы позже не принять усечённое событие за целое
+const RAW_CLIP_LEN = 400000;
+function clipRaw(value) {
+    let text;
+    try {
+        text = typeof value === 'string' ? value : JSON.stringify(value);
+    } catch {
+        return null; // циклическая ссылка в событии — лучше без raw, чем упавший ход
+    }
+    if (typeof text !== 'string') return null;
+    if (text.length <= RAW_CLIP_LEN) return text;
+    return JSON.stringify({ rawTruncated: true, originalLength: text.length, head: text.slice(0, RAW_CLIP_LEN) });
 }
 
 // tool_result приходит как строка либо как массив блоков (text/image/…) —
@@ -2967,10 +3055,50 @@ function deleteSession(id) {
 // вопрос записываем сразу, как CLI сообщил id: сессия появляется в списке
 // в начале работы, а не после ответа. Возвращает позицию строки — вызывающий
 // код дописывает сюда же mode/input_sent (см. askClaude)
+// ---------- Event Schema: кто прислал строку и что это было ----------
+// Одно место на все виды записи (DOCS/decisions/040): если заполнять поля
+// в каждой функции отдельно, они разойдутся при первой же правке.
+//
+// source и provider выводятся из цели сессии: id окружения начинается с имени
+// коннектора (agentNameByTarget), а сама цель и есть провайдер — wsl/windows
+// у прямого CLI. Старые строки остаются пустыми намеренно: пусто значит
+// «не знаем», а не «claude», и дозаполнять их задним числом мы не стали.
+function originForSession(sessionId) {
+    const target = getSessionTarget.get(sessionId)?.target || null;
+    return { source: target ? agentNameByTarget(target) : null, provider: target };
+}
+
+// eventType — что произошло по протоколу, рядом с role, а не вместо неё:
+// role говорит интерфейсу, как рисовать строку, и её читают Chat, Feed и Flow.
+// Неизвестный вид события пишется как есть и не отбрасывается (DOCS/decisions/012).
+function stampEvent(sessionId, position, eventType, actor, origin) {
+    const { source, provider } = origin || originForSession(sessionId);
+    setMessageOrigin.run(source || null, actor || null, eventType || null, provider || null, sessionId, position);
+}
+
+// исходное событие рядом с разобранным (DOCS/decisions/040, этап 2 плана).
+// Нужно затем, что разбор всегда отстаёт от источника: новый вид события у
+// новой модели попадёт в готовые колонки не целиком, и без raw утраченное уже
+// не вернуть. Пишется у строк всех ролей, а не только у неразобранных
+function stampRaw(sessionId, position, raw) {
+    if (raw === undefined || raw === null || position === null || position === undefined) return;
+    const text = clipRaw(raw);
+    if (text) setMessageRaw.run(text, sessionId, position);
+}
+
+// id подзадачи и попытки приходят от оркестратора — своих не выдумываем.
+// Пока графа задач нет, зовётся только оттуда, где источник настоящий
+function stampTask(sessionId, position, taskId, attemptId) {
+    if (!taskId && !attemptId) return;
+    setMessageTaskIds.run(taskId || null, attemptId || null, sessionId, position);
+}
+
 function startExchange(sessionId, question, target, model, effort) {
     upsertSession.run(sessionId, extractTitle(question, 300), new Date().toISOString(), target || null);
     const position = countMessages.get(sessionId).n;
     upsertMessage.run(sessionId, position, 'user', question, new Date().toISOString(), model || null, effort || null);
+    // вопрос задал человек — источник не зависит от того, каким CLI пойдёт ход
+    stampEvent(sessionId, position, 'text', 'human', { source: 'user', provider: target || null });
     return position;
 }
 
@@ -2999,15 +3127,18 @@ function sessionTitle(session) {
 // ими пользуется Flow, чтобы показать на ноде название инструмента и реальную
 // команду, а не общее слово «Шаг». Возвращаем позицию, чтобы вызывающий код
 // мог позже дописать сюда же tool_result (он приходит отдельным событием)
-function recordStep(sessionId, text, toolName, toolInput, toolUseId, parentToolUseId, caller) {
+function recordStep(sessionId, text, toolName, toolInput, toolUseId, parentToolUseId, caller, raw) {
     const position = countMessages.get(sessionId).n;
     upsertMessage.run(sessionId, position, 'tool', text, new Date().toISOString(), null, null);
     setMessageToolCall.run(toolName || null, toolInput !== undefined ? clip(JSON.stringify(toolInput)) : null, sessionId, position);
     if (toolUseId || parentToolUseId) setMessageToolIds.run(toolUseId || null, parentToolUseId || null, sessionId, position);
     // caller — {"type":"direct"} у обычного вызова, отличает прямой вызов
-    // от вызова изнутри субагента; не кладём в toolInput —
-    // Flow (flow.js:1669 toolInputSummary) читает его как есть, обёртка сломала бы вывод
+    // от вызова изнутри субагента; не кладём в toolInput — Flow читает
+    // tool_input как есть (sessionFacts в PROJECTS/Flow/flow.js разбирает его
+    // как JSON вызова), и обёртка сломала бы вывод
     if (caller) setMessageExtraMeta.run(JSON.stringify({ caller }), sessionId, position);
+    stampEvent(sessionId, position, 'tool.call', parentToolUseId ? 'subagent' : 'tool');
+    stampRaw(sessionId, position, raw);
     return position;
 }
 
@@ -3024,6 +3155,8 @@ function recordHookStart(sessionId, event) {
         clip(JSON.stringify({ hookId: event.hook_id || null, hookEvent: event.hook_event || null })),
         sessionId, position,
     );
+    // хук — не модель и не инструмент модели: его запустила сама среда CLI
+    stampEvent(sessionId, position, 'hook.run', 'tool');
     return position;
 }
 
@@ -3039,12 +3172,14 @@ function recordHookResponse(sessionId, position, event) {
 // рассуждения модели (блоки thinking) — отдельной строкой в той же таблице, рядом с шагами
 // Возвращает позицию строки — дотягивание истории (syncHermesHistory) ставит
 // на неё отметку о происхождении, как и на остальные добранные строки
-function recordThinking(sessionId, text, signature) {
+function recordThinking(sessionId, text, signature, raw) {
     const position = countMessages.get(sessionId).n;
     upsertMessage.run(sessionId, position, 'thinking', clip(text), new Date().toISOString(), null, null);
     // signature (600-2348 символов) — крипто-подпись блока для API, не читаемый
     // текст; храним факт и длину, не саму строку
     if (signature) setMessageExtraMeta.run(JSON.stringify({ signaturePresent: true, signatureLength: signature.length }), sessionId, position);
+    stampEvent(sessionId, position, 'thinking', 'model');
+    stampRaw(sessionId, position, raw);
     return position;
 }
 
@@ -3053,10 +3188,12 @@ function recordThinking(sessionId, text, signature) {
 // инструментов); parentToolUseId — как у recordStep, отличает текст субагента
 // (Task) от текста верхнего уровня. Возвращаем позицию — finishExchange
 // дописывает на неё usage/stopReason/mode, а не вставляет ещё одну строку
-function recordAssistantText(sessionId, text, model, effort, parentToolUseId) {
+function recordAssistantText(sessionId, text, model, effort, parentToolUseId, raw) {
     const position = countMessages.get(sessionId).n;
     upsertMessage.run(sessionId, position, 'assistant', text, new Date().toISOString(), model || null, effort || null);
     if (parentToolUseId) setMessageToolIds.run(null, parentToolUseId, sessionId, position);
+    stampEvent(sessionId, position, 'text', parentToolUseId ? 'subagent' : 'model');
+    stampRaw(sessionId, position, raw);
     return position;
 }
 
@@ -3064,12 +3201,28 @@ function recordAssistantText(sessionId, text, model, effort, parentToolUseId) {
 // переспросил модель, мост поправил её вызов, Hermes сжал контекст, помощнику
 // поставлена задача. Роль system — как у неразобранных системных событий CLI;
 // name — откуда пометка (tool_name), text — что произошло, словами
-function recordNotice(sessionId, name, text, parentToolUseId) {
+function recordNotice(sessionId, name, text, parentToolUseId, raw) {
     const position = countMessages.get(sessionId).n;
     upsertMessage.run(sessionId, position, 'system', clip(text), new Date().toISOString(), null, null);
     setMessageToolCall.run(name || null, clip(JSON.stringify({ notice: name, text })), sessionId, position);
     if (parentToolUseId) setMessageToolIds.run(null, parentToolUseId, sessionId, position);
+    // у пометки источник виден по её имени и не совпадает с целью сессии:
+    // ход ведёт Hermes, а поправил вызов мост или наш же сервер
+    const origin = noticeOrigin(name, sessionId);
+    stampEvent(sessionId, position, 'notice', origin.actor, origin);
+    stampRaw(sessionId, position, raw);
     return position;
+}
+
+// откуда пришла пометка хода. Имена задаются на месте вызова recordNotice
+// (claude-bridge, server.retry-nudge, hermes.compaction — DOCS/decisions/039);
+// незнакомое имя не выдумываем, а берём источником саму сессию
+function noticeOrigin(name, sessionId) {
+    const prefix = String(name || '').split('.')[0];
+    if (prefix === 'claude-bridge') return { source: 'bridge', provider: null, actor: 'tool' };
+    if (prefix === 'server') return { source: 'server', provider: null, actor: 'server' };
+    if (prefix === 'hermes') return { ...originForSession(sessionId), source: 'hermes', actor: 'orchestrator' };
+    return { ...originForSession(sessionId), actor: null };
 }
 
 // перехватчик для частей ответа с типом, который сервер явно не разбирает:
@@ -3080,6 +3233,10 @@ function recordUnknownPart(sessionId, part, parentToolUseId) {
     upsertMessage.run(sessionId, position, 'unknown', part.type || 'unknown', new Date().toISOString(), null, null);
     setMessageToolCall.run(part.type || null, clip(JSON.stringify(part)), sessionId, position);
     if (parentToolUseId) setMessageToolIds.run(null, parentToolUseId, sessionId, position);
+    // вид события пишется как есть: завтрашний тип у новой модели должен
+    // попасть в ленту без правки сервера (DOCS/decisions/012)
+    stampEvent(sessionId, position, part.type || 'unknown', parentToolUseId ? 'subagent' : null);
+    stampRaw(sessionId, position, part);
     return position;
 }
 
@@ -3090,6 +3247,8 @@ function recordSystemEvent(sessionId, event) {
     const position = countMessages.get(sessionId).n;
     upsertMessage.run(sessionId, position, 'system', event.subtype || 'system', new Date().toISOString(), null, null);
     setMessageToolCall.run(event.subtype || null, clip(JSON.stringify(event)), sessionId, position);
+    stampEvent(sessionId, position, event.subtype || 'system', null);
+    stampRaw(sessionId, position, event);
     return position;
 }
 
@@ -3099,6 +3258,8 @@ function recordTopLevelEvent(sessionId, event) {
     const position = countMessages.get(sessionId).n;
     upsertMessage.run(sessionId, position, 'top_level', event.type || 'unknown', new Date().toISOString(), null, null);
     setMessageToolCall.run(event.type || null, clip(JSON.stringify(event)), sessionId, position);
+    stampEvent(sessionId, position, event.type || 'unknown', null);
+    stampRaw(sessionId, position, event);
     return position;
 }
 

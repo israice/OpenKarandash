@@ -104,6 +104,15 @@ function iconSvg(name) {
 // как значение показать. Порядок здесь = порядок строк в карточке
 const MESSAGE_SPECS = [
     ['createdAt', 'Time', fmtTime],
+    // Event Schema (DOCS/decisions/040): кто прислал строку и что это было.
+    // Стоят сразу за временем — это первое, что нужно знать о событии.
+    // У строк, записанных до появления этих полей, они пустые и не рисуются
+    ['source', 'Source'],
+    ['actor', 'Actor'],
+    ['eventType', 'Event type'],
+    ['provider', 'Provider'],
+    ['taskId', 'Task'],
+    ['attemptId', 'Attempt'],
     ['model', 'Model'],
     ['effort', 'Effort'],
     ['inputTokens', 'Tokens (in)', fmtNum],
@@ -121,7 +130,7 @@ const MESSAGE_SPECS = [
 const TEXT_SPEC = ['text', 'Label (text)'];
 // поля, которые карточка рисует не строкой таблицы, а иначе: блоком,
 // картинкой или в заголовке — в таблице их дублировать не нужно
-const MESSAGE_EXCLUDE = ['role', 'text', 'toolName', 'toolInput', 'toolResult', 'toolResultImages', 'inputSent', 'resultMeta', 'extraMeta'];
+const MESSAGE_EXCLUDE = ['role', 'text', 'toolName', 'toolInput', 'toolResult', 'toolResultImages', 'inputSent', 'resultMeta', 'extraMeta', 'raw'];
 
 const META_SPECS = [
     ['target', 'CLI (target)'],
@@ -460,8 +469,17 @@ export default function build(page, { panel, signal }) {
             exclude: MESSAGE_EXCLUDE,
         }]);
 
+        // сырое событие показываем у карточки любой роли, а не только у той,
+        // которую сервер не разобрал: в нём и лежит страховка от неполного
+        // разбора (DOCS/decisions/040, этап 2). Обёртка нужна, чтобы блок
+        // добавлялся сам во всех ветках — иначе новую ветку забудут дописать
+        const card = (opts, fillBody) => addCard(container, opts, (body) => {
+            fillBody(body);
+            if (message.raw) addBlock(body, 'Raw event (raw)', prettyJson(message.raw));
+        });
+
         if (message.role === 'tool') {
-            addCard(container, {
+            card({
                 icon: 'tool',
                 title: message.toolName || 'Tool',
                 subtitle: message.toolError ? 'error' : fmtTime(message.createdAt),
@@ -477,7 +495,7 @@ export default function build(page, { panel, signal }) {
         }
 
         if (message.role === 'hook') {
-            addCard(container, {
+            card({
                 icon: 'hook',
                 title: message.toolName || message.text || 'Hook',
                 subtitle: message.toolError ? 'error' : fmtTime(message.createdAt),
@@ -492,7 +510,7 @@ export default function build(page, { panel, signal }) {
         }
 
         if (message.role === 'thinking') {
-            addCard(container, {
+            card({
                 icon: 'thinking',
                 title: 'Reasoning',
                 subtitle: `${truncate(message.text, 60)} · ${fmtTime(message.createdAt)}`,
@@ -518,7 +536,7 @@ export default function build(page, { panel, signal }) {
                 unknown: 'Unrecognized event',
                 top_level: 'Event of unknown type',
             };
-            addCard(container, {
+            card({
                 icon: message.role === 'top_level' ? 'unknown' : message.role,
                 // у пометки хода (server.js recordNotice) имя источника — в toolName,
                 // а что произошло — в text: в заголовке нужны оба
@@ -539,7 +557,7 @@ export default function build(page, { panel, signal }) {
         const isError = message.stopReason === 'error';
         // ответ, данный внутри вызова помощника (parent_tool_use_id), — не ответ основной модели
         const who = kind === 'user' ? 'You' : (message.parentToolUseId ? 'Subagent' : 'Assistant');
-        addCard(container, {
+        card({
             icon: kind,
             title: `${who}${isError ? ' · turn error' : ''}`,
             subtitle: `${truncate(message.text, 60)} · ${fmtTime(message.createdAt)}`,
