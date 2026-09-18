@@ -18,6 +18,54 @@
     padding: 72px 16px 16px;
 }
 
+/* строка отбора над лентой: поиск и три выпадающих списка. В топбаре ей места
+   нет — там панель делится с табами, — поэтому она стоит первой строкой самой
+   страницы и не прокручивается вместе с карточками */
+.session-feed__filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+    flex: 0 0 auto;
+}
+
+.session-feed__search {
+    flex: 1 1 260px;
+    min-width: 180px;
+}
+
+.session-feed__search,
+.session-feed__filter,
+.session-feed__filter-reset {
+    padding: 5px 8px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--text, #e6e6e6);
+    background: var(--panel, #1b1b1f);
+    border: 1px solid var(--border, #333);
+    border-radius: 8px;
+}
+
+.session-feed__filter-reset {
+    cursor: pointer;
+}
+
+.session-feed__filter-reset:hover {
+    border-color: var(--accent, #6b8afd);
+}
+
+.session-feed__count {
+    font-size: 12px;
+    opacity: 0.65;
+}
+
+/* «показано N из M» появляется только когда отбор включён — пустая подпись
+   не должна занимать место в строке */
+.session-feed__count:empty {
+    display: none;
+}
+
 .session-feed__cards {
     gap: 6px;
 }

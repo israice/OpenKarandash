@@ -206,6 +206,31 @@ export default function build(page, { panel, signal }) {
     const select = panel.querySelector('#sessionFeedSelect');
     const copyIdBtn = panel.querySelector('#sessionFeedCopyId');
 
+    // Отбор по ленте. Живёт над списком, а не в топбаре: там панель узкая и
+    // делится с табами. Поле поиска ищет по всему, что есть у события, включая
+    // сырую запись, — иначе пришлось бы заводить по фильтру на каждое поле;
+    // выпадающие списки строятся из того, что реально встретилось в сессии
+    // (см. refillFilterOptions), поэтому новый источник появится в них сам
+    const filters = document.createElement('div');
+    filters.className = 'session-feed__filters';
+    filters.innerHTML = `
+        <input type="search" class="session-feed__search" id="sessionFeedSearch"
+               placeholder="Поиск по ленте: текст, инструмент, поручение, сырое событие" aria-label="Поиск по ленте">
+        <select class="session-feed__filter" id="sessionFeedSource" aria-label="Источник"><option value="">Источник: любой</option></select>
+        <select class="session-feed__filter" id="sessionFeedEvent" aria-label="Вид события"><option value="">Событие: любое</option></select>
+        <select class="session-feed__filter" id="sessionFeedTool" aria-label="Инструмент"><option value="">Инструмент: любой</option></select>
+        <button type="button" class="session-feed__filter-reset" id="sessionFeedReset" title="Сбросить отбор">Сбросить</button>
+        <span class="session-feed__count" id="sessionFeedCount"></span>
+    `;
+    page.appendChild(filters);
+
+    const searchInput = filters.querySelector('#sessionFeedSearch');
+    const sourceSelect = filters.querySelector('#sessionFeedSource');
+    const eventSelect = filters.querySelector('#sessionFeedEvent');
+    const toolSelect = filters.querySelector('#sessionFeedTool');
+    const resetBtn = filters.querySelector('#sessionFeedReset');
+    const countLabel = filters.querySelector('#sessionFeedCount');
+
     const messages = document.createElement('div');
     messages.className = 'chat__messages';
     messages.style.cssText = 'flex:1;min-height:0;';
@@ -619,6 +644,9 @@ export default function build(page, { panel, signal }) {
     let cardKeys = [];  // JSON тех же сообщений на момент отрисовки
     let metaCard = null;
     let metaKey = null;
+    // последний ответ сервера целиком: смена отбора перерисовывает ленту из
+    // него, не дёргая сервер заново
+    let lastResponse = null;
 
     // ключ сводной карточки — всё, что пришло с сервера, кроме самих сообщений
     function metaKeyOf(response) {
@@ -653,8 +681,69 @@ export default function build(page, { panel, signal }) {
         openCard = null;
     }
 
+    // что искать в строке: всё, что человек может вспомнить о событии —
+    // его текст, имя инструмента, аргументы и результат, источник, поручение
+    // и сырая запись. Дешевле собрать одну строку, чем перебирать поля
+    function haystack(m) {
+        return [
+            m.text, m.toolName, m.toolInput, m.toolResult, m.inputSent,
+            m.source, m.actor, m.eventType, m.provider, m.taskId, m.attemptId,
+            m.model, m.mode, m.role, m.raw, m.extraMeta,
+        ].filter(Boolean).join(' ').toLowerCase();
+    }
+
+    function matchesFilter(m) {
+        if (sourceSelect.value && (m.source || '') !== sourceSelect.value) return false;
+        if (eventSelect.value && (m.eventType || '') !== eventSelect.value) return false;
+        if (toolSelect.value && (m.toolName || '') !== toolSelect.value) return false;
+        const q = searchInput.value.trim().toLowerCase();
+        if (!q) return true;
+        return haystack(m).includes(q);
+    }
+
+    function filterActive() {
+        return Boolean(searchInput.value.trim() || sourceSelect.value || eventSelect.value || toolSelect.value);
+    }
+
+    // значения берём из самой сессии, а не из зашитого списка: неизвестный вид
+    // события пишется как есть (DOCS/decisions/012), и в отборе он тоже должен
+    // появиться сам. Выбранное значение не теряем, даже если оно отфильтровано
+    function refillFilterOptions(items) {
+        for (const [select, key, label] of [
+            [sourceSelect, 'source', 'Источник: любой'],
+            [eventSelect, 'eventType', 'Событие: любое'],
+            [toolSelect, 'toolName', 'Инструмент: любой'],
+        ]) {
+            const values = [...new Set(items.map((m) => m[key]).filter(Boolean))].sort();
+            if (select.value && !values.includes(select.value)) values.push(select.value);
+            const signature = JSON.stringify(values);
+            if (select.dataset.signature === signature) continue;
+            select.dataset.signature = signature;
+            const chosen = select.value;
+            select.innerHTML = `<option value="">${label}</option>`
+                + values.map((v) => `<option value="${escapeAttr(v)}">${escapeAttr(v)}</option>`).join('');
+            select.value = chosen;
+        }
+    }
+
+    function escapeAttr(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // смена отбора перерисовывает ленту целиком: набор карточек меняется не
+    // с конца, и построчное сравнение здесь только запутало бы
+    function reapplyFilter() {
+        if (!lastResponse) return;
+        resetFeed();
+        applyFeed(lastResponse);
+    }
+
     function applyFeed(response) {
-        const items = response.messages || [];
+        lastResponse = response;
+        const all = response.messages || [];
+        refillFilterOptions(all);
+        const items = filterActive() ? all.filter(matchesFilter) : all;
+        countLabel.textContent = filterActive() ? `показано ${items.length} из ${all.length}` : '';
 
         const nextMetaKey = metaKeyOf(response);
         if (nextMetaKey !== metaKey) {
@@ -686,8 +775,26 @@ export default function build(page, { panel, signal }) {
         }
 
         empty.hidden = items.length > 0;
-        if (items.length === 0) empty.textContent = 'No messages in this session yet';
+        // пустая лента из-за отбора и пустая сессия — разные вещи, и человек
+        // не должен гадать, почему ничего не видно
+        if (items.length === 0) {
+            empty.textContent = filterActive()
+                ? `Под отбор ничего не подошло (событий в сессии: ${all.length})`
+                : 'No messages in this session yet';
+        }
     }
+
+    // отбор применяем на ходу: поиск — по мере набора, списки — сразу по выбору
+    for (const el of [searchInput, sourceSelect, eventSelect, toolSelect]) {
+        el.addEventListener(el === searchInput ? 'input' : 'change', reapplyFilter, { signal });
+    }
+    resetBtn.addEventListener('click', () => {
+        searchInput.value = '';
+        sourceSelect.value = '';
+        eventSelect.value = '';
+        toolSelect.value = '';
+        reapplyFilter();
+    }, { signal });
 
     // номер текущей подписки: выбор другой сессии делает и прежний поток,
     // и отложенные обновления устаревшими — они молча прекращаются
