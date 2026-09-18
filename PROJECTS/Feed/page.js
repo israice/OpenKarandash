@@ -136,6 +136,9 @@ const META_SPECS = [
     ['target', 'CLI (target)'],
     ['contextPercent', 'Context used', fmtPercent],
     ['contextWindow', 'Context window (tokens)', fmtNum],
+    // строки, которые заместила пересборка хода по истории Hermes. Сами они
+    // сохранены (DOCS/decisions/040) — здесь видно, что замена вообще была
+    ['replacedCount', 'Replaced by rebuild', fmtNum],
 ];
 const META_EXCLUDE = ['ok', 'messages', 'sessionInfo', 'rateLimit', 'usage', 'thumb'];
 const INFO_SPECS = [

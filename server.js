@@ -2172,7 +2172,7 @@ const hermesStore = {
     childCursor: (sessionId, childId) => hermesChildCursor.get(sessionId, childId)?.id ?? null,
     lastMessageTime: (sessionId) => Date.parse(lastMessageTime.get(sessionId)?.at || ''),
     touch: (sessionId) => touchSession.run(new Date().toISOString(), sessionId),
-    truncate: (sessionId, fromPosition) => deleteMessagesFrom.run(sessionId, fromPosition),
+    truncate: (sessionId, fromPosition) => archiveAndDeleteFrom(sessionId, fromPosition),
     append: (sessionId, entry, { parentToolUseId = null, childSession = null, model = null } = {}) => {
         let position = null;
         if (entry.kind === 'user') {
@@ -2645,6 +2645,20 @@ db.exec(`
         PRIMARY KEY (session_id, position)
     );
 
+    -- строки, которые заменила пересборка хода по истории Hermes
+    -- (DOCS/decisions/039 и 040). Журнал обязан только дописываться: разбор
+    -- истории даёт правильный порядок, но вместе с ним пропадало то, что мы
+    -- видели своими глазами во время хода. Теперь замещённое переезжает сюда
+    -- целиком, а не исчезает. replaced_at в ключе потому, что одну и ту же
+    -- позицию может заместить не одна пересборка
+    CREATE TABLE IF NOT EXISTS replaced_messages (
+        session_id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        replaced_at TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        PRIMARY KEY (session_id, position, replaced_at)
+    );
+
     -- остаток удалённого оркестратора Hermes (DOCS/decisions/007, отменено 015):
     -- в них никто не пишет, а выглядят как журнал запусков. Настоящий журнал
     -- вызовов инструментов ведёт сам Hermes — см. SYSTEM/core/hermes-tool-runs.js
@@ -2926,6 +2940,26 @@ const hermesChildCursor = db.prepare(`
 const hasCliSessionLink = db.prepare('SELECT 1 AS yes FROM session_cli WHERE cli_session_id = ? LIMIT 1');
 // пересборка хода Hermes: строки хода, записанные по потоку, уходят целиком
 const deleteMessagesFrom = db.prepare('DELETE FROM messages WHERE session_id = ? AND position >= ?');
+// то, что пересборка собирается заместить, — забираем целиком до удаления
+const selectMessagesFrom = db.prepare('SELECT * FROM messages WHERE session_id = ? AND position >= ? ORDER BY position');
+const archiveMessage = db.prepare('INSERT OR REPLACE INTO replaced_messages (session_id, position, replaced_at, payload) VALUES (?, ?, ?, ?)');
+const deleteArchiveBySession = db.prepare('DELETE FROM replaced_messages WHERE session_id = ?');
+const countArchive = db.prepare('SELECT COUNT(*) AS n FROM replaced_messages WHERE session_id = ?');
+
+// пересборка хода по истории Hermes меняет разобранный слой, но не имеет права
+// стирать наблюдение: то, что пришло потоком, мы видели своими глазами, а
+// история может оказаться короче (сжатие контекста) или лечь иначе. Поэтому
+// замещаемые строки переезжают в архив целиком, включая их сырое событие,
+// и только потом удаляются из ленты (DOCS/decisions/040)
+function archiveAndDeleteFrom(sessionId, fromPosition) {
+    const rows = selectMessagesFrom.all(sessionId, fromPosition);
+    if (rows.length) {
+        const at = new Date().toISOString();
+        for (const row of rows) archiveMessage.run(sessionId, row.position, at, JSON.stringify(row));
+    }
+    deleteMessagesFrom.run(sessionId, fromPosition);
+    return rows.length;
+}
 const setMessageCreatedAt = db.prepare('UPDATE messages SET created_at = ? WHERE session_id = ? AND position = ?');
 const lastMessageTime = db.prepare('SELECT MAX(created_at) AS at FROM messages WHERE session_id = ?');
 
@@ -3039,7 +3073,9 @@ function toolResultImages(content) {
 
 // очистка списка: база пустеет. файлы истории Claude CLI не трогаем — они не наши
 function resetSessions() {
-    db.exec('DELETE FROM messages; DELETE FROM sessions;');
+    // архив замещённых строк — часть истории этих же сессий: очистка списка
+    // не должна оставлять от них хвост, который уже не с чем сопоставить
+    db.exec('DELETE FROM messages; DELETE FROM sessions; DELETE FROM replaced_messages;');
 }
 
 const deleteMessagesBySession = db.prepare('DELETE FROM messages WHERE session_id = ?');
@@ -3047,6 +3083,7 @@ const deleteSessionById = db.prepare('DELETE FROM sessions WHERE id = ?');
 
 function deleteSession(id) {
     deleteMessagesBySession.run(id);
+    deleteArchiveBySession.run(id);
     deleteSessionById.run(id);
 }
 
@@ -3586,6 +3623,11 @@ async function handleApi(req, res, urlPath) {
                 usage: sumSessionUsage.get(id),
                 target: meta.target ?? null,
                 thumb: meta.thumb ?? null,
+                // сколько строк этой сессии заместила пересборка хода по истории
+                // Hermes: сами строки лежат в replaced_messages и никуда не
+                // делись, а число здесь — чтобы это было видно в ленте, а не
+                // только в базе (DOCS/decisions/040)
+                replacedCount: countArchive.get(id)?.n ?? 0,
             });
             return;
         }
