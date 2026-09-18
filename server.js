@@ -960,6 +960,9 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
         usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
         costUsd: null, durationMs: null, stopReason: null,
         thinkingTokensPeak: null, resultMeta: null, lastRequestTokens: null,
+        // исходные итоговые события хода (result у Claude, run.completed у
+        // Hermes — у него их бывает несколько: автоповтор внутри хода)
+        resultRaws: [],
     };
 
     const ctx = {
@@ -1329,6 +1332,12 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
                     const position = toolPositions.get(part.tool_use_id);
                     if (position === undefined || !ctx.session) continue;
                     setMessageToolResult.run(clip(toolResultText(part.content)), part.is_error ? 1 : 0, toolResultImages(part.content), ctx.session, position);
+                    // сырым результатом служит всё событие, если результат в нём один:
+                    // рядом с блоком CLI кладёт tool_use_result — разобранный вывод
+                    // инструмента, которого в самом блоке нет. Если результатов
+                    // несколько, событие разделить нельзя — берём только блок
+                    const single = event.message.content.filter((p) => p.type === 'tool_result').length === 1;
+                    appendRaw(ctx.session, position, single ? event : part);
                 }
             }
 
@@ -1356,6 +1365,8 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
                 // всё остальное, что несёт result сверх структурных полей выше — тайминги,
                 // отказы в разрешении, статистика субагентов, разбивка usage — одним JSON
                 ctx.meta.resultMeta = { thinkingTokensPeak: ctx.meta.thinkingTokensPeak };
+                // итог хода целиком — его допишет finishExchange к строке ответа
+                ctx.meta.resultRaws.push(event);
                 for (const key of RESULT_FIELDS) ctx.meta.resultMeta[camelKey(key)] = event[key] ?? null;
                 for (const [name, key] of Object.entries(RESULT_USAGE_FIELDS)) ctx.meta.resultMeta[name] = u?.[key] ?? null;
             }
@@ -1581,6 +1592,7 @@ async function askOpenCode({ prompt, model, sessionId, mode }, send) {
                 if (position !== undefined && ctx.session && (state.status === 'completed' || state.status === 'error')) {
                     const output = typeof state.output === 'string' ? state.output : JSON.stringify(state.output ?? '');
                     setMessageToolResult.run(clip(output), state.status === 'error' ? 1 : 0, null, ctx.session, position);
+                    appendRaw(ctx.session, position, part);
                 }
                 return;
             }
@@ -1937,6 +1949,7 @@ async function askPi({ prompt, model, effort, sessionId, mode }, send) {
                 if (position === undefined) return;
                 const output = typeof event.result === 'string' ? event.result : JSON.stringify(event.result ?? '');
                 setMessageToolResult.run(clip(output), event.isError ? 1 : 0, null, ctx.session, position);
+                appendRaw(ctx.session, position, event);
                 return;
             }
 
@@ -2418,11 +2431,13 @@ async function askHermes({ prompt, sessionId, mode }, send) {
                         step.failed = name === 'tool.failed';
                         // вывода в событии нет — пока только факт; текст дойдёт из расшифровки
                         setMessageToolResult.run(ev.preview ? clip(String(ev.preview)) : null, step.failed ? 1 : 0, null, ctx.session, step.position);
+                        appendRaw(ctx.session, step.position, ev);
                     }
                     return;
                 }
                 if (name === 'assistant.completed') { finalText = ev.content || ''; return; }
                 if (name === 'run.completed') {
+                    ctx.meta.resultRaws.push(ev);
                     const usage = ev.usage || {};
                     // автоповтор — это ещё один запрос в том же ходе: расход складываем,
                     // а не перезаписываем последним
@@ -2439,6 +2454,7 @@ async function askHermes({ prompt, sessionId, mode }, send) {
                             if (!step) continue;
                             const output = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '');
                             setMessageToolResult.run(clip(output), step.failed ? 1 : 0, null, ctx.session, step.position);
+                            appendRaw(ctx.session, step.position, m);
                         } else if (m.role === 'assistant') {
                             // размышление модели идёт своим полем, а не текстом ответа:
                             // мост достаёт его из потока Claude и отдаёт как
@@ -2916,6 +2932,7 @@ const setMessageExtraMeta = db.prepare('UPDATE messages SET extra_meta = ? WHERE
 const setMessageOrigin = db.prepare('UPDATE messages SET source = ?, actor = ?, event_type = ?, provider = ? WHERE session_id = ? AND position = ?');
 const setMessageTaskIds = db.prepare('UPDATE messages SET task_id = ?, attempt_id = ? WHERE session_id = ? AND position = ?');
 const setMessageRaw = db.prepare('UPDATE messages SET raw = ? WHERE session_id = ? AND position = ?');
+const getMessageRaw = db.prepare('SELECT raw FROM messages WHERE session_id = ? AND position = ?');
 
 const touchSession = db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?');
 const setSessionThumb = db.prepare('UPDATE sessions SET thumb = ? WHERE id = ?');
@@ -3123,6 +3140,25 @@ function stampRaw(sessionId, position, raw) {
     if (text) setMessageRaw.run(text, sessionId, position);
 }
 
+// второе исходное событие той же строки: шаг инструмента собирается из вызова
+// и результата, хук — из запуска и ответа, итоговая реплика — из текста и
+// итога хода. Затирать первое нельзя, поэтому строка получает оба:
+// { rawEvents: [первое, второе, …] }. Ключ нарочно не похож на поля источников,
+// чтобы склейку нельзя было спутать с самим событием
+function appendRaw(sessionId, position, raw) {
+    if (raw === undefined || raw === null || position === null || position === undefined) return;
+    const prev = getMessageRaw.get(sessionId, position)?.raw;
+    if (!prev) return stampRaw(sessionId, position, raw);
+    let parsed;
+    try {
+        parsed = JSON.parse(prev);
+    } catch {
+        parsed = prev; // raw был строкой, а не JSON — кладём как есть
+    }
+    const events = Array.isArray(parsed?.rawEvents) ? parsed.rawEvents : [parsed];
+    stampRaw(sessionId, position, { rawEvents: [...events, raw] });
+}
+
 // id подзадачи и попытки приходят от оркестратора — своих не выдумываем.
 // Пока графа задач нет, зовётся только оттуда, где источник настоящий
 function stampTask(sessionId, position, taskId, attemptId) {
@@ -3194,6 +3230,7 @@ function recordHookStart(sessionId, event) {
     );
     // хук — не модель и не инструмент модели: его запустила сама среда CLI
     stampEvent(sessionId, position, 'hook.run', 'tool');
+    stampRaw(sessionId, position, event);
     return position;
 }
 
@@ -3204,6 +3241,7 @@ function recordHookResponse(sessionId, position, event) {
         event.stderr ? `[stderr]\n${event.stderr}` : null,
     ].filter(Boolean).join('\n\n'));
     setMessageToolResult.run(text || null, event.exit_code ? 1 : 0, null, sessionId, position);
+    appendRaw(sessionId, position, event);
 }
 
 // рассуждения модели (блоки thinking) — отдельной строкой в той же таблице, рядом с шагами
@@ -3311,7 +3349,12 @@ function finishExchange(sessionId, answer, meta = {}) {
     if (position == null) {
         position = countMessages.get(sessionId).n;
         upsertMessage.run(sessionId, position, 'assistant', answer, new Date().toISOString(), meta.model || null, meta.effort || null);
+        // строка рождается здесь, мимо recordAssistantText, — без этого она
+        // осталась бы единственной без источника и вида события. Текст ошибки
+        // хода — тоже реплика модели по форме, её отличает stop_reason
+        stampEvent(sessionId, position, 'text', 'model');
     }
+    for (const raw of meta.resultRaws || []) appendRaw(sessionId, position, raw);
     const u = meta.usage || {};
     const hasUsage = u.inputTokens || u.outputTokens || u.cacheReadTokens || u.cacheCreationTokens;
     if (hasUsage || meta.costUsd != null || meta.durationMs != null) {
