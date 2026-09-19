@@ -5,7 +5,8 @@
   "description": "Локальный оркестратор агентных CLI: сервер на Node + веб-интерфейс",
   "type": "commonjs",
   "scripts": {
-    "check": "node SYSTEM/checks.js"
+    "check": "node SYSTEM/checks.js",
+    "ui": "node SYSTEM/ui-walk.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-simd-compat": "0.19.3",
