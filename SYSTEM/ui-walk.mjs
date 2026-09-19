@@ -8,7 +8,8 @@
 // только локальным запросам, поэтому скрипт запускается node на Windows.
 //
 // Запуск одной командой: `npm run ui` (из WSL уходит в powershell сам).
-// Код выхода 1 — есть ошибки консоли или пустая вкладка.
+// Код выхода 1 — есть ошибки консоли или пустая вкладка, 3 — отсюда прогнать
+// нельзя (контейнер без доступа к серверу пользователя).
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,6 +19,12 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 // из WSL сервер недоступен (403) — перезапускаем себя node на стороне Windows
 if (process.platform === 'linux') {
+    // не WSL, а, например, контейнер Hermes: ни powershell, ни локального доступа
+    // к серверу оттуда нет. Отдельный код выхода — «здесь прогнать нельзя»
+    if (spawnSync('which', ['powershell.exe', 'wslpath']).status !== 0) {
+        console.error('Прогон интерфейса отсюда невозможен: нужен хост пользователя (WSL или Windows).');
+        process.exit(3);
+    }
     const win = spawnSync('wslpath', ['-w', fileURLToPath(import.meta.url)], { encoding: 'utf8' }).stdout.trim();
     const run = spawnSync('powershell.exe', ['-NoProfile', '-Command', `node "${win}" ${process.argv.slice(2).join(' ')}`], { stdio: 'inherit', timeout: 300000 });
     process.exit(run.status ?? 1);
@@ -48,7 +55,10 @@ async function ensureBrowser() {
     throw new Error('edge did not start');
 }
 
-const URL_APP = appUrl();
+// `--url <адрес>` — пройти не главную копию, а ветку исполнителя по её адресу
+// предпросмотра /branch/<ветка>/ (DOCS/decisions/042); так зовёт branch-gate.mjs
+const urlArg = process.argv.indexOf('--url');
+const URL_APP = urlArg > 0 && process.argv[urlArg + 1] ? process.argv[urlArg + 1] : appUrl();
 await ensureBrowser();
 // своя вкладка на прогон: чужие проверки (live-check) свою страницу не теряют
 const page = await cdp(`/json/new?${URL_APP}`, 'PUT');

@@ -11,11 +11,16 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const ROOT = path.join(__dirname, '..');
+// инструменты (eslint, madge) — всегда из главной копии: в рабочей копии ветки
+// node_modules нет. А проверяемая папка может быть другой: `--root <папка>`
+// гонит те же проверки на ветке исполнителя (SYSTEM/branch-gate.mjs, DOCS/decisions/049)
+const TOOLS = path.join(__dirname, '..');
+const rootArg = process.argv.indexOf('--root');
+const ROOT = rootArg > 0 && process.argv[rootArg + 1] ? path.resolve(process.argv[rootArg + 1]) : TOOLS;
 // норма «один файл — одна тема» (DOCS/decisions/022): 150–300 строк, за 400 — делить
 const MAX_LINES = 400;
 // чужой код и рабочие копии агентов: их размер и их ошибки не наши
-const SKIP = new Set(['node_modules', 'DATA', '.git', 'hermes', 'hermes-home', '.worktrees', '.claude', '.beads']);
+const SKIP = new Set(['node_modules', 'DATA', '.git', 'hermes', 'hermes-home', '.worktrees', '.claude', '.beads', '.kilo']);
 
 let failed = false;
 
@@ -55,10 +60,10 @@ function checkSize() {
     for (const { file, lines } of long.sort((a, b) => b.lines - a.lines)) console.log(`  ${lines}\t${file}`);
 }
 
-run('неизвестные имена', process.execPath, [path.join(ROOT, 'node_modules', 'eslint', 'bin', 'eslint.js')]);
+run('неизвестные имена', process.execPath, [path.join(TOOLS, 'node_modules', 'eslint', 'bin', 'eslint.js')]);
 // не .bin/madge — это shell-скрипт (#!/bin/sh), node напрямую его не исполнит,
 // он ищет настоящий вход в самом пакете
-run('циклические связи', process.execPath, [path.join(ROOT, 'node_modules', 'madge', 'bin', 'cli.js'), '--circular', 'server.js']);
+run('циклические связи', process.execPath, [path.join(TOOLS, 'node_modules', 'madge', 'bin', 'cli.js'), '--circular', 'server.js']);
 checkSize();
 
 process.exit(failed ? 1 : 0);
