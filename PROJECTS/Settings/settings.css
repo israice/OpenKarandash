@@ -167,20 +167,28 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    margin: 0;
+    /* сверху отступ от карточки выбора провайдера/модели: список стоит сразу
+       за ней, и без него заголовок «Paid» прилипал к её нижней рамке */
+    margin: 16px 0 0;
     padding: 0;
     list-style: none;
 }
 
 .provider {
-    padding: 12px 14px;
+    padding: 14px 16px;
     border: 1px solid #2e3138;
-    border-radius: 10px;
+    border-radius: 12px;
     background: #16181c;
+    transition: border-color 0.15s ease;
 }
 
+.provider:hover { border-color: #3a3e47; }
+
 .provider-list__heading {
-    margin: 4px 0 -2px;
+    /* над заголовком (кроме первого) = gap 10 + 6 = 16, как у списка сверху;
+       под ним 10 - 4 = 6 — заголовок держится ближе к своей секции */
+    margin: 6px 0 -4px;
+    padding: 0 2px;
     font-size: 0.72rem;
     font-weight: 600;
     letter-spacing: 0.04em;
@@ -203,8 +211,9 @@
 }
 
 .provider__note {
-    margin-top: 2px;
+    margin-top: 3px;
     font-size: 0.76rem;
+    line-height: 1.4;
     color: #8b909a;
 }
 
@@ -336,6 +345,33 @@
 
 .provider__model + .provider__model {
     margin-top: 10px;
+}
+
+/* блок модели/ключа под строкой провайдера: отступ от шапки карточки */
+.provider__row + .provider__model {
+    margin-top: 12px;
+}
+
+/* поле ключа (pi/OpenRouter): во всю ширину карточки, с рамкой и
+   нормальным внутренним отступом — узкая «таблетка» выглядела прижатой */
+.provider__model--key {
+    padding-top: 12px;
+    border-top: 1px solid #23262c;
+}
+
+.provider__model--key .provider__input {
+    padding: 9px 12px;
+    border: 1px solid #2e3138;
+    border-radius: 8px;
+    background: #1b1d22;
+    font-size: 0.82rem;
+}
+
+.provider__model--key .provider__input:hover { background: #20232a; }
+
+.provider__model--key .provider__input:focus-visible {
+    border-color: #6ea8fe;
+    box-shadow: 0 0 0 3px rgba(110, 168, 254, 0.15);
 }
 
 /* ---------- подключение Telegram ---------- */

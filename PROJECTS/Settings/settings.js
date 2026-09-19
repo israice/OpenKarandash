@@ -375,7 +375,7 @@
                 // в отличие от Telegram, для него не нужна отдельная кнопка-раскрытие
                 if (isPiGated) {
                     const keyRow = document.createElement('div');
-                    keyRow.className = 'provider__model';
+                    keyRow.className = 'provider__model provider__model--key';
                     keyRow.innerHTML = `
                         <input type="password" class="provider__input" id="piOpenRouterKeyInput"
                                placeholder="OpenRouter API key (free models only)" autocomplete="off">
