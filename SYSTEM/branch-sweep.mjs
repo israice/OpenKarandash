@@ -5,6 +5,7 @@
 //   npm run branches                      — только список, ничего не трогает
 //   npm run branches -- --prune-merged    — снять влитые в main
 //   npm run branches -- --prune-stale 14  — снять непринятые без коммитов 14+ дней
+//   … --only <ветка> [--only <ветка>]     — ограничить снятие названными ветками
 //
 // Никогда не трогает: main, текущую ветку, копию с незакоммиченными правками
 // и ветку без рабочей копии (её завёл человек, а не исполнитель). DOCS/decisions/049.
@@ -19,6 +20,9 @@ const pruneMerged = args.includes('--prune-merged');
 const staleAt = args.indexOf('--prune-stale');
 const staleDays = staleAt >= 0 ? Number(args[staleAt + 1]) : null;
 if (staleAt >= 0 && !(staleDays > 0)) { console.error('--prune-stale ждёт число дней, например 14'); process.exit(2); }
+
+// --only можно повторять: снимаются лишь названные ветки, остальные только в списке
+const only = args.flatMap((a, i) => (a === '--only' && args[i + 1] ? [args[i + 1]] : []));
 
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const tryGit = (cwd, ...a) => { try { return git(cwd, ...a); } catch { return null; } };
@@ -45,6 +49,7 @@ for (const row of rows) {
     const merged = ahead === 0 && tip !== mainTip;
     let action = 'оставить';
     if (dirty) action = 'оставить (незакоммиченные правки)';
+    else if (only.length && !only.includes(row.branch)) action = 'оставить (не названа в --only)';
     else if (merged && pruneMerged) action = 'СНЯТЬ (влита)';
     else if (!merged && ahead > 0 && staleDays && ageDays >= staleDays) action = `СНЯТЬ (не принята, ${ageDays} дн. без коммитов)`;
     report.push({ ...row, alive, ahead, ageDays, dirty, merged, action });

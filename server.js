@@ -2491,6 +2491,8 @@ async function askHermes({ prompt, sessionId, mode, model, effort }, send) {
         let liveThinking = false;
         // сами тексты — чтобы пересборка хода не стёрла их, если в истории Hermes их нет
         const liveThoughts = [];
+        // чем кончился несостоявшийся ход (run.failed / run.cancelled) — см. onEvent
+        const terminalNotices = [];
         let liveToolCount = 0;
 
         // один запрос к Hermes и разбор его расшифровки в тексты/шаги. Вынесено в
@@ -2554,7 +2556,9 @@ async function askHermes({ prompt, sessionId, mode, model, effort }, send) {
                     if (name !== 'run.completed') {
                         const why = ev.turn_exit_reason ? `: ${ev.turn_exit_reason}` : '';
                         const text = `Hermes завершил ход со статусом ${name.slice(4)}${why}`;
-                        recordNotice(ctx.session, `hermes.${name}`, text, null, ev);
+                        // в базу — после пересборки хода: она стирает строки потока
+                        // и пишет ход заново по истории Hermes, где этой пометки нет
+                        terminalNotices.push({ name: `hermes.${name}`, text, ev });
                         ctx.emit({ type: 'notice', name: `hermes.${name}`, text });
                     }
                     const usage = ev.usage || {};
@@ -2680,6 +2684,8 @@ async function askHermes({ prompt, sessionId, mode, model, effort }, send) {
                 if (!shownChild.has(entry.hermesMessageId)) emitHermesEntry(ctx, entry, true);
             }
         }
+
+        for (const n of terminalNotices) recordNotice(ctx.session, n.name, n.text, null, n.ev);
 
         if (thrown) throw thrown;
         if (failure) return ctx.fail(failure);
