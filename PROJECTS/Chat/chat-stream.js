@@ -5,7 +5,7 @@
 // зависит. Вынесено из SYSTEM/app.js (DOCS/decisions/022)
 import { state } from './chat-state.js';
 import { addRowDetails } from './chat-details.js';
-import { api, restoreServerConnection } from '../../SYSTEM/app.js';
+import { api, closeModal, restoreServerConnection } from '../../SYSTEM/app.js';
 import {
     PROVIDERS, connections, saveProviderState, saveAllProviderStates, getActiveProviderId,
     updateClaudeUsage, updateContextGauge, contextWindowForModel,
@@ -265,6 +265,13 @@ export async function sendToClaude(text, mode = 'Action') {
                 setChatSessionId(event.id);
                 saveProviderState(providerId);
                 setRunningSessionId(event.id);
+                // новая сессия из Karandash/Home появилась — открытые окна
+                // (настройки, версии, файл) больше не нужны; окно подтверждения
+                // (modal--top) живёт своим циклом и не трогается
+                if (state.closeModalsOnSession) {
+                    state.closeModalsOnSession = false;
+                    for (const m of document.querySelectorAll('.modal:not([hidden]):not(.modal--top)')) closeModal(m);
+                }
                 // окно модели известно сразу — не ждём первого 'context' от CLI,
                 // чтобы датчик не висел на «—» весь первый ход новой сессии
                 updateContextGauge(0, contextWindowForModel(claude.model));

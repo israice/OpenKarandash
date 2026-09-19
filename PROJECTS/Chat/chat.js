@@ -53,6 +53,7 @@ function setMode(mode) {
 // там же, где и в композере, поэтому сюда никогда не долетает
 function startCommentSession(prompt, thumb, mode) {
     chatState.pendingThumb = thumb || null;
+    chatState.closeModalsOnSession = true;
     setChatSessionId(null);
     saveAllProviderStates();
     chatState.chatRun += 1;
