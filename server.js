@@ -871,16 +871,33 @@ function stopActiveRun(sessionId) {
     return true;
 }
 
-// запущенные сейчас запросы: id сессии -> подключённые слушатели.
-// страницу могли перезагрузить, и она подключается к уже идущей работе
+// запущенные сейчас запросы: id сессии -> { listeners, events, seq }.
+// страницу могли перезагрузить, и она подключается к уже идущей работе.
+// events — события этого хода с порядковым номером seq: подключившийся называет
+// номер последнего события, которое видел (after), и получает всё, что было
+// после него, — иначе события между обрывом связи и переподключением в живую
+// ленту не попадали вовсе. Буфер живёт ровно ход и ограничен RUN_BUFFER_MAX:
+// вытесненное из него клиент доберёт из базы (seq первого события в буфере
+// больше after + 1 — знак, что пора перечитать /api/sessions/messages)
 const runs = new Map();
+const RUN_BUFFER_MAX = 5000;
+
+// нумерует событие хода и кладёт его в буфер; возвращает то, что уходит наружу
+function stampEventSeq(sessionId, event) {
+    const live = runs.get(sessionId);
+    if (!live) return event;
+    const stamped = { ...event, seq: ++live.seq };
+    live.events.push(stamped);
+    if (live.events.length > RUN_BUFFER_MAX) live.events.shift();
+    return stamped;
+}
 
 function broadcast(sessionId, event) {
-    const listeners = runs.get(sessionId);
-    if (!listeners) return;
+    const live = runs.get(sessionId);
+    if (!live) return;
 
     const line = JSON.stringify(event) + '\n';
-    for (const res of listeners) res.write(line);
+    for (const res of live.listeners) res.write(line);
 }
 
 // ---------- перезапуск после правки: решение за сервером ----------
@@ -975,8 +992,11 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
         // метаданные хода на неё, а не вставляет ещё одну строку
         assistantPosition: null,
         emit(event) {
-            send(event);
-            if (ctx.session) broadcast(ctx.session, event);
+            // номер получает и отправитель: оборвись его поток — он продолжит
+            // через /api/sessions/attach с того же места
+            const stamped = ctx.session ? stampEventSeq(ctx.session, event) : event;
+            send(stamped);
+            if (ctx.session) broadcast(ctx.session, stamped);
         },
         fail(text) {
             ctx.errorText = text;
@@ -1005,7 +1025,7 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
     // конкретный ход, видно в result_meta этого сообщения
     ctx.userPosition = startExchange(ctx.session, prompt, target.id, meta.model, meta.effort);
     setMessageMode.run(mode || null, ctx.session, ctx.userPosition);
-    runs.set(ctx.session, new Set());
+    runs.set(ctx.session, { listeners: new Set(), events: [], seq: 0 });
     ctx.emit({ type: 'session', id: ctx.session });
     // без этого push сессия появлялась в списке только у вкладки, которая её
     // завела (там 'sessions-changed' шлёт сам app.js), — у остальных открытых
@@ -1055,7 +1075,7 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
         }
         // работа окончена — отпускаем подключившиеся страницы
         if (ctx.session) {
-            for (const listener of runs.get(ctx.session) || []) listener.end();
+            for (const listener of runs.get(ctx.session)?.listeners || []) listener.end();
             runs.delete(ctx.session);
         }
         // занятость снимаем только после записи в базу, иначе отложенный
@@ -3614,9 +3634,9 @@ async function handleApi(req, res, urlPath) {
         }
 
         if (urlPath === '/api/sessions/attach') {
-            const { id } = await readJson(req);
-            const listeners = runs.get(id);
-            if (!listeners) {
+            const { id, after } = await readJson(req);
+            const live = runs.get(id);
+            if (!live) {
                 sendJson(res, { ok: true, running: false });
                 return;
             }
@@ -3625,8 +3645,17 @@ async function handleApi(req, res, urlPath) {
                 'Content-Type': 'application/x-ndjson; charset=utf-8',
                 'Cache-Control': 'no-store',
             });
-            listeners.add(res);
-            req.on('close', () => listeners.delete(res));
+            // after — номер последнего события, которое клиент уже видел (или
+            // liveSeq из /api/sessions/messages, если он только что прочитал
+            // базу). Без него — как раньше: только то, что случится дальше.
+            // Запись и подписка идут в одном такте, между ними событие не влезет
+            if (Number.isFinite(after)) {
+                for (const event of live.events) {
+                    if (event.seq > after) res.write(JSON.stringify(event) + '\n');
+                }
+            }
+            live.listeners.add(res);
+            req.on('close', () => live.listeners.delete(res));
             return; // ответ закроется, когда закончится работа
         }
 
@@ -3697,6 +3726,9 @@ async function handleApi(req, res, urlPath) {
                 // делись, а число здесь — чтобы это было видно в ленте, а не
                 // только в базе (DOCS/decisions/040)
                 replacedCount: countArchive.get(id)?.n ?? 0,
+                // ход идёт прямо сейчас: номер последнего события, уже отражённого
+                // в этих строках, — с него клиент просит продолжение у attach
+                liveSeq: runs.get(id)?.seq ?? null,
             });
             return;
         }

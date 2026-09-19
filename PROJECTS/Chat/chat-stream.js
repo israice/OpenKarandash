@@ -90,43 +90,83 @@ function makeRenderer(status) {
 
 // сессия всё ещё выполняется (страницу перезагрузили посреди работы) —
 // досматриваем её ленту вживую
-export async function attachSession(id, run) {
-    const res = await fetch('/api/sessions/attach', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
-    });
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// сколько раз подряд переподключаемся, не получив ни одного события: сервер
+// перезапускается секунды, а не минуты — дольше ждать живого потока незачем,
+// итог всё равно покажет перечитывание базы
+const ATTACH_RETRIES = 8;
 
-    // поток идёт с типом application/x-ndjson; обычный JSON означает,
-    // что работа уже закончилась и подключаться не к чему
-    if (!res.headers.get('content-type')?.includes('ndjson')) {
+// Досматривает идущий ход до конца, переживая обрывы связи. after — номер (seq)
+// последнего события, которое лента уже показала: сервер досылает из буфера хода
+// всё, что было после него, поэтому ни пропусков, ни повторов (DOCS/decisions/046).
+// Закрытие потока ещё не конец хода — конец это обычный JSON вместо ndjson.
+// onAttached зовётся один раз, при первом живом потоке; без него вернётся false
+async function followRun(id, after, onEvent, onAttached) {
+    let attached = false;
+    let failures = 0;
+    while (failures < ATTACH_RETRIES) {
+        let res;
+        try {
+            res = await fetch('/api/sessions/attach', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, after }),
+            });
+        } catch {
+            failures += 1;
+            await sleep(1500);
+            continue;
+        }
+        // поток идёт с типом application/x-ndjson; обычный JSON означает,
+        // что работа уже закончилась и подключаться не к чему
+        if (!res.headers.get('content-type')?.includes('ndjson')) return attached;
+        if (!attached) { attached = true; onAttached?.(); }
+
+        let progressed = false;
+        try {
+            await readNdjson(res, (event) => {
+                if (typeof event.seq === 'number') {
+                    if (after != null && event.seq <= after) return; // уже показано
+                    after = event.seq;
+                }
+                progressed = true;
+                onEvent(event);
+            });
+        } catch { /* связь оборвалась посреди чтения — переподключаемся ниже */ }
+        failures = progressed ? 0 : failures + 1;
+        await sleep(300);
+    }
+    return attached;
+}
+
+export async function attachSession(id, run, after = null) {
+    let status = null;
+    let render = null;
+    const attached = await followRun(id, after, (event) => {
+        if (event.type === 'rate_limit') { updateClaudeUsage(event.info); return; }
+        if (event.type === 'context') { updateContextGauge(event.percent, event.window); return; }
+        if (run === state.chatRun) render(event);
+    }, () => {
+        status = addPendingStatus();
+        setComposerBusy(true);
+        render = makeRenderer(status);
+        // как и в sendToClaude: пока довоспроизводим чужой поток, автообновление подождёт,
+        // иначе очередной dev-reload оборвёт чтение раньше, чем страница успеет его показать
+        window.__holdReload?.(true);
+    }).catch(() => status !== null);
+
+    if (!attached) {
         setRunningSessionId(null);
         loadSessions();
         return;
     }
 
-    const status = addPendingStatus();
-    setComposerBusy(true);
-    const render = makeRenderer(status);
-
-    // как и в sendToClaude: пока довоспроизводим чужой поток, автообновление подождёт,
-    // иначе очередной dev-reload оборвёт чтение раньше, чем страница успеет его показать
-    window.__holdReload?.(true);
-
-    try {
-        await readNdjson(res, (event) => {
-            if (event.type === 'rate_limit') { updateClaudeUsage(event.info); return; }
-            if (event.type === 'context') { updateContextGauge(event.percent, event.window); return; }
-            if (run === state.chatRun) render(event);
-        });
-    } finally {
-        window.__holdReload?.(false);
-        removePendingStatus(status);
-        setRunningSessionId(null);
-        if (run === state.chatRun) {
-            setComposerBusy(false);
-            await reloadFromStore(id, run);
-        }
+    window.__holdReload?.(false);
+    removePendingStatus(status);
+    setRunningSessionId(null);
+    if (run === state.chatRun) {
+        setComposerBusy(false);
+        await reloadFromStore(id, run);
     }
 }
 
@@ -141,7 +181,7 @@ export async function openSession(id, running = false) {
     state.chatList.innerHTML = '';
     state.chatEmpty.hidden = true;
 
-    const { messages = [], contextPercent = null, contextWindow = null } = await api('/api/sessions/messages', { id });
+    const { messages = [], contextPercent = null, contextWindow = null, liveSeq = null } = await api('/api/sessions/messages', { id });
     for (const message of messages) renderStoredMessage(message);
 
     if (messages.length === 0) state.chatEmpty.hidden = false;
@@ -150,7 +190,9 @@ export async function openSession(id, running = false) {
     // работа ещё идёт (страницу перезагрузили посреди неё) — досматриваем вживую
     if (running) {
         setRunningSessionId(id);
-        attachSession(id, state.chatRun);
+        // liveSeq — событие, до которого эти строки уже дочитаны: поток продолжится
+        // ровно с него, и то, что случилось между чтением базы и подключением, не пропадёт
+        attachSession(id, state.chatRun, liveSeq);
         return;
     }
 
@@ -252,7 +294,17 @@ export async function sendToClaude(text, mode = 'Action') {
     // иначе перезагрузка оборвёт чтение потока и ответ пропадёт
     window.__holdReload?.(true);
 
+    // для продолжения после обрыва связи: id идущего хода, номер последнего
+    // увиденного события и признак, что ход дошёл до своего 'done'
+    let liveId = null;
+    let lastSeq = null;
+    let finished = false;
+
     const handle = (event) => {
+        if (typeof event.seq === 'number') lastSeq = event.seq;
+        if (event.type === 'session') liveId = event.id;
+        if (event.type === 'done') finished = true;
+
         // ленту уже очистили под другую сессию — этот запрос дорабатывает
         // на сервере, но в чат больше не пишет
         if (run !== state.chatRun) return;
@@ -307,7 +359,19 @@ export async function sendToClaude(text, mode = 'Action') {
         render(event);
     };
 
-    const ask = () => streamAsk({
+    // поток ответа мог оборваться, а ход на сервере продолжается: досматриваем
+    // его через attach с места обрыва, а не объявляем ошибку (DOCS/decisions/046)
+    const ask = async () => {
+        liveId = null; lastSeq = null; finished = false;
+        try {
+            await askOnce();
+        } catch (err) {
+            if (!liveId) throw err; // до сервера не дошло — продолжать нечего
+        }
+        if (liveId && !finished) await followRun(liveId, lastSeq, handle);
+    };
+
+    const askOnce = () => streamAsk({
         agent: providerId,
         prompt: text,
         model: claude.model,

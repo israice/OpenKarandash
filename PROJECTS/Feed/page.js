@@ -862,19 +862,6 @@ export default function build(page, { panel, signal }) {
         liveAbort?.abort();
         const abort = new AbortController();
         liveAbort = abort;
-        let res;
-        try {
-            res = await fetch('/api/sessions/attach', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id }),
-                signal: abort.signal,
-            });
-        } catch { return; }
-        if (generation !== liveGeneration) return;
-        // обычный JSON вместо ndjson — сессия не выполняется, следить не за чем
-        if (!res.headers.get('content-type')?.includes('ndjson')) return;
-
         let scheduled = false;
         const scheduleRefresh = () => {
             if (scheduled) return;
@@ -886,14 +873,47 @@ export default function build(page, { panel, signal }) {
             }, 1000);
         };
 
-        const reader = res.body.getReader();
-        for (;;) {
-            let chunk;
-            try { chunk = await reader.read(); } catch { break; }
-            if (chunk.done) break;
-            if (generation !== liveGeneration) { reader.cancel(); return; }
-            scheduleRefresh();
+        // закрытие потока ещё не конец хода: связь могла оборваться, сервер —
+        // перезапуститься. Конец — это обычный JSON вместо ndjson; до него
+        // переподключаемся, иначе страница молча переставала обновляться посреди
+        // идущей работы (DOCS/decisions/046)
+        const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        let attached = false;
+        for (let failures = 0; failures < 8;) {
+            let res;
+            try {
+                res = await fetch('/api/sessions/attach', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id }),
+                    signal: abort.signal,
+                });
+            } catch {
+                if (abort.signal.aborted) return;
+                failures += 1;
+                await pause(1500);
+                continue;
+            }
+            if (generation !== liveGeneration) return;
+            // обычный JSON вместо ndjson — сессия не выполняется, следить не за чем
+            if (!res.headers.get('content-type')?.includes('ndjson')) break;
+            attached = true;
+
+            let progressed = false;
+            const reader = res.body.getReader();
+            for (;;) {
+                let chunk;
+                try { chunk = await reader.read(); } catch { break; }
+                if (chunk.done) break;
+                if (generation !== liveGeneration) { reader.cancel(); return; }
+                progressed = true;
+                scheduleRefresh();
+            }
+            if (abort.signal.aborted) return;
+            failures = progressed ? 0 : failures + 1;
+            await pause(300);
         }
+        if (!attached) return;
         // поток закрылся — ход закончен, показываем итоговое состояние
         scheduleRefresh();
     }
