@@ -14,7 +14,7 @@
 const fs = require('fs');
 const { detect } = require('./language.js');
 
-const SERVICE_ENTRY = /^\s*<(bash-input|bash-stdout|bash-stderr|local-command-stdout|local-command-stderr|command-name)>/;
+const SERVICE_ENTRY = /^\s*<(bash-input|bash-stdout|bash-stderr|local-command-stdout|local-command-stderr|local-command-caveat|command-name|command-message)>/;
 
 // последний текстовый блок последней записи заданного типа в transcript
 function lastMessageText(transcriptPath, type) {
@@ -35,6 +35,10 @@ function lastMessageText(transcriptPath, type) {
             continue;
         }
         if (entry.type !== type) continue;
+        // isMeta — запись, которую подложила обвязка, а не человек: тело навыка,
+        // загруженного слэш-командой, целиком английское и шло последним, так что
+        // русское сообщение перед ним объявлялось английским
+        if (entry.isMeta) continue;
         const content = entry.message?.content;
         // команда через "!" и её вывод — запись типа user, но человек её не писал
         // как реплику: латиница кода выдавала «английское сообщение»
