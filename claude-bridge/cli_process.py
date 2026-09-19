@@ -97,6 +97,10 @@ def build_argv(cfg: BridgeConfig, model: str, system_prompt_file: str) -> list[s
         "--output-format", "stream-json",
         "--include-partial-messages",
         "--verbose",
+        # Headless runs default to thinking display "omitted": thinking blocks
+        # arrive empty (signature only) and Hermes gets no reasoning at all.
+        # Fixed per bridge, like --effort, so the cached request stays stable.
+        "--thinking-display", "summarized",
         "--model", model,
         # Hermes owns the toolbox; the CLI must not act on its own.
         "--disallowed-tools", ",".join(BUILTIN_TOOLS),

@@ -1098,6 +1098,12 @@ const CHAT_DENIED_TOOLS = [
 // собственные хуки, скиллы и агенты проекта (.claude/) продолжают работать.
 // Подробности — DOCS/decisions/013.
 const LEAN_ARGS = ['--setting-sources', 'project,local', '--strict-mcp-config'];
+// В headless-пути (-p) CLI по умолчанию просит у API размышления без текста
+// (display: omitted): блок thinking приходит пустым, с одной подписью. Явный
+// флаг возвращает краткое изложение — то же, что видит интерактивная сессия.
+// PTY и чтение ~/.claude/projects/*.jsonl для этого не нужны: замер показал,
+// что и там лежит не больше этого. Подробности — DOCS/decisions/045.
+const THINKING_ARGS = ['--thinking-display', 'summarized'];
 
 // system-подтипы, у которых есть своя явная обработка ниже (onLine) — любой
 // другой подтип ловит recordSystemEvent (см. DOCS/decisions/012)
@@ -1165,7 +1171,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
 
     const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id);
 
-    const args = ['-p', '--output-format', 'stream-json', '--verbose', ...LEAN_ARGS];
+    const args = ['-p', '--output-format', 'stream-json', '--verbose', ...LEAN_ARGS, ...THINKING_ARGS];
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
     if (resumeId) args.push('--resume', resumeId);
