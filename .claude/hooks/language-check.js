@@ -14,6 +14,8 @@
 const fs = require('fs');
 const { detect } = require('./language.js');
 
+const SERVICE_ENTRY = /^\s*<(bash-input|bash-stdout|bash-stderr|local-command-stdout|local-command-stderr|command-name)>/;
+
 // последний текстовый блок последней записи заданного типа в transcript
 function lastMessageText(transcriptPath, type) {
     let lines;
@@ -34,6 +36,9 @@ function lastMessageText(transcriptPath, type) {
         }
         if (entry.type !== type) continue;
         const content = entry.message?.content;
+        // команда через "!" и её вывод — запись типа user, но человек её не писал
+        // как реплику: латиница кода выдавала «английское сообщение»
+        if (typeof content === 'string' && SERVICE_ENTRY.test(content)) continue;
         if (typeof content === 'string') return content;
         if (!Array.isArray(content)) continue;
         const textBlocks = content.filter((b) => b.type === 'text' && b.text);
