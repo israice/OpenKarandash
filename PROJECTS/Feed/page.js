@@ -950,5 +950,11 @@ export default function build(page, { panel, signal }) {
         setTimeout(() => { copyIdBtn.textContent = original; }, 1000);
     });
 
+    // список перечитывается при каждом открытии выпадающего списка — как у Flow
+    // (flow-session-sync.js): раньше он читался один раз при сборке страницы, и
+    // сессия, начатая позже, в Feed не появлялась до перезагрузки, хотя Sessions
+    // и Flow её уже показывали
+    select.addEventListener('mousedown', () => { loadSessions(); }, { signal });
+
     loadSessions().then(() => loadFeed(currentId));
 }

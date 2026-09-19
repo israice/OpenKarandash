@@ -12,6 +12,7 @@ const hermesStack = require('./SYSTEM/core/hermes-stack.js');
 const hermesHistoryModule = require('./SYSTEM/core/hermes-history.js');
 const hostDeps = require('./SYSTEM/core/host-deps.js');
 const branchPreview = require('./SYSTEM/core/branch-preview.js');
+const hermesTasks = require('./SYSTEM/core/hermes-tasks.js');
 
 const ROOT = __dirname;
 
@@ -2323,10 +2324,14 @@ function hermesLinkFor(sessionId) {
 // Дотянуть переписку сессии, если по ней не идёт наш собственный ход: во время
 // хода строки пишет поток, а по его окончании — пересборка хода.
 async function syncHermesHistory(sessionId) {
+    // сессии у нас нет (удалена) — дотягивать некуда: строки легли бы сиротами
+    if (!getSessionTitle.get(sessionId)) return 0;
     const link = hermesLinkFor(sessionId);
     if (!link) return 0;
     for (const run of activeRuns.values()) if (run.sessionId === sessionId) return 0;
-    return hermesHistory.sync(sessionId, link.hermesId, hermesSessionsBase(link.target.url));
+    const added = await hermesHistory.sync(sessionId, link.hermesId, hermesSessionsBase(link.target.url));
+    stampHermesAttempts(sessionId, link.hermesId);
+    return added;
 }
 
 // Сессии Hermes, начатые не из интерфейса (его дашборд, API, расписание), тоже
@@ -2666,6 +2671,7 @@ async function askHermes({ prompt, sessionId, mode, model, effort }, send) {
             liveThoughts,
         });
         if (rebuilt) {
+            if (rebuilt.children.length) stampHermesAttempts(ctx.session, hermesId);
             for (const entry of rebuilt.entries) {
                 if (entry.kind === 'notice' && entry.name !== 'server.retry-nudge') emitHermesEntry(ctx, entry, false);
                 if (entry.kind === 'thinking' && !liveThinking && !rebuilt.partial) emitHermesEntry(ctx, entry, false);
@@ -3212,16 +3218,21 @@ function toolResultImages(content) {
 function resetSessions() {
     // архив замещённых строк — часть истории этих же сессий: очистка списка
     // не должна оставлять от них хвост, который уже не с чем сопоставить
-    db.exec('DELETE FROM messages; DELETE FROM sessions; DELETE FROM replaced_messages;');
+    // и связи с сессиями CLI: по уцелевшей связи удалённая сессия заново
+    // втягивалась из истории Hermes — строками без записи в sessions
+    db.exec('DELETE FROM messages; DELETE FROM sessions; DELETE FROM replaced_messages; DELETE FROM session_cli;');
 }
 
 const deleteMessagesBySession = db.prepare('DELETE FROM messages WHERE session_id = ?');
 const deleteSessionById = db.prepare('DELETE FROM sessions WHERE id = ?');
+const deleteCliLinksBySession = db.prepare('DELETE FROM session_cli WHERE session_id = ?');
 
 function deleteSession(id) {
     deleteMessagesBySession.run(id);
     deleteArchiveBySession.run(id);
     deleteSessionById.run(id);
+    // см. resetSessions: без этого открытие удалённой сессии по id возвращало её строки
+    deleteCliLinksBySession.run(id);
 }
 
 // ---------- запись сообщений из чата ----------
@@ -3281,6 +3292,28 @@ function appendRaw(sessionId, position, raw) {
 
 // id подзадачи и попытки приходят от оркестратора — своих не выдумываем.
 // Пока графа задач нет, зовётся только оттуда, где источник настоящий
+// Номер попытки на строках помощника: task_id у них — дочерняя сессия Hermes,
+// а какая это по счёту попытка той же цели, знает журнал его поручений
+// (SYSTEM/core/hermes-tasks.js). Пишем `номер:id поручения` — номер для глаз,
+// id — чтобы найти запись у Hermes. Источник один, поэтому попытку видят сразу
+// Sessions, Feed и Flow: все три читают поле из базы
+const setAttemptByTask = db.prepare('UPDATE messages SET attempt_id = ? WHERE session_id = ? AND task_id = ? AND attempt_id IS NOT ?');
+const hasUnstampedTask = db.prepare('SELECT 1 FROM messages WHERE session_id = ? AND task_id IS NOT NULL AND attempt_id IS NULL LIMIT 1');
+function stampHermesAttempts(sessionId, hermesId) {
+    // журнал читается с копии базы Hermes — не трогаем его, пока нечего помечать
+    if (!hasUnstampedTask.get(sessionId)) return;
+    try {
+        for (const d of hermesTasks.readDelegations({ parent: hermesId })) {
+            if (!d.childSession) continue;
+            const value = `${d.attempt}:${d.delegationId}`;
+            setAttemptByTask.run(value, sessionId, d.childSession, value);
+        }
+    } catch (err) {
+        // журнал поручений — чужая база: её отсутствие или смена схемы не должны ронять ход
+        console.error(`hermes attempts unavailable for ${sessionId}: ${err.message}`);
+    }
+}
+
 function stampTask(sessionId, position, taskId, attemptId) {
     if (!taskId && !attemptId) return;
     setMessageTaskIds.run(taskId || null, attemptId || null, sessionId, position);
@@ -3581,6 +3614,7 @@ const featureRoutes = {
     ...telegram.createRoutes(),
     ...require('./SYSTEM/toolbar-icons-server.js').createRoutes({ db }),
     ...branchPreview.createRoutes({ root: ROOT }),
+    ...hermesTasks.createRoutes({ sendJson, readJson }),
 };
 
 // ---------- API коннектора ----------
