@@ -56,8 +56,33 @@ async function streamAsk(body, onEvent) {
 // и для подключения к работе, которая уже идёт
 function makeRenderer(status) {
     let answered = false;
+    // черновик: текст или размышление, которое модель ещё набирает. Сервер шлёт
+    // его кусками (событие delta), а следом — целое сообщение обычным событием;
+    // поэтому любое другое событие черновик снимает, и на его месте встаёт
+    // настоящая строка. В базе черновика нет — Feed и Flow его не видят
+    let draft = null; // { kind, text, node }
+    const dropDraft = () => {
+        draft?.node.remove();
+        draft = null;
+    };
 
     return (event) => {
+        if (event.type === 'delta') {
+            if (draft && draft.kind !== event.kind) dropDraft();
+            const stick = isChatNearBottom();
+            if (!draft) {
+                const node = event.kind === 'thinking' ? addThinkingStep('', status) : addMessage('', 'assistant');
+                node.classList.add('chat__message--draft');
+                draft = { kind: event.kind, text: '', node };
+                state.chatList.append(status); // строка ожидания остаётся последней
+            }
+            draft.text += event.text;
+            draft.node.textContent = draft.text;
+            markPendingActivity(status);
+            if (stick) scrollChatToBottom();
+            return;
+        }
+        dropDraft();
         if (event.type === 'tool') {
             // каждое действие остаётся своей строкой в ленте, а не заменяет предыдущую
             addStep(`${event.name} ${event.detail}`.trim(), status);
@@ -110,7 +135,8 @@ async function followRun(id, after, onEvent, onAttached) {
             res = await fetch('/api/sessions/attach', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id, after }),
+                // deltas — просим ещё и куски текста по мере набора (см. makeRenderer)
+                body: JSON.stringify({ id, after, deltas: true }),
             });
         } catch {
             failures += 1;

@@ -47,3 +47,10 @@
 - **Что делать:** Не менять мозг Hermes (opencode не умеет быть её brain — он гоняет своего агента, а не произвольные tool-схемы). Перенаправлять ход владельцу сессии: в начале askHermes (server.js:2314) смотрим agentNameByTarget(getSessionMeta.get(sessionId)?.target); если это прямой CLI (opencode/codex/pi) и он подключён — adapter.ask({prompt, sessionId, mode, model, effort}), тот с resumeAndHandoff продолжит своей историей. Hermes-путь оставлять только для claude-сессий (029) и hermes-*.
 - **Чем подтверждён:** Случай 2026-09-18 («сделал, проверь» → 429 claude-bridge-sonnet для opencode-wsl-сессии); DOCS/decisions/043; node --check и npm run check чисты
 - **Записано:** 2026-09-18
+
+## Сверять показанное вживую с базой после хода Hermes
+
+- **Когда применим:** Любая правка потока Hermes (onEvent в askHermes) или пересборки хода (hermes-history.js)
+- **Что делать:** Прогнать короткий ход через /api/agent/ask из live-check, собрать типы живых событий и сравнить с ролями строк в /api/sessions/messages: каждому живому tool/thinking/text должна отвечать строка. Конец хода у Hermes — run.completed, run.failed или run.cancelled, все три несут расшифровку.
+- **Чем подтверждён:** Так нашлась потеря: thinking показан вживую, а пересборка стёрла строку, потому что в истории Hermes reasoning_content был пуст (сессии hermes-docker-mu7owdmb — до правки, mu7oyce3 — после)
+- **Записано:** 2026-09-19 (сессия f59.4)

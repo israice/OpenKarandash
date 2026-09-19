@@ -288,11 +288,12 @@ function createHermesHistory({ request, store, log = () => {} }) {
     // и начинается. Не нашли его (Hermes недоступен, история другая) — null, и
     // строки, записанные по потоку, остаются как есть.
     //
+    // liveThoughts — размышления, записанные по потоку: { text, toolsBefore, at }.
     // liveToolCount — сколько шагов мы уже записали по потоку. Если сжатие
     // контекста случилось посреди хода, часть его шагов из выдачи Hermes уже
     // пропала: заменять ими записанное нельзя — тогда строки хода остаются, а
     // дописываются только пометки (partial), которых в потоке не было.
-    async function rebuild(sessionId, hermesId, base, { fromPosition, sentText, nudgeText, model, liveToolCount = 0 }) {
+    async function rebuild(sessionId, hermesId, base, { fromPosition, sentText, nudgeText, model, liveToolCount = 0, liveThoughts = [] }) {
         let messages;
         try {
             messages = await fetchMessages(request, base, hermesId);
@@ -310,6 +311,19 @@ function createHermesHistory({ request, store, log = () => {} }) {
         // вызовы, заявленные до начала хода, не нужны: ход начинается с вопроса
         const plan = planEntries(messages.slice(start + 1), { nudgeText });
         const partial = plan.filter((e) => e.kind === 'tool').length < liveToolCount;
+        // размышление, показанное вживую, Hermes в историю кладёт не всегда
+        // (reasoning_content у сообщения пуст) — тогда пересборка стирала его
+        // вместе со строками потока. Возвращаем на место: перед тем вызовом,
+        // перед которым оно прозвучало
+        if (!partial && liveThoughts.length && !plan.some((e) => e.kind === 'thinking')) {
+            for (const thought of [...liveThoughts].reverse()) {
+                let seen = 0;
+                let at = plan.findIndex((e) => e.kind === 'tool' && seen++ === thought.toolsBefore);
+                if (at < 0) at = plan.findIndex((e, i) => e.kind === 'assistant' && !plan.slice(i + 1).some((x) => x.kind === 'tool'));
+                if (at < 0) at = plan.length;
+                plan.splice(at, 0, { kind: 'thinking', text: thought.text, at: thought.at, live: true });
+            }
+        }
         // автоповтор сервер уже записал сам, когда отправлял его, — второй раз не нужен
         const kept = partial ? plan.filter((e) => e.kind === 'notice' && e.name !== 'server.retry-nudge') : plan;
         if (!partial) store.truncate(sessionId, fromPosition);

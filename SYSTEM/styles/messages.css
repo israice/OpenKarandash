@@ -266,6 +266,13 @@
     -webkit-box-orient: vertical;
 }
 
+/* черновик: текст, который модель ещё набирает (событие delta в
+   PROJECTS/Chat/chat-stream.js) — сырой, без markdown, переносы как пришли */
+.chat__message--draft {
+    white-space: pre-wrap;
+    opacity: 0.75;
+}
+
 /* картинки результата в теле шага (addImagesSection в PROJECTS/Chat/chat-details.js) */
 .chat__tool-images {
     display: flex;

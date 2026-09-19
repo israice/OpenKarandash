@@ -998,6 +998,16 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
             send(stamped);
             if (ctx.session) broadcast(ctx.session, stamped);
         },
+        // кусок текста по мере набора: в буфер хода не идёт и номера не получает —
+        // это черновик, который целиком заменит обычное событие text/thinking;
+        // иначе куски вытеснили бы из буфера настоящие события
+        emitLive(event) {
+            send(event);
+            const live = ctx.session && runs.get(ctx.session);
+            if (!live) return;
+            const line = JSON.stringify(event) + '\n';
+            for (const res of live.listeners) if (res.__deltas) res.write(line);
+        },
         fail(text) {
             ctx.errorText = text;
             ctx.emit({ type: 'error', error: text });
@@ -1124,6 +1134,12 @@ const LEAN_ARGS = ['--setting-sources', 'project,local', '--strict-mcp-config'];
 // PTY и чтение ~/.claude/projects/*.jsonl для этого не нужны: замер показал,
 // что и там лежит не больше этого. Подробности — DOCS/decisions/045.
 const THINKING_ARGS = ['--thinking-display', 'summarized'];
+// текст и размышления по мере набора (события stream_event), а не только целым
+// куском в конце вызова модели — так же запускает claude мост (claude-bridge/
+// cli_process.py). В базу куски не пишутся: целое сообщение придёт следом
+const PARTIAL_ARGS = ['--include-partial-messages'];
+// как часто отдаём накопленный кусок в ленту: токены идут десятками в секунду
+const DELTA_FLUSH_MS = 150;
 
 // system-подтипы, у которых есть своя явная обработка ниже (onLine) — любой
 // другой подтип ловит recordSystemEvent (см. DOCS/decisions/012)
@@ -1160,7 +1176,7 @@ function contextWindowFor(model) {
 // верхнеуровневые event.type, у которых есть своя явная обработка ниже — любой
 // другой (например, control_response/interrupt-хендшейк, который CLI заявляет
 // в system/init.capabilities) ловит recordTopLevelEvent (см. DOCS/decisions/012)
-const HANDLED_TOP_LEVEL_TYPES = new Set(['system', 'assistant', 'user', 'result', 'rate_limit_event']);
+const HANDLED_TOP_LEVEL_TYPES = new Set(['system', 'assistant', 'user', 'result', 'rate_limit_event', 'stream_event']);
 
 // преамбула идёт вместе с промптом через stdin, а не флагом: аргументы для WSL
 // склеиваются в одну строку, и текст с пробелами там развалился бы
@@ -1191,7 +1207,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
 
     const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id);
 
-    const args = ['-p', '--output-format', 'stream-json', '--verbose', ...LEAN_ARGS, ...THINKING_ARGS];
+    const args = ['-p', '--output-format', 'stream-json', '--verbose', ...LEAN_ARGS, ...THINKING_ARGS, ...PARTIAL_ARGS];
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
     if (resumeId) args.push('--resume', resumeId);
@@ -1218,6 +1234,21 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
         // hook_id -> позиция строки: hook_started создаёт строку, hook_response
         // (тот же hook_id) дописывает в неё вывод — та же схема, что у toolPositions
         const hookPositions = new Map();
+        // накопленный, но ещё не отданный в ленту кусок: { kind, text }
+        let pendingDelta = null;
+        let deltaTimer = null;
+        const flushDelta = () => {
+            deltaTimer = null;
+            if (!pendingDelta) return;
+            ctx.emitLive({ type: 'delta', kind: pendingDelta.kind, text: pendingDelta.text });
+            pendingDelta = null;
+        };
+        const pushDelta = (kind, text) => {
+            if (pendingDelta && pendingDelta.kind !== kind) flushDelta();
+            if (pendingDelta) pendingDelta.text += text;
+            else pendingDelta = { kind, text };
+            if (!deltaTimer) deltaTimer = setTimeout(flushDelta, DELTA_FLUSH_MS);
+        };
 
         const onLine = (line) => {
             let event;
@@ -1241,6 +1272,23 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
             // ниже нет ни одной ветки
             if (ctx.session && !HANDLED_TOP_LEVEL_TYPES.has(event.type)) {
                 recordTopLevelEvent(ctx.session, event);
+            }
+
+            // кусок по мере набора; шаги субагента (parent_tool_use_id) в черновик
+            // не идут — их текст в ленте верхнего уровня не показывается
+            if (event.type === 'stream_event') {
+                const delta = event.event?.type === 'content_block_delta' ? event.event.delta : null;
+                if (delta && !event.parent_tool_use_id) {
+                    if (delta.type === 'text_delta' && delta.text) pushDelta('text', delta.text);
+                    else if (delta.type === 'thinking_delta' && delta.thinking) pushDelta('thinking', delta.thinking);
+                }
+                return;
+            }
+            // целое сообщение заменяет черновик — недоотданный кусок уже не нужен
+            if (event.type === 'assistant' || event.type === 'result') {
+                if (deltaTimer) clearTimeout(deltaTimer);
+                deltaTimer = null;
+                pendingDelta = null;
             }
 
             // модель CLI мог выбрать сам (флаг --model не передали) — берём из первого ответа
@@ -2350,6 +2398,13 @@ async function createHermesSession(base, hermesId, prompt) {
     }
 }
 
+// чем Hermes кончает ход — все три несут расшифровку и расход (см. onEvent ниже)
+const HERMES_TERMINAL_EVENTS = new Set(['run.completed', 'run.failed', 'run.cancelled']);
+// события потока, которым строка в ленте не нужна: run.started повторяет наш же
+// запрос, message.started и done — пустые рамки, assistant.delta — куски текста,
+// который целиком придёт в assistant.completed и в расшифровке
+const HERMES_SILENT_EVENTS = new Set(['run.started', 'message.started', 'assistant.delta', 'done']);
+
 async function askHermes({ prompt, sessionId, mode, model, effort }, send) {
     // Правило «исполнитель хода = выбранный в Settings агент» (DOCS/decisions/043):
     // Hermes — оркестратор, но мозгом ему по умолчанию служит claude через
@@ -2429,6 +2484,8 @@ async function askHermes({ prompt, sessionId, mode, model, effort }, send) {
             childPoll.unref?.();
         };
         let liveThinking = false;
+        // сами тексты — чтобы пересборка хода не стёрла их, если в истории Hermes их нет
+        const liveThoughts = [];
         let liveToolCount = 0;
 
         // один запрос к Hermes и разбор его расшифровки в тексты/шаги. Вынесено в
@@ -2464,6 +2521,7 @@ async function askHermes({ prompt, sessionId, mode, model, effort }, send) {
                 // текст запишет пересборка хода
                 if (name === 'tool.progress' && ev.tool_name === '_thinking' && ev.delta) {
                     liveThinking = true;
+                    liveThoughts.push({ text: String(ev.delta), toolsBefore: liveToolCount, at: new Date().toISOString() });
                     // и в базу: Feed и Flow видят ход по базе, а не по потоку
                     recordThinking(ctx.session, String(ev.delta), null, ev);
                     ctx.emit({ type: 'thinking', text: String(ev.delta) });
@@ -2481,8 +2539,19 @@ async function askHermes({ prompt, sessionId, mode, model, effort }, send) {
                     return;
                 }
                 if (name === 'assistant.completed') { finalText = ev.content || ''; return; }
-                if (name === 'run.completed') {
+                // ход Hermes кончается одним из трёх событий (terminal_run_status в
+                // его api_server_runs.py): completed, failed (оборван лимитом шагов
+                // или ошибкой) и cancelled (остановлен). Расшифровку и расход несут
+                // все три — раньше разбирался только первый, и у оборванного хода
+                // пропадали вывод инструментов и токены
+                if (HERMES_TERMINAL_EVENTS.has(name)) {
                     ctx.meta.resultRaws.push(ev);
+                    if (name !== 'run.completed') {
+                        const why = ev.turn_exit_reason ? `: ${ev.turn_exit_reason}` : '';
+                        const text = `Hermes завершил ход со статусом ${name.slice(4)}${why}`;
+                        recordNotice(ctx.session, `hermes.${name}`, text, null, ev);
+                        ctx.emit({ type: 'notice', name: `hermes.${name}`, text });
+                    }
                     const usage = ev.usage || {};
                     // автоповтор — это ещё один запрос в том же ходе: расход складываем,
                     // а не перезаписываем последним
@@ -2524,7 +2593,12 @@ async function askHermes({ prompt, sessionId, mode, model, effort }, send) {
                     ctx.emit({ type: 'context', percent, window, used: usage.input_tokens || 0 });
                     return;
                 }
-                if (name === 'error') failure = ev.message || 'Hermes run failed';
+                if (name === 'error') { failure = ev.message || 'Hermes run failed'; return; }
+                // событие, под которое ветки нет, всё равно оставляет след — тот же
+                // принцип, что у стрима CLI (DOCS/decisions/012). Мимо идут только
+                // заведомо пустые для ленты: их содержимое уже лежит в других строках
+                if (name === 'tool.progress' && ev.tool_name === '_thinking') return; // пустое размышление
+                if (!HERMES_SILENT_EVENTS.has(name)) recordTopLevelEvent(ctx.session, { ...ev, type: `hermes:${name}` });
             };
 
             await hermesRequest(`${base}/api/sessions/${encodeURIComponent(hermesId)}/chat/stream`, {
@@ -2589,6 +2663,7 @@ async function askHermes({ prompt, sessionId, mode, model, effort }, send) {
             nudgeText: RAW_TOOL_CALL_RETRY_NUDGE,
             model: ctx.meta.model,
             liveToolCount,
+            liveThoughts,
         });
         if (rebuilt) {
             for (const entry of rebuilt.entries) {
@@ -3634,7 +3709,7 @@ async function handleApi(req, res, urlPath) {
         }
 
         if (urlPath === '/api/sessions/attach') {
-            const { id, after } = await readJson(req);
+            const { id, after, deltas } = await readJson(req);
             const live = runs.get(id);
             if (!live) {
                 sendJson(res, { ok: true, running: false });
@@ -3654,6 +3729,9 @@ async function handleApi(req, res, urlPath) {
                     if (event.seq > after) res.write(JSON.stringify(event) + '\n');
                 }
             }
+            // куски текста по мере набора нужны только ленте Sessions: Feed и Flow
+            // перечитывают базу на каждый пришедший байт, а в базе кусков нет
+            if (deltas) res.__deltas = true;
             live.listeners.add(res);
             req.on('close', () => live.listeners.delete(res));
             return; // ответ закроется, когда закончится работа
