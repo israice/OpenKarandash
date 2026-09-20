@@ -26,7 +26,8 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\""
+                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\"",
+                        "timeout": 15
                     }
                 ]
             },
@@ -35,7 +36,8 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "bd prime --hook-json"
+                        "command": "command -v bd >/dev/null 2>&1 && bd prime --hook-json || true",
+                        "timeout": 20
                     }
                 ]
             }
@@ -47,14 +49,6 @@
                         "type": "command",
                         "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/language-reminder.js\"",
                         "timeout": 10
-                    }
-                ]
-            },
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/clarify-vague-request.sh\""
                     }
                 ]
             }
@@ -71,32 +65,12 @@
                 ]
             },
             {
-                "matcher": "Task",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-bead-for-supervisor.sh\""
-                    },
-                    {
-                        "type": "command",
-                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-sequential-dispatch.sh\""
-                    },
-                    {
-                        "type": "command",
-                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/remind-inprogress.sh\""
-                    },
-                    {
-                        "type": "command",
-                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/inject-discipline-reminder.sh\""
-                    }
-                ]
-            },
-            {
                 "matcher": "Bash",
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/validate-epic-close.sh\""
+                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/epic-close-guard.js\"",
+                        "timeout": 30
                     }
                 ]
             }
@@ -108,20 +82,6 @@
                     {
                         "type": "command",
                         "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/syntax-check.js\"",
-                        "timeout": 10
-                    }
-                ]
-            },
-            {
-                "matcher": "Task",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-concise-response.sh\""
-                    },
-                    {
-                        "type": "command",
-                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-dispatch-prompt.sh\"",
                         "timeout": 10
                     }
                 ]
@@ -144,26 +104,6 @@
                         "type": "command",
                         "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/language-check.js\"",
                         "timeout": 10
-                    }
-                ]
-            }
-        ],
-        "SubagentStop": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/validate-completion.sh\""
-                    }
-                ]
-            }
-        ],
-        "PreCompact": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/nudge-claude-md-update.sh\""
                     }
                 ]
             }
