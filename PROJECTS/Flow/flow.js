@@ -1043,12 +1043,25 @@
                     flowNodeQaCheckerRoot: { list: HERMES_MCPS, stateKey: 'flowQaCheckerMcp', def: [] },
                     flowNodeReviewerRoot: { list: HERMES_MCPS, stateKey: 'flowReviewerMcp', def: [] },
                 };
+                // у профиля без своей записи (Secretary, UI developer, HR) интеграций
+                // нет — раньше такая карточка молча брала запись QA: рисовала его
+                // список и писала отметки в его же ключ
+                const NO_MCP = { list: [], stateKey: null, def: [] };
                 function mcpConfigFor(n) {
-                    return MCP_BY_ROOT[n.id] || MCP_BY_ROOT.flowNodeQaRoot;
+                    return MCP_BY_ROOT[n.id] || NO_MCP;
                 }
                 function connectedMcps(n) {
                     const cfg = mcpConfigFor(n);
-                    return flowGet(cfg.stateKey, cfg.def);
+                    return cfg.stateKey ? flowGet(cfg.stateKey, cfg.def) : cfg.def;
+                }
+                // честная пустая панель вместо чужих данных: строка-подсказка тем же
+                // классом, каким подписаны панели в разметке
+                function renderEmptyPanel(list, text) {
+                    list.textContent = '';
+                    const note = document.createElement('div');
+                    note.className = 'flow-node__panel-hint';
+                    note.textContent = text;
+                    list.append(note);
                 }
                 // кнопка рядом с сервером: подключает, а у подключённого — отключает
                 function setMcpButton(btn, connected) {
@@ -1060,6 +1073,10 @@
                     const list = n.querySelector('.flow-node__mcp-list');
                     if (!list) return;
                     const cfg = mcpConfigFor(n);
+                    if (cfg === NO_MCP) {
+                        renderEmptyPanel(list, 'No integrations are set up for this profile yet.');
+                        return;
+                    }
                     const connected = connectedMcps(n);
                     list.textContent = '';
                     for (const mcp of cfg.list) {
@@ -1389,6 +1406,8 @@
                         memory: [HERMES_MEMORY, 'flowReviewerMemory'],
                     },
                 };
+                // панели, которые рисует renderFieldPanel, — ровно ключи записи выше
+                const FIELD_PANELS = ['soul', 'prompt', 'thinking', 'tools', 'permissions', 'model', 'skills', 'agents', 'memory'];
 
                 // потолок высоты поля панели: выше него поле не растёт, текст уходит
                 // под собственную прокрутку — иначе одно длинное поле вытягивает ноду
@@ -2100,18 +2119,21 @@
                     // содержимое остальных панелей зависит от того, чья это карточка —
                     // QA или Backend developer (см. ROOT_FIELDS выше): без этой развилки
                     // Backend показывал бы текст QA
-                    const rootFields = ROOT_FIELDS[n.id] || ROOT_FIELDS.flowNodeQaRoot;
-                    if (show && item.dataset.panel === 'soul') renderFieldPanel(n, 'soul', ...rootFields.soul);
-                    if (show && item.dataset.panel === 'prompt') renderFieldPanel(n, 'prompt', ...rootFields.prompt);
-                    if (show && item.dataset.panel === 'thinking') renderFieldPanel(n, 'thinking', ...rootFields.thinking);
-                    if (show && item.dataset.panel === 'tools') renderFieldPanel(n, 'tools', ...rootFields.tools);
-                    if (show && item.dataset.panel === 'permissions') renderFieldPanel(n, 'permissions', ...rootFields.permissions);
-                    // у панели Model префикс классов llm: .flow-node__model — это
-                    // селектор модели в подвале карточки, занимать его нельзя
-                    if (show && item.dataset.panel === 'model') renderFieldPanel(n, 'llm', ...rootFields.model);
-                    if (show && item.dataset.panel === 'skills') renderFieldPanel(n, 'skills', ...rootFields.skills);
-                    if (show && item.dataset.panel === 'agents') renderFieldPanel(n, 'agents', ...rootFields.agents);
-                    if (show && item.dataset.panel === 'memory') renderFieldPanel(n, 'memory', ...rootFields.memory);
+                    const panelName = item.dataset.panel;
+                    if (show && FIELD_PANELS.includes(panelName)) {
+                        // у панели Model префикс классов llm: .flow-node__model — это
+                        // селектор модели в подвале карточки, занимать его нельзя
+                        const prefix = panelName === 'model' ? 'llm' : panelName;
+                        const rootFields = ROOT_FIELDS[n.id];
+                        // профиль без своей записи (Secretary, UI developer, HR) раньше
+                        // молча показывал поля QA и писал правки в его же хранилище —
+                        // теперь панель прямо говорит, что данных нет
+                        if (rootFields) renderFieldPanel(n, prefix, ...rootFields[panelName]);
+                        else {
+                            const list = n.querySelector('.flow-node__' + prefix + '-list');
+                            if (list) renderEmptyPanel(list, 'Nothing is filled in for this profile yet.');
+                        }
+                    }
                     afterNodeChange();
                 });
 
@@ -2565,7 +2587,11 @@
 
                 window.addEventListener('keydown', (e) => {
                     if (e.key !== 'Delete') return;
-                    if (document.activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+                    // заголовок, подзаголовок и тело ноды правятся не в <input>, а как
+                    // contentEditable-спаны (EDITABLE_SELECTOR выше) — без этой проверки
+                    // Delete посреди набора текста удалял саму ноду вместе с текстом
+                    const active = document.activeElement;
+                    if (active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)) return;
                     if (selectedEdge) {
                         removeEdge(selectedEdge);
                         selectedEdge = null;

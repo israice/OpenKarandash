@@ -617,7 +617,9 @@ export default function build(page, { panel, signal }) {
         const placeholder = '<option value="">— select a session —</option>';
         select.innerHTML = placeholder + sessions.map((session) => {
             const label = `${session.title} · ${new Date(session.updatedAt).toLocaleString('ru-RU')}`;
-            return `<option value="${session.id}">${label.replace(/</g, '&lt;')}</option>`;
+            // id и подпись идут в разметку через escapeAttr: кавычка в id рвала
+            // атрибут, а одного замещения '<' подписи не хватало
+            return `<option value="${escapeAttr(session.id)}">${escapeAttr(label)}</option>`;
         }).join('');
         select.value = currentId || '';
     }
