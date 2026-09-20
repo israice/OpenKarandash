@@ -9,6 +9,9 @@
     <li><span>Messages total</span><strong><%= it.messages %></strong></li>
     <li><span>Sessions in 24 hours</span><strong><%= it.today %></strong></li>
     <li><span>Last activity</span><strong><%= it.lastActive %></strong></li>
+    <% /* суждения о ходах: их поломка ничего не роняет и потому невидима —
+        поэтому состояние стоит здесь, а не прячется в настройках */ %>
+    <li><span>Turn judgment</span><strong class="obs-card__stat--<%= it.judgment.kind %>"><%= it.judgment.text %></strong></li>
 </ul>
 
 <ul class="obs-list" id="obsRunningList" hx-swap-oob="true">

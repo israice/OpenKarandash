@@ -55,13 +55,28 @@ function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// последняя неудача — её показывает Settings и видно в журнале сервера.
-// Хранится строкой, а не выбрасывается: суждение необязательно, и падать
-// из-за него ход не должен
+// Счётчики и последняя неудача. Нужны затем, что сбой здесь ничего не ломает
+// и потому ничем себя не выдаёт: кончился ключ или лёг сервис — суждений
+// просто не станет, телеграм снова завалит владельца каждой репликой, записки
+// перестанут подкладываться, а пометки исчезнут из ленты. Узнать об этом по
+// симптомам можно через неделю, поэтому состояние показывает панель
+// наблюдения на Home (PROJECTS/Home/home-observation.eta)
 let lastError = null;
+let okCount = 0;
+let failCount = 0;
+let lastAt = null;
 
 function status() {
-    return { enabled: isEnabled(), lastError };
+    return {
+        enabled: isEnabled(),
+        ok: okCount,
+        failed: failCount,
+        lastError,
+        lastAt,
+        // «работает», «ни одного запроса ещё не было», «последний не прошёл»:
+        // решает сервер, а не шаблон — то же состояние понадобится и в другом месте
+        health: !isEnabled() ? 'off' : (lastError ? 'error' : (okCount ? 'ok' : 'idle')),
+    };
 }
 
 // Один запрос со всеми вопросами сразу: независимые вопросы считаются
@@ -86,17 +101,23 @@ async function systemOne(state, questions) {
             });
             if (res.ok) {
                 lastError = null;
+                okCount += 1;
+                lastAt = new Date().toISOString();
                 return await res.json();
             }
             // 401 — ключ, 422 — наши вопросы не прошли проверку: повторять нечего
             if (!RETRY_STATUS.has(res.status) || attempt >= RETRY_DELAYS_MS.length) {
                 lastError = `HTTP ${res.status}`;
+                failCount += 1;
+                lastAt = new Date().toISOString();
                 return null;
             }
             wait = retryAfterMs(res);
         } catch (err) {
             if (attempt >= RETRY_DELAYS_MS.length) {
                 lastError = err.message;
+                failCount += 1;
+                lastAt = new Date().toISOString();
                 return null;
             }
             wait = null; // сети не было — заголовка тоже

@@ -120,6 +120,22 @@ body {
     font-weight: 600;
 }
 
+/* состояние суждений о ходах: сбой здесь ничего не роняет, поэтому он обязан
+   быть заметен глазом, а выключенное и ещё не начавшееся — наоборот, тихими.
+   Строка бывает длинной (текст ошибки), поэтому ей отдельный размер */
+.obs-card__stat--ok,
+.obs-card__stat--error,
+.obs-card__stat--off,
+.obs-card__stat--idle {
+    font-size: 0.85rem;
+    text-align: right;
+}
+
+.obs-card__stat--ok { color: #8fd0a1; }
+.obs-card__stat--error { color: #e39191; }
+.obs-card__stat--off,
+.obs-card__stat--idle { color: #7d818a; }
+
 .obs-connection {
     display: flex;
     align-items: center;
