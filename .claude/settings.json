@@ -55,12 +55,22 @@
         ],
         "PreToolUse": [
             {
-                "matcher": "Bash",
+                "matcher": "Bash|PowerShell",
                 "hooks": [
                     {
                         "type": "command",
                         "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-bg-server.js\"",
                         "timeout": 10
+                    }
+                ]
+            },
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/commit-guard.js\"",
+                        "timeout": 180
                     }
                 ]
             },
@@ -83,6 +93,11 @@
                         "type": "command",
                         "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/syntax-check.js\"",
                         "timeout": 10
+                    },
+                    {
+                        "type": "command",
+                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/three-views-reminder.js\"",
+                        "timeout": 5
                     }
                 ]
             },
