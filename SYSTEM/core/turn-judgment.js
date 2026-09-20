@@ -44,6 +44,11 @@ const THRESHOLDS = {
     // Мерено на наших же запросах: при 0.7 отсекались верные попадания (022 на
     // «разбей файл на модули» давала 0.56 при тощем описании записки)
     decisionHint: 0.5,
+    // что человек прислал в Telegram. Высоко, потому что ошибка дорога в обе
+    // стороны: принять поручение за болтовню значит его не выполнить, а
+    // «стоп» внутри задания принять за команду — оборвать чужую работу.
+    // Не дотянули — считаем поручением, то есть как мост вёл себя всегда
+    inboxIntent: 0.8,
 };
 
 // сколько символов текста хода отдаём на суждение: доке важен не объём, а то,
@@ -368,4 +373,52 @@ function hintPreamble(hints) {
         + 'Записки объясняют, почему в проекте сделано так; идти против них нельзя, не переписав саму записку.\n\n';
 }
 
-module.exports = { judgeTurn, shouldNotify, pickDecisionHints, hintPreamble, THRESHOLDS, TURN_QUESTIONS };
+// ---------- что человек прислал в Telegram ----------
+
+// Мост принимал любое сообщение за поручение и запускал настоящий ход — на
+// «стоп», «что там», «спасибо» тоже. Это деньги владельца и занятая очередь.
+// Один выбор из четырёх разводит это раз и навсегда (DOCS/decisions/054).
+const INBOX_QUESTION = {
+    intent: {
+        type: 'choice',
+        instructions: {
+            question: 'What does `message` want from the assistant that is working on this project?',
+            focus: 'The person is replying in a messenger to a report about finished work.',
+        },
+        criteria: {
+            task: {
+                what: 'Work to do or a question to answer: something the assistant must go and act on.',
+                examples: ['Почини ленту во Flow', 'А почему сервер нельзя поднимать из сессии?', 'Продолжай'],
+            },
+            stop: {
+                what: 'A demand to stop what is running right now.',
+                not_for: 'Asking to stop doing something in the future, which is work.',
+                examples: ['Стоп', 'Отмена', 'Прекрати'],
+            },
+            status: {
+                what: 'A question about what is happening right now, asking for no new work.',
+                examples: ['Что там?', 'Идёт ещё?', 'Статус'],
+            },
+            nothing: {
+                what: 'An acknowledgement or a remark that needs no action at all.',
+                examples: ['Спасибо', 'Ок', 'Понял', 'Получил'],
+            },
+        },
+    },
+};
+
+// Выбор применяем только уверенный: ошибиться здесь значит либо не выполнить
+// поручение, либо оборвать чужую работу на слове «стоп» внутри задания.
+// Неуверенный ответ трактуем как поручение — прежнее поведение моста
+async function classifyInbox(text) {
+    if (!typesafe.isEnabled()) return { intent: 'task', confidence: null };
+    const message = String(text || '').trim();
+    if (!message) return { intent: 'nothing', confidence: null };
+
+    const res = await typesafe.systemOne({ message: message.slice(0, PROMPT_LIMIT) }, INBOX_QUESTION);
+    const pick = typesafe.choice(res?.answers, 'intent');
+    if (!pick || (pick.confidence ?? 0) < THRESHOLDS.inboxIntent) return { intent: 'task', confidence: pick?.confidence ?? null };
+    return { intent: pick.value, confidence: pick.confidence };
+}
+
+module.exports = { judgeTurn, shouldNotify, pickDecisionHints, hintPreamble, classifyInbox, THRESHOLDS, TURN_QUESTIONS };

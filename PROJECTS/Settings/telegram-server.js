@@ -12,6 +12,7 @@
 const { readJson, sendJson, sendHtml } = require('../../SYSTEM/core/http.js');
 const { formatWhen } = require('../../SYSTEM/core/format.js');
 const { Eta } = require('eta');
+const turnJudgment = require('../../SYSTEM/core/turn-judgment.js');
 
 // свой экземпляр Eta со своей папкой шаблонов (см. «Серверные фрагменты» в
 // AGENTS.md): cache:false — правка .eta подхватывается без перезапуска
@@ -49,7 +50,7 @@ const MESSAGE_MEMORY = 500;     // сколько наших сообщений 
 const TOKEN_RE = /^\d{5,}:[A-Za-z0-9_-]{20,}$/;
 const USER_RE = /^-?\d+$/;
 
-let deps = { setEnvValue: () => {}, ask: null, db: null };
+let deps = { setEnvValue: () => {}, ask: null, db: null, stop: null, status: null };
 
 let token = '';
 let users = [];        // кому шлём и от кого принимаем — остальные для бота не существуют
@@ -290,6 +291,21 @@ async function notifyTurnFinished({ sessionId, title, text }) {
 // не запускаем: в сессии должен идти один ход за раз
 const busySessions = new Set();
 
+// Ответ, который мост даёт сам, не поднимая агента. Формулировки короткие:
+// это личка, а не отчёт, и читают их с телефона
+function answerWithoutTurn(intent, sessionId) {
+    if (intent === 'stop') {
+        const stopped = deps.stop ? deps.stop(sessionId) : false;
+        return stopped ? '⏹ Остановил.' : '⏹ Останавливать нечего — эта работа уже закончена.';
+    }
+    if (intent === 'status') {
+        const { running = 0, titles = [] } = (deps.status ? deps.status() : {});
+        if (!running) return '💤 Сейчас ничего не выполняется.';
+        return `⚙️ Выполняется: ${running}\n${titles.map((t) => `· ${String(t).slice(0, 80)}`).join('\n')}`;
+    }
+    return '👌';
+}
+
 async function handleUpdate(update) {
     const message = update.message;
     if (!message || !message.text) return;
@@ -304,6 +320,16 @@ async function handleUpdate(update) {
         || lastSessionOfChat.get(chatId)?.sessionId;
     if (!sessionId) {
         await send(chatId, 'No session to continue yet — it appears here after the first finished run.').catch(() => {});
+        return;
+    }
+
+    // не всякое сообщение — поручение: «стоп», «что там» и «спасибо» раньше
+    // запускали настоящий ход, то есть тратили деньги владельца и занимали
+    // очередь. Неуверенный ответ означает поручение — как мост вёл себя всегда
+    // (DOCS/decisions/054)
+    const { intent } = await turnJudgment.classifyInbox(message.text).catch(() => ({ intent: 'task' }));
+    if (intent !== 'task') {
+        await send(chatId, answerWithoutTurn(intent, sessionId)).catch(() => {});
         return;
     }
 

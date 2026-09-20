@@ -3639,7 +3639,20 @@ function activeRunStartedAt(sessionId) {
 // телеграм-мост Settings: ему нужен и .env (ключ бота), и способ начать ход
 // не из браузера — ответ человека в личке продолжает ту же сессию
 const telegram = require('./PROJECTS/Settings/telegram-server.js');
-const { notifyTurnFinished } = telegram.init({ setEnvValue, ask: askOutsideBrowser, db });
+// stop и status нужны мосту затем, что не всякое сообщение из Telegram — это
+// поручение: «стоп» и «что там» раньше запускали настоящий ход (DOCS/decisions/054)
+const { notifyTurnFinished } = telegram.init({
+    setEnvValue,
+    ask: askOutsideBrowser,
+    db,
+    stop: (sessionId) => stopActiveRun(sessionId || null),
+    status: () => ({
+        running: activeRuns.size,
+        titles: [...activeRuns.values()]
+            .map((run) => run.sessionId && getSessionTitle.get(run.sessionId)?.title)
+            .filter(Boolean),
+    }),
+});
 
 const featureRoutes = {
     ...graph.createRoutes(),
