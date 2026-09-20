@@ -55,6 +55,10 @@ let token = '';
 let users = [];        // кому шлём и от кого принимаем — остальные для бота не существуют
 let botName = null;    // имя из getMe: им же подтверждается, что ключ рабочий
 let lastError = null;
+// ошибка отправки живёт отдельно от ошибки опроса. Они мешали друг другу:
+// длинный опрос успешно возвращается раз в полминуты и обнулял общее поле,
+// поэтому не дошедшее до человека уведомление не оставляло следа нигде
+let sendError = null;
 // null — «хвост ещё не знаем»: пока он не выяснен, накопившееся за простой не
 // разгребаем. Раньше хвост узнавался отдельным запросом до цикла, и его провал
 // (а первый запрос после перезапуска как раз и упирается в Conflict) молча
@@ -87,13 +91,17 @@ let pollAbort = null;   // висящий запрос: его гасим, а н
 let conflictSince = null;
 const CONFLICT_HINT = 'The same bot token is polled somewhere else — stop that instance or get a new token from @BotFather. Until then messages reach the bridge at random.';
 
-// какое наше сообщение относилось к какой сессии: ответ (reply) в Telegram
-// возвращает человека ровно в ту сессию, чей результат он прочитал.
-// Ключ — «чат:сообщение», потому что id сообщений в Telegram свои у каждого
-// чата: по одному числу ответы двух людей попадали бы в чужие сессии
-const sessionByMessage = new Map();
-// а обычное сообщение без reply уходит в последнюю, о которой мы писали
-const lastSessionByChat = new Map();
+// Какое наше сообщение относилось к какой сессии: ответ (reply) в Telegram
+// возвращает человека ровно в ту сессию, чей результат он прочитал. Ключ —
+// «чат + сообщение», потому что id сообщений в Telegram свои у каждого чата:
+// по одному числу ответы двух людей попадали бы в чужие сессии.
+//
+// Связь лежит в базе, а не в памяти процесса. В памяти она уже стоила потерянных
+// ответов: любая правка серверного файла перезапускает сервер, карта обнулялась,
+// и следующий ответ человека получал «No session to continue yet» — хотя
+// сообщение, на которое он отвечал, лежало у него в Telegram как ни в чём не
+// бывало. Ровно эта же беда уже случилась с историей уведомлений выше и была
+// вылечена так же — таблицей.
 
 // история исходящих уведомлений для вкладки Telegram (#telegramMessages):
 // что мост отправил и когда. Раньше жила в памяти процесса (простой массив) —
@@ -105,6 +113,13 @@ const SENT_MEMORY = 100; // сколько последних уведомлен
 let insertSent = null;
 let listSent = null;
 let trimSent = null;
+let rememberReply = null;
+let sessionByReply = null;
+let lastSessionOfChat = null;
+let trimReplies = null;
+let forgetSession = null;
+let saveOffset = null;
+let readOffset = null;
 
 function initDb(database) {
     database.exec(`
@@ -123,6 +138,39 @@ function initDb(database) {
     trimSent = database.prepare(`
         DELETE FROM telegram_sent WHERE id NOT IN (
             SELECT id FROM telegram_sent ORDER BY id DESC LIMIT ?
+        )
+    `);
+
+    // «наше сообщение в этом чате → сессия». Переживает перезапуск сервера,
+    // потому что сообщение в Telegram его переживает тоже
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS telegram_replies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL,
+            message_id INTEGER NOT NULL,
+            session_id TEXT NOT NULL,
+            at TEXT NOT NULL,
+            UNIQUE (chat_id, message_id)
+        );
+    `);
+    rememberReply = database.prepare(
+        'INSERT INTO telegram_replies (chat_id, message_id, session_id, at) VALUES (?, ?, ?, ?)'
+        + ' ON CONFLICT(chat_id, message_id) DO UPDATE SET session_id = excluded.session_id, at = excluded.at',
+    );
+    sessionByReply = database.prepare('SELECT session_id AS sessionId FROM telegram_replies WHERE chat_id = ? AND message_id = ?');
+    // сообщение без reply идёт в последнюю сессию, о которой мы писали этому чату
+    lastSessionOfChat = database.prepare('SELECT session_id AS sessionId FROM telegram_replies WHERE chat_id = ? ORDER BY id DESC LIMIT 1');
+    // позиция очереди Telegram. Она тоже пережила не один перезапуск в памяти —
+    // и не пережила: сторож гасит сервер на каждой правке серверного файла, а
+    // новый процесс начинал с «узнать хвост», то есть выбрасывал всё, что
+    // человек прислал за эти секунды. Его ответ пропадал молча
+    database.exec('CREATE TABLE IF NOT EXISTS telegram_offset (id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, at TEXT NOT NULL);');
+    saveOffset = database.prepare('INSERT INTO telegram_offset (id, value, at) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET value = excluded.value, at = excluded.at');
+    readOffset = database.prepare('SELECT value, at FROM telegram_offset WHERE id = 1');
+    forgetSession = database.prepare('DELETE FROM telegram_replies WHERE session_id = ?');
+    trimReplies = database.prepare(`
+        DELETE FROM telegram_replies WHERE id NOT IN (
+            SELECT id FROM telegram_replies ORDER BY id DESC LIMIT ?
         )
     `);
 }
@@ -154,7 +202,9 @@ function state() {
         users: users.join(', '),
         bot: botName,
         connected: Boolean(token && botName),
-        error: lastError,
+        // в одну строку для окна настроек: что сломано — видно по тексту
+        error: [sendError && `sending: ${sendError}`, lastError].filter(Boolean).join(' · ') || null,
+        sendError,
     };
 }
 
@@ -177,20 +227,32 @@ async function callApi(method, payload, timeoutMs = 15000, extraSignal = null) {
 }
 
 function remember(chatId, messageId, sessionId) {
-    sessionByMessage.set(`${chatId}:${messageId}`, sessionId);
-    // Map хранит порядок вставки — самые старые записи уходят первыми
-    while (sessionByMessage.size > MESSAGE_MEMORY) {
-        sessionByMessage.delete(sessionByMessage.keys().next().value);
-    }
+    rememberReply.run(String(chatId), Number(messageId), sessionId, new Date().toISOString());
+    trimReplies.run(MESSAGE_MEMORY); // старое подчищаем сразу, как и у истории выше
 }
 
+// Отправка с повторами. Без них один таймаут сети терял уведомление навсегда:
+// ход закончен, в истории вкладки запись есть, а в личке у человека ничего —
+// и он узнаёт об этом, только не дождавшись. Повторяем всё, кроме отказов
+// самого Telegram (заблокировал бота, неверный чат): их повтор не исправит
+const SEND_RETRY_DELAYS_MS = [1000, 4000];
+
 async function send(chatId, text) {
-    const result = await callApi('sendMessage', {
-        chat_id: chatId,
-        text,
-        disable_web_page_preview: true,
-    });
-    return result;
+    for (let attempt = 0; ; attempt += 1) {
+        try {
+            return await callApi('sendMessage', {
+                chat_id: chatId,
+                text,
+                disable_web_page_preview: true,
+            });
+        } catch (err) {
+            // «Telegram answered …» и текст его описания — это ответ сервиса,
+            // а не сбой связи: сеть отработала, повторять нечего
+            const answered = /Telegram answered|chat not found|bot was blocked|Forbidden/i.test(err.message);
+            if (answered || attempt >= SEND_RETRY_DELAYS_MS.length) throw err;
+            await sleep(SEND_RETRY_DELAYS_MS[attempt]);
+        }
+    }
 }
 
 // ---------- отправка: последний ответ завершившейся сессии ----------
@@ -210,10 +272,12 @@ async function notifyTurnFinished({ sessionId, title, text }) {
         try {
             const result = await send(chatId, message);
             remember(chatId, result.message_id, sessionId);
-            lastSessionByChat.set(chatId, sessionId);
-            lastError = null;
+            sendError = null;
         } catch (err) {
-            lastError = err.message;
+            // в своё поле, а не в общее с опросом: опрос успешен каждые полминуты
+            // и затирал бы эту ошибку через секунды — провалившееся уведомление
+            // выглядело бы отправленным, хотя в личку не дошло ничего
+            sendError = err.message;
             console.error('Telegram sendMessage:', err.message);
         }
     }
@@ -236,7 +300,8 @@ async function handleUpdate(update) {
     if (!users.includes(chatId)) return;
 
     const replyTo = message.reply_to_message?.message_id;
-    const sessionId = (replyTo && sessionByMessage.get(`${chatId}:${replyTo}`)) || lastSessionByChat.get(chatId);
+    const sessionId = (replyTo && sessionByReply.get(chatId, Number(replyTo))?.sessionId)
+        || lastSessionOfChat.get(chatId)?.sessionId;
     if (!sessionId) {
         await send(chatId, 'No session to continue yet — it appears here after the first finished run.').catch(() => {});
         return;
@@ -252,7 +317,17 @@ async function handleUpdate(update) {
         // ответ придёт сюда же сам: закончившийся ход снова позовёт notifyTurnFinished
         await deps.ask({ sessionId, text: message.text });
     } catch (err) {
-        await send(chatId, `⚠️ ${err.message}`).catch(() => {});
+        // сессию могли удалить из пульта уже после того, как человек прочитал
+        // её ответ, — «Session not found» в личке выглядит поломкой моста,
+        // хотя мост исправен. Говорим, что случилось на самом деле
+        let text = `⚠️ ${err.message}`;
+        if (/session not found/i.test(err.message)) {
+            // и забываем её: иначе сообщение без reply снова и снова
+            // отправлялось бы в ту же несуществующую сессию
+            forgetSession.run(sessionId);
+            text = '🗑 Эта сессия удалена из пульта — отвечать в неё больше некуда. Следующее сообщение уйдёт в предыдущую сессию, а новую работу начните из пульта.';
+        }
+        await send(chatId, text).catch(() => {});
     } finally {
         busySessions.delete(sessionId);
     }
@@ -262,12 +337,27 @@ function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Сколько простоя ещё считается перезапуском, а не «сервер лежал полдня».
+// Внутри окна мост продолжает очередь с сохранённой позиции и разбирает всё,
+// что человек прислал, пока процесс поднимался; за окном — по-прежнему
+// выбрасывает хвост, иначе разом запустится ход на каждое старое сообщение
+const RESUME_WINDOW_MS = 15 * 60 * 1000;
+
+function resumeOffset() {
+    const row = readOffset.get();
+    if (!row) return null;
+    const age = Date.now() - Date.parse(row.at);
+    if (!Number.isFinite(age) || age > RESUME_WINDOW_MS) return null;
+    return row.value;
+}
+
 async function pollLoop(myRun) {
     while (pollRun === myRun) {
         try {
             const startedAt = Date.now();
             pollAbort = new AbortController();
             // первый заход только узнаёт хвост очереди (offset: -1, без ожидания)
+            if (offset === null) offset = resumeOffset();
             const skipping = offset === null;
             const updates = await callApi(
                 'getUpdates',
@@ -283,10 +373,15 @@ async function pollLoop(myRun) {
             lastError = null;
             if (skipping) {
                 offset = updates?.length ? updates[updates.length - 1].update_id + 1 : 0;
+                saveOffset.run(offset, new Date().toISOString());
                 continue;
             }
             for (const update of updates || []) {
                 offset = update.update_id + 1;
+                // позицию запоминаем до разбора: ход идёт часами, а перезапуск
+                // может случиться в любую секунду — переразобрать одно и то же
+                // сообщение хуже, чем потерять его
+                saveOffset.run(offset, new Date().toISOString());
                 // ход может идти часами — опрос его не ждёт, иначе следующие
                 // сообщения человека молча копились бы до конца работы
                 handleUpdate(update).catch((err) => { lastError = err.message; });
