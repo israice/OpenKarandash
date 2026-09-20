@@ -31,10 +31,20 @@ async function ensureBrowser() {
     for (let i = 0; i < 40; i++) { await sleep(250); try { return await json('/json/version'); } catch {} }
     throw new Error('edge did not start');
 }
+// адрес пульта: порт из .env, как в SYSTEM/ui-walk.mjs (порт — только там, не хардкодом)
+function appUrl() {
+    let port = '3001';
+    try {
+        const env = fs.readFileSync(new URL('../.env', import.meta.url), 'utf8');
+        port = env.match(/^PORT=(\d+)/m)?.[1] || port;
+    } catch {}
+    return `http://127.0.0.1:${port}`;
+}
+const APP = appUrl();
 await ensureBrowser();
 let pages = (await json('/json/list')).filter((t) => t.type === 'page');
-let page = pages.find((p) => p.url.startsWith('http://127.0.0.1:3001'));
-if (!page) page = await json('/json/new?http://127.0.0.1:3001/', 'PUT');
+let page = pages.find((p) => p.url.startsWith(APP));
+if (!page) page = await json(`/json/new?${APP}/`, 'PUT');
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((r) => ws.addEventListener('open', r, { once: true }));
 let id = 0; const waits = new Map();

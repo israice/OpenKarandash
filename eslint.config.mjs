@@ -11,7 +11,10 @@ import globals from 'globals';
 // SYSTEM/ — браузерный код (обычные скрипты и ES-модули разбираем одинаково,
 // sourceType: 'module' понимает и то и другое)
 const SERVER = ['server.js', '**/*-server.js', 'SYSTEM/core/**/*.js', 'SYSTEM/checks.js',
-    'PROJECTS/Graph/graph-*.js', 'PROJECTS/Graph/search.js', '.claude/hooks/**/*.js'];
+    'PROJECTS/Graph/graph-*.js', 'PROJECTS/Graph/search.js', '.claude/hooks/**/*.js',
+    // скрипты навыка finish-task — обычный Node; сценарии live-verify сюда не входят:
+    // это тела функций для страницы пульта (верхнеуровневые await/return), а не модули
+    '.claude/skills/finish-task/*.js'];
 
 // имена, которые вкладки публикуют друг для друга через window (см. AGENTS.md,
 // «Клиентский код»): для файла-потребителя они приходят извне, а не объявлены
