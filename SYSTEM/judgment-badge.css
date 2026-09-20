@@ -1,0 +1,27 @@
+/* Пометка суждения о ходе. Разметку строит SYSTEM/judgment-badge.js — один
+   источник на Sessions, Feed и Flow (DOCS/decisions/039), поэтому и стиль
+   один файл, а не три копии в стилях вкладок. */
+
+.judgment {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 4px 0;
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+.judgment__chip {
+    padding: 1px 7px;
+    border: 1px solid #ffffff1f;
+    border-radius: 999px;
+    color: #a9acb6;
+    white-space: nowrap;
+}
+
+/* цветом отмечено только то, ради чего на пометку вообще смотрят: ход
+   закончен, ход ждёт человека, ходом надо заняться. Остальное — серое */
+.judgment__chip--done { border-color: #3d7a4e66; color: #8fd0a1; }
+.judgment__chip--wait { border-color: #8a6d2a66; color: #e3c46f; }
+.judgment__chip--attention { border-color: #8a3a3a66; color: #e39191; }
+.judgment__chip--muted { opacity: 0.6; }

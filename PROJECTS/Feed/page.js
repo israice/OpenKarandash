@@ -591,6 +591,10 @@ export default function build(page, { panel, signal }) {
             subtitle: `${truncate(message.text, 60)} · ${fmtTime(message.createdAt)}`,
             extraClass: `session-feed__card--${kind}${isError ? ' session-feed__card--error' : ''}`,
         }, (body) => {
+            // пометка суждения о ходе — первой строкой тела карточки: то же,
+            // что в Sessions и на ноде Flow, одним общим SYSTEM/judgment-badge.js
+            const mark = window.TurnJudgment?.badge(message.resultMeta);
+            if (mark) body.append(mark);
             kv(body, false);
             addBlock(body, 'Text', message.text);
             // в Chat-режиме модели уходит не этот текст, а он же с приклеенной

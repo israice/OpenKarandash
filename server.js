@@ -13,6 +13,7 @@ const hermesHistoryModule = require('./SYSTEM/core/hermes-history.js');
 const hostDeps = require('./SYSTEM/core/host-deps.js');
 const branchPreview = require('./SYSTEM/core/branch-preview.js');
 const hermesTasks = require('./SYSTEM/core/hermes-tasks.js');
+const turnJudgment = require('./SYSTEM/core/turn-judgment.js');
 
 const ROOT = __dirname;
 
@@ -1059,6 +1060,21 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
         // ход с ошибкой дописывается наравне с успешным: answer при ошибке пуст,
         // поэтому условие смотрит и на errorText (см. DOCS/decisions/012)
         if (ctx.session && (ctx.answer || ctx.errorText)) {
+            // типизированное суждение о ходе (DOCS/decisions/051): ход уже
+            // отдан в ленту событием 'done', поэтому лишние доли секунды здесь
+            // никого не ждут, а результат нужен и ленте, и телеграм-мосту.
+            // Сбой суждения — не сбой хода: judgeTurn отдаёт null, и дальше всё
+            // работает ровно как до него
+            const judgment = await turnJudgment.judgeTurn({
+                request: prompt,
+                answer: ctx.answer,
+                errorText: ctx.errorText,
+                stopReason: meta.stopReason,
+            }).catch(() => null);
+            // решение о письме принимается до записи хода: оно само часть
+            // суждения и должно лежать в той же строке, а не теряться
+            const notify = turnJudgment.shouldNotify(judgment, { errorText: ctx.errorText });
+            if (judgment) meta.resultMeta = { ...(meta.resultMeta || {}), judgment: { ...judgment, notified: notify } };
             // durationMs: только askClaude реально разбирает event.duration_ms
             // от CLI (см. event.type === 'result' выше) — у остальных коннекторов
             // (askOpenCode/askCodex/askPi/askHermes) meta.durationMs так и остаётся
@@ -1074,15 +1090,19 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
                 assistantPosition: ctx.assistantPosition,
                 stopReason: meta.stopReason || (ctx.errorText ? 'error' : null),
             });
-            // последний ответ сессии уходит в Telegram, если мост настроен: для
-            // человека это и сигнал «задание закончено», и сообщение, ответом
-            // на которое он продолжит эту же сессию. Без await: почта не должна
-            // ни задерживать ход, ни ронять его своей ошибкой
-            notifyTurnFinished({
-                sessionId: ctx.session,
-                title: getSessionTitle.get(ctx.session)?.title || '',
-                text: ctx.answer || `⚠️ ${ctx.errorText}`,
-            });
+            // в Telegram уходит законченный ход, а не каждый: человеку нужен
+            // сигнал «задание закончено» и сообщение, ответом на которое он
+            // продолжит сессию, — а не поток промежуточных реплик. Что считать
+            // законченным, решает правило в turn-judgment.js поверх суждения;
+            // ошибка и ход, остановившийся с вопросом к человеку, уходят всегда.
+            // Без await: почта не должна ни задерживать ход, ни ронять его
+            if (notify.send) {
+                notifyTurnFinished({
+                    sessionId: ctx.session,
+                    title: getSessionTitle.get(ctx.session)?.title || '',
+                    text: ctx.answer || `⚠️ ${ctx.errorText}`,
+                });
+            }
         }
         // работа окончена — отпускаем подключившиеся страницы
         if (ctx.session) {
@@ -1105,9 +1125,14 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
 // запусков у каждого своя (~/.claude/projects/<путь>), и путь к проекту у Windows
 // и WSL разный. Своей записи нет — CLI начнёт свою сессию, а контекст получит
 // пересказом последних ходов (handoffPreamble)
-function resumeAndHandoff(sessionId, targetId) {
+// hints — подобранные записки DOCS/decisions (SYSTEM/core/turn-judgment.js).
+// Они едут тем же каналом, что и пересказ истории: это не вопрос человека,
+// а служебная преамбула, поэтому в тексте строки сессии её быть не должно —
+// зато она попадает в «Sent to model» там, где коннектор его пишет
+function resumeAndHandoff(sessionId, targetId, hints) {
     const resumeId = sessionId ? getCliSession.get(sessionId, targetId)?.id : null;
-    return { resumeId, handoff: sessionId && !resumeId ? handoffPreamble(sessionId) : '' };
+    const history = sessionId && !resumeId ? handoffPreamble(sessionId) : '';
+    return { resumeId, handoff: turnJudgment.hintPreamble(hints) + history };
 }
 
 // Chat — обсуждение без последствий. запрета Edit/Write мало: в прошлый раз правка
@@ -1188,7 +1213,7 @@ Reply in the same language the person writes to you in.
 
 `;
 
-async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
+async function askClaude({ prompt, model, effort, sessionId, mode, hints }, send) {
     if (!activeTarget) return send({ type: 'error', error: 'Claude is not connected' });
     // цель фиксируем на весь запуск: пока идёт работа, в настройках могли переключить CLI
     const target = activeTarget;
@@ -1198,7 +1223,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
     // служит тот же claude, что выбран здесь (мост гоняет подключённую цель).
     // Модель и effort из шапки Hermes не принимает: модель задаёт его конфиг.
     // Агента нет (HERMES_STACK=0, Docker не запущен) — прямой claude, как раньше
-    if (await hermesReady()) return askHermes({ prompt, sessionId, mode }, send);
+    if (await hermesReady()) return askHermes({ prompt, sessionId, mode, hints }, send);
     if (model && !CLAUDE_MODELS.includes(model)) {
         return send({ type: 'error', error: `Unknown model: ${model}` });
     }
@@ -1206,7 +1231,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode }, send) {
         return send({ type: 'error', error: `Unknown effort level: ${effort}` });
     }
 
-    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id);
+    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints);
 
     const args = ['-p', '--output-format', 'stream-json', '--verbose', ...LEAN_ARGS, ...THINKING_ARGS, ...PARTIAL_ARGS];
     if (model) args.push('--model', model);
@@ -1612,12 +1637,12 @@ async function fetchOpenCodeModels(target) {
     return stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean);
 }
 
-async function askOpenCode({ prompt, model, sessionId, mode }, send) {
+async function askOpenCode({ prompt, model, sessionId, mode, hints }, send) {
     if (!activeOpenCodeTarget) return send({ type: 'error', error: 'OpenCode is not connected' });
     const target = activeOpenCodeTarget;
     if (!prompt) return send({ type: 'error', error: 'Empty request' });
 
-    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id);
+    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints);
     const args = ['run', handoff + prompt, '--format', 'json'];
     if (model) args.push('--model', model);
     if (resumeId) args.push('--session', resumeId);
@@ -1970,7 +1995,7 @@ function savePiOpenRouterKey(key) {
     fs.writeFileSync(PI_AUTH_FILE, JSON.stringify(auth, null, 2));
 }
 
-async function askPi({ prompt, model, effort, sessionId, mode }, send) {
+async function askPi({ prompt, model, effort, sessionId, mode, hints }, send) {
     if (!activePiTarget) return send({ type: 'error', error: 'pi is not connected' });
     const target = activePiTarget;
     if (!prompt) return send({ type: 'error', error: 'Empty request' });
@@ -1978,7 +2003,7 @@ async function askPi({ prompt, model, effort, sessionId, mode }, send) {
         return send({ type: 'error', error: `Unknown effort level: ${effort}` });
     }
 
-    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id);
+    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints);
 
     const args = ['-p', '--mode', 'json'];
     if (model) args.push('--model', model);
@@ -2410,7 +2435,7 @@ const HERMES_TERMINAL_EVENTS = new Set(['run.completed', 'run.failed', 'run.canc
 // который целиком придёт в assistant.completed и в расшифровке
 const HERMES_SILENT_EVENTS = new Set(['run.started', 'message.started', 'assistant.delta', 'done']);
 
-async function askHermes({ prompt, sessionId, mode, model, effort }, send) {
+async function askHermes({ prompt, sessionId, mode, model, effort, hints }, send) {
     // Правило «исполнитель хода = выбранный в Settings агент» (DOCS/decisions/043):
     // Hermes — оркестратор, но мозгом ему по умолчанию служит claude через
     // claude-bridge. Если сессию ведёт другой прямой CLI (opencode/codex/pi),
@@ -2426,7 +2451,7 @@ async function askHermes({ prompt, sessionId, mode, model, effort }, send) {
             if (!adapter.connected()) {
                 return send({ type: 'error', error: `${owner} is not connected — open Settings and connect it` });
             }
-            return adapter.ask({ prompt, sessionId, mode, model, effort }, (event) => send(event));
+            return adapter.ask({ prompt, sessionId, mode, model, effort, hints }, (event) => send(event));
         }
     }
     if (!activeHermesTarget) return send({ type: 'error', error: 'Hermes is not connected' });
@@ -2441,7 +2466,7 @@ async function askHermes({ prompt, sessionId, mode, model, effort }, send) {
         // (target.id): с жёстким 'hermes' она не находилась никогда, и каждый
         // ход уходил с преамбулой «у тебя нет своей истории», хотя Hermes держит
         // её сам — модель путалась и повторяла разбор с нуля
-        const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id);
+        const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints);
         let hermesId = resumeId;
         if (!hermesId) {
             hermesId = `ok-${ctx.session}`;
@@ -3547,8 +3572,9 @@ async function askOutsideBrowser({ sessionId, text }) {
     // внутри хода, дописано в сессию и уйдёт в Telegram обычным путём
     let started = false;
     let failure = null;
+    const hints = await turnJudgment.pickDecisionHints(text).catch(() => null);
     await adapter.ask(
-        { prompt: text, sessionId, model: last.model || undefined, effort: last.effort || undefined, mode: last.mode || undefined },
+        { prompt: text, sessionId, model: last.model || undefined, effort: last.effort || undefined, mode: last.mode || undefined, hints },
         (event) => {
             if (event.type === 'session') started = true;
             if (event.type === 'error') failure = event.error;
@@ -3710,6 +3736,12 @@ async function handleApi(req, res, urlPath) {
             // ответ всё равно попадёт в базу, мы лишь перестаём писать в мёртвый сокет
             let open = true;
             req.on('close', () => { open = false; });
+
+            // записки DOCS/decisions, обязательные к прочтению именно под этот
+            // запрос, — подбирает TypeSafe (DOCS/decisions/051). Ждём: подсказка
+            // должна уехать вместе с запросом, а не догонять его. Без ключа
+            // функция сразу отдаёт null, и ход идёт как раньше
+            body.hints = await turnJudgment.pickDecisionHints(body.prompt).catch(() => null);
 
             await adapter.ask(body, (event) => {
                 if (open) res.write(JSON.stringify(event) + '\n');

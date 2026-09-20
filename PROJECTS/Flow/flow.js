@@ -2768,6 +2768,17 @@
                     return formatJsonValue(meta, 0);
                 }
 
+                // пометка суждения о ходе — та же, что в Sessions и Feed
+                // (SYSTEM/judgment-badge.js, DOCS/decisions/039). Нода живого
+                // хода перестраивается раз в секунду, поэтому прежнюю пометку
+                // снимаем и ставим новую, а не копим их
+                function applyNodeJudgment(n, m) {
+                    n.querySelector('.judgment')?.remove();
+                    const mark = window.TurnJudgment?.badge(m.resultMeta);
+                    // сразу под телом ноды, перед гармошкой секций
+                    if (mark) n.querySelector('.flow-node__body').after(mark);
+                }
+
                 // гармошка в карточке: нативный <details>, своего JS на раскрытие нет.
                 // Секции сверяются по подписи и переиспользуются — иначе живая
                 // перестройка закрывала бы раскрытую секцию раз в секунду
@@ -2970,6 +2981,7 @@
                     setNodeTexts(n, kind.title, truncate(m.text, 200));
                     setNodeKind(n, kind.kind, kind.emoji, m.toolError);
                     applyNodeFacts(n, m);
+                    applyNodeJudgment(n, m);
                     setNodeScope(n, 'system');
                     setNodeType(n, 'system');
                 }

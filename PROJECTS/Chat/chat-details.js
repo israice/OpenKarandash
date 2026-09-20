@@ -76,6 +76,15 @@ export function addRowSections(body, m) {
 // обрезано до трёх строк. Поэтому их данные идут отдельным свёрнутым блоком
 // сразу под строкой, а не внутри неё
 export function addRowDetails(m, after) {
+    // пометка суждения о ходе идёт над блоком Details, а не внутри него:
+    // ради неё не должно приходиться раскрывать гармошку. Разметку строит
+    // общий SYSTEM/judgment-badge.js — тот же, что в Feed и на ноде Flow
+    const mark = window.TurnJudgment?.badge(m.resultMeta);
+    const place = (node) => {
+        if (after && after.parentNode === state.chatList) after.after(node);
+        else state.chatList.append(node);
+    };
+
     const body = document.createElement('div');
     body.className = 'chat__details-body';
     if (m.role === 'user' && m.inputSent && m.inputSent !== m.text) {
@@ -83,7 +92,10 @@ export function addRowDetails(m, after) {
         addToolSection(body, 'Sent to model', m.inputSent);
     }
     addRowSections(body, m);
-    if (!body.children.length) return null;
+    if (!body.children.length) {
+        if (mark) place(mark);
+        return null;
+    }
 
     const details = document.createElement('details');
     details.className = `chat__details chat__details--${m.role}`;
@@ -91,7 +103,9 @@ export function addRowDetails(m, after) {
     summary.className = 'chat__details-summary';
     summary.textContent = 'Details';
     details.append(summary, body);
-    if (after && after.parentNode === state.chatList) after.after(details);
-    else state.chatList.append(details);
+    // порядок в ленте: строка, пометка, Details — поэтому Details ставим
+    // первым, а пометку вклиниваем перед ним
+    place(details);
+    if (mark) details.before(mark);
     return details;
 }

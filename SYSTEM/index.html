@@ -48,6 +48,8 @@
     <!-- Вкладка Telegram живёт целиком в PROJECTS/Telegram: и стили, и скрипт. -->
     <link rel="stylesheet" href="PROJECTS/Telegram/telegram.css">
     <link rel="stylesheet" href="SYSTEM/toolbar-menu.css">
+    <!-- пометка суждения о ходе: один стиль на Sessions, Feed и Flow -->
+    <link rel="stylesheet" href="SYSTEM/judgment-badge.css">
 </head>
 <body>
     <div class="topbar">
@@ -1002,6 +1004,8 @@
          SYSTEM/providers.js, chat.js — свои ./chat-*.js. Модульные скрипты без
          async выполняются в порядке документа наравне с defer, поэтому цепочка
          book-tab.js → app.js → chat.js → остальные файлы сохраняется -->
+    <!-- общий механизм: пометку суждения рисуют все три отображения ленты -->
+    <script src="SYSTEM/judgment-badge.js" defer></script>
     <script src="SYSTEM/app.js" type="module"></script>
     <script src="PROJECTS/Chat/chat.js" type="module"></script>
     <script src="PROJECTS/Graph/file-editor.js" defer></script>
