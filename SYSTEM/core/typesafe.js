@@ -41,8 +41,23 @@ function retryAfterMs(res) {
     return Math.min(ms, RETRY_AFTER_CAP_MS);
 }
 
+// Ключ берём из окружения, а если его там нет — один раз из .env. Второе нужно
+// не серверу (он .env читает сам при старте), а скриптам из терминала:
+// PROJECTS/Graph/search.js работает и без запущенного сервера, и без этого
+// поиск из терминала молча оставался бы без осмысленной расстановки
+let envKey;
 function apiKey() {
-    return (process.env.TYPESAFE_API_KEY || '').trim();
+    const fromEnv = (process.env.TYPESAFE_API_KEY || '').trim();
+    if (fromEnv) return fromEnv;
+    if (envKey === undefined) {
+        try {
+            const file = require('fs').readFileSync(require('path').join(__dirname, '..', '..', '.env'), 'utf8');
+            envKey = (file.match(/^TYPESAFE_API_KEY=(.*)$/m)?.[1] || '').trim().replace(/^["']|["']$/g, '');
+        } catch {
+            envKey = '';
+        }
+    }
+    return envKey;
 }
 
 // ключа нет — весь механизм выключен, и всё работает ровно как до него:

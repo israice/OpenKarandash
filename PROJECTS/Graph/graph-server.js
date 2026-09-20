@@ -16,7 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
 const vault = require('./graph-vault.js');
-const { rebuildSearchIndex, searchProject } = require('./graph-search.js');
+const { rebuildSearchIndex, searchProjectRanked } = require('./graph-search.js');
 const { MAX_EDIT_BYTES, readProjectFile, writeProjectFile } = require('./graph-files.js');
 
 const { DATA_DIR, VAULT_DIR, VAULT, MAP_DIR, SESSION_DIR, state } = vault;
@@ -70,7 +70,8 @@ function createRoutes() {
 
         '/api/search': async (req, res) => {
             const { q, limit, kind } = await readJson(req);
-            sendJson(res, searchProject(q, limit, kind));
+            // порядок задаёт не только совпадение слов: DOCS/decisions/053
+            sendJson(res, await searchProjectRanked(q, limit, kind));
         },
     };
 }

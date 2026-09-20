@@ -14,6 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
+const searchRank = require('../../SYSTEM/core/search-rank.js');
 
 const INDEX_FILE = path.join(__dirname, '..', '..', 'DATA', '.index.db'); // всё, что сервер собрал сам, — в DATA
 
@@ -47,7 +48,8 @@ function searchLocal() {
     const db = new DatabaseSync(INDEX_FILE, { readOnly: true });
     const match = ftsQuery(query);
     return db.prepare(`
-        SELECT kind, ref, title, snippet(docs, 3, '«', '»', '…', 12) AS snippet
+        SELECT kind, ref, title, snippet(docs, 3, '«', '»', '…', 12) AS snippet,
+               snippet(docs, 3, '', '', '…', 48) AS excerpt
         FROM docs WHERE docs MATCH ?${kind ? ' AND kind = ?' : ''}
         ORDER BY bm25(docs, 0, 0, 10.0, 1.0) LIMIT 15
     `).all(...(kind ? [match, kind] : [match]));
@@ -92,8 +94,18 @@ async function main() {
         console.log('Nothing found.');
         return;
     }
+
+    // порядок задаёт не только совпадение слов: по каждому кандидату задаётся
+    // вопрос, отвечает ли он на запрос (DOCS/decisions/053). Сервер делает то
+    // же самое в /api/search, поэтому оба пути отвечают одинаково. Механизм
+    // выключен или недоступен — порядок остаётся тем, что дал BM25
+    rows = await searchRank.rankHits(query, rows, (row) => row.excerpt);
+
     for (const row of rows) {
-        console.log(`\n[${row.kind}] ${row.title}`);
+        // «·» у кандидата, который по смыслу к запросу не относится: выбрасывать
+        // его нельзя (суждение бывает неправо), но и молчать о нём нечестно
+        const mark = row.relevance === undefined ? '' : (row.relevant ? '' : ' ·');
+        console.log(`\n[${row.kind}]${mark} ${row.title}`);
         console.log(`  ${row.ref}`);
         console.log(`  ${row.snippet.replace(/\s+/g, ' ').trim()}`);
     }

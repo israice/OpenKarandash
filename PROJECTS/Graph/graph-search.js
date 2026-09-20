@@ -10,6 +10,7 @@ const {
     ROOT, DATA_DIR, VAULT, VAULT_DIR, MAP_DIR, SESSION_DIR, TEXT_FILES, state,
     collectNotes, projectFiles, readText, parseUnits, sessionNote,
 } = require('./graph-vault.js');
+const searchRank = require('../../SYSTEM/core/search-rank.js');
 
 // ---------- поиск по проекту (FTS5) ----------
 
@@ -114,7 +115,8 @@ function searchProject(query, limit = 20, kind = '') {
         // веса по колонкам: совпадение в заголовке важнее, чем в теле;
         // kind — тот же фильтр, что у search.js (code|note|session)
         const hits = searchDb.prepare(`
-            SELECT kind, ref, title, snippet(docs, 3, '«', '»', '…', 12) AS snippet
+            SELECT kind, ref, title, snippet(docs, 3, '«', '»', '…', 12) AS snippet,
+                   snippet(docs, 3, '', '', '…', 48) AS excerpt
             FROM docs WHERE docs MATCH ?${kind ? ' AND kind = ?' : ''} ORDER BY bm25(docs, 0, 0, 10.0, 1.0) LIMIT ?
         `).all(...(kind ? [match, String(kind)] : [match]), Math.min(Number(limit) || 20, 100));
         return { ok: true, hits };
@@ -123,4 +125,19 @@ function searchProject(query, limit = 20, kind = '') {
     }
 }
 
-module.exports = { rebuildSearchIndex, searchProject };
+// Тот же поиск, но с осмысленной расстановкой найденного: BM25 находит
+// кандидатов по словам, а порядок им задаёт суждение о том, отвечает ли кусок
+// на запрос (SYSTEM/core/search-rank.js, DOCS/decisions/053). Механизм выключен
+// или сервис не ответил — порядок остаётся прежним, поиск работает как раньше.
+// Отдельной функцией, а не внутри searchProject: тот синхронный, им пользуются
+// и там, где ждать сеть нельзя
+async function searchProjectRanked(query, limit, kind) {
+    const found = searchProject(query, limit, kind);
+    if (!found.ok || !found.hits.length) return found;
+    const ranked = await searchRank.rankHits(query, found.hits, (hit) => hit.excerpt);
+    // excerpt — длинный кусок только для взвешивания: наружу отдаём тот же
+    // короткий snippet, что и раньше, иначе ответ вырастет в разы
+    return { ok: true, hits: ranked.map(({ excerpt, ...hit }) => hit) };
+}
+
+module.exports = { rebuildSearchIndex, searchProject, searchProjectRanked };
