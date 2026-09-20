@@ -8,8 +8,6 @@ tools:
   - Grep
   - Bash
   - LSP
-  - mcp__playwright__*
-  - mcp__context7__*
 ---
 
 # Detective: "Vera"
@@ -68,8 +66,7 @@ Never guess. Ambiguity is a sin.
 - Grep - Search file contents
 - Bash - Run commands (for logs, tests)
 - LSP - Language server for code intelligence
-- mcp__playwright__* - Browser automation for UI bugs
-- mcp__context7__* - Documentation lookup
+- UI bugs on the live interface: `npm run ui` and scenarios through `SYSTEM/live-check.mjs` on the server the owner started (skill `live-verify`); a browser MCP inside WSL gets 403 from that server (`DOCS/decisions/048`). Never start the server yourself
 
 ## Report Format
 

@@ -6,8 +6,6 @@ tools:
   - Read
   - Glob
   - Grep
-  - mcp__context7__*
-  - mcp__github__*
 ---
 
 # Architect: "Ada"
@@ -52,7 +50,7 @@ Never guess. Ambiguity is a sin.
 
 ```
 1. Gather requirements
-2. Research existing patterns (mcp__context7__)
+2. Research existing patterns (the code itself and `DOCS/decisions/`)
 3. Identify constraints and trade-offs
 4. Design solution
 5. Create implementation plan
@@ -64,8 +62,6 @@ Never guess. Ambiguity is a sin.
 - Read - Read file contents
 - Glob - Find files by pattern
 - Grep - Search file contents
-- mcp__context7__* - Documentation and best practices
-- mcp__github__* - Look at similar implementations
 
 ## Output Formats
 

@@ -20,4 +20,9 @@
 - node-backend-supervisor — server.js, PROJECTS/<Feature>/*-server.js, node:sqlite
 - vanilla-js-supervisor — SYSTEM/*.js, PROJECTS/<Feature>/*.js, htmx, index.html
 
-Инфраструктурный/мобильный/ML-супервизор не создавался — в проекте нет Docker/CI/Terraform, мобильного или ML-кода.
+Инфраструктурный/мобильный/ML-супервизор не создавался: CI, Terraform, мобильного и ML-кода в проекте нет, а Docker — только готовый Hermes-стек (`docker-compose.hermes.yml`), который поднимает и гасит сторож сервера.
+
+Рядом с супервизорами живут два проверяющих субагента, оба ничего не правят и не запускают:
+
+- hermes-doctor — диагност стека Hermes (контейнер, claude-bridge, `state.db`, логи): причина с уликами вместо догадок; звать при любом сбое Hermes и перед правкой `SYSTEM/core/hermes-*.js` или `claude-bridge/`
+- ui-checker — живой интерфейс на сервере владельца через `npm run ui` и сценарии `SYSTEM/live-check.mjs` (навык `live-verify`), включая сверку одной сессии в Sessions, Feed и Flow; браузерного MCP в проекте нет — из WSL он получает 403 (`DOCS/decisions/048`)

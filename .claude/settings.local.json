@@ -4,8 +4,5 @@
       "Edit(./**)"
     ],
     "defaultMode": "bypassPermissions"
-  },
-  "disabledMcpjsonServers": [
-    "playwright"
-  ]
+  }
 }

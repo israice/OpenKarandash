@@ -5,10 +5,7 @@
     "permissions": {
         "allow": [
             "Bash(node --check *)",
-            "Bash(node PROJECTS/Graph/search.js *)",
-            "mcp__playwright__browser_take_screenshot",
-            "mcp__playwright__browser_console_messages",
-            "mcp__playwright__browser_snapshot"
+            "Bash(node PROJECTS/Graph/search.js *)"
         ],
         "defaultMode": "bypassPermissions"
     },
