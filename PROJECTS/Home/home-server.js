@@ -16,7 +16,7 @@ const eta = new Eta({ views: __dirname, cache: false });
 // sessions() отдаёт сводку по сессиям (заголовок уже почищен, running посчитан),
 // activeCount() — сколько ходов идёт прямо сейчас. Обе — из ядра: хранилище
 // сессий и реестр запусков живут в server.js
-function createRoutes({ sessions, activeCount }) {
+function createRoutes({ sessions, activeCount, needsAttention }) {
     return {
         '/api/fragment/home-observation': (req, res) => {
             const list = sessions();
@@ -31,6 +31,9 @@ function createRoutes({ sessions, activeCount }) {
                 // себя не выдаёт — показываем его здесь, в панели наблюдения,
                 // иначе о нём узнают по симптомам через неделю (DOCS/decisions/051)
                 judgment: judgmentLine(typesafe.status()),
+                // сколько сессий просят вмешаться: суждение о ходе считалось и
+                // раньше, но видно было только в самой ленте (DOCS/decisions/055)
+                attention: needsAttention ? needsAttention() : 0,
                 running: list.filter((s) => s.running),
                 recent: list.slice(0, 6).map((s) => ({
                     ...s,
@@ -48,7 +51,16 @@ function judgmentLine(s) {
     if (s.health === 'off') return { text: 'off — no key', kind: 'off' };
     if (s.health === 'idle') return { text: 'waiting for the first turn', kind: 'idle' };
     if (s.health === 'error') return { text: `failing — ${s.lastError}`, kind: 'error' };
-    return { text: s.failed ? `${s.ok} ok · ${s.failed} failed` : `${s.ok} ok`, kind: 'ok' };
+    // расход показываем здесь же, а не отдельной строкой: он интересен ровно
+    // в ту секунду, когда смотришь, жив ли механизм. Счёт с последнего запуска
+    // сервера — постоянного хранения он не стоит, цена копеечная
+    const spent = s.inputTokens ? ` · ${formatTokens(s.inputTokens)} tok` : '';
+    return { text: (s.failed ? `${s.ok} ok · ${s.failed} failed` : `${s.ok} ok`) + spent, kind: 'ok' };
+}
+
+// «12.3k» вместо «12345»: в строке панели важен порядок, а не точное число
+function formatTokens(n) {
+    return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 
 module.exports = { createRoutes };

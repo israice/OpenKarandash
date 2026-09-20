@@ -3181,6 +3181,30 @@ const listMessages = db.prepare(`
     FROM messages WHERE session_id = ? ORDER BY position
 `);
 
+// Сессии, где последний ход просит человека вмешаться: суждение о ходе уже
+// посчитано и лежит в result_meta (DOCS/decisions/051), но до v0.0.52 никуда
+// не вело — его видно было только в самой ленте. Шкала нужна ровно затем,
+// чтобы на главной было видно, чем заняться (DOCS/decisions/055).
+//
+// Считаем по последней строке модели в каждой сессии: более ранние ходы этой
+// же сессии человек либо уже разобрал, либо они и привели к последнему.
+//
+// Условий два, и прямой вопрос к человеку здесь главнее шкалы. Замер на живом
+// ходе: ход, остановившийся с уточняющим вопросом, дал awaitsHuman 0.96, а по
+// шкале важности всего 1.14 при уверенности ноль — то есть шкала на таком ходе
+// сама себе не верит, и один порог по ней пропускал бы ровно те сессии, ради
+// которых счётчик и заведён
+const countNeedsAttention = db.prepare(`
+    SELECT COUNT(*) AS n FROM (
+        SELECT m.session_id,
+               json_extract(m.result_meta, '$.judgment.needsAttention') AS attention,
+               json_extract(m.result_meta, '$.judgment.awaitsHuman') AS waits,
+               ROW_NUMBER() OVER (PARTITION BY m.session_id ORDER BY m.position DESC) AS rn
+        FROM messages m
+        WHERE m.role = 'assistant' AND m.result_meta IS NOT NULL
+    ) WHERE rn = 1 AND (waits >= ? OR attention >= ?)
+`);
+
 // сводка по сессии целиком — сколько токенов/денег/времени она стоила разом,
 // без пересчёта по сообщениям на клиенте (Flow, панель сессий)
 const sumSessionUsage = db.prepare(`
@@ -3664,6 +3688,9 @@ const featureRoutes = {
         activeStartedAt: activeRunStartedAt,
     }),
     ...require('./PROJECTS/Home/home-server.js').createRoutes({
+        // сколько сессий просят человека вмешаться: порог шкалы держит
+        // turn-judgment.js, чтобы он был один на панель и на пометку в ленте
+        needsAttention: () => countNeedsAttention.get(turnJudgment.THRESHOLDS.awaitsHuman, turnJudgment.THRESHOLDS.attentionShown).n,
         sessions: sessionSummaries,
         activeCount: () => activeRuns.size,
     }),

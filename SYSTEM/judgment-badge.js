@@ -27,7 +27,10 @@
     };
 
     // шкала needs_attention: 0 — ничего не нужно, 2 — смотреть обязательно.
-    // Порог ровно посередине верхней половины: ниже — обычный ход
+    // 1.5 — то же число, что THRESHOLDS.attentionShown в
+    // SYSTEM/core/turn-judgment.js: по нему считается счётчик «нужно
+    // посмотреть» на Home. Серверный модуль отсюда не подключить, поэтому
+    // число повторено — меняя его здесь, поменяй и там
     function attentionLabel(score) {
         if (typeof score !== 'number') return null;
         if (score >= 1.5) return 'нужно посмотреть';

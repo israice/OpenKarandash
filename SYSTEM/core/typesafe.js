@@ -80,6 +80,10 @@ let lastError = null;
 let okCount = 0;
 let failCount = 0;
 let lastAt = null;
+// входящие токены с последнего запуска сервера: выход не тарифицируется,
+// поэтому считать его незачем. Постоянного хранения расход не стоит —
+// он копеечный, и важен только порядок величины
+let inputTokens = 0;
 
 function status() {
     return {
@@ -88,6 +92,7 @@ function status() {
         failed: failCount,
         lastError,
         lastAt,
+        inputTokens,
         // «работает», «ни одного запроса ещё не было», «последний не прошёл»:
         // решает сервер, а не шаблон — то же состояние понадобится и в другом месте
         health: !isEnabled() ? 'off' : (lastError ? 'error' : (okCount ? 'ok' : 'idle')),
@@ -118,7 +123,9 @@ async function systemOne(state, questions) {
                 lastError = null;
                 okCount += 1;
                 lastAt = new Date().toISOString();
-                return await res.json();
+                const data = await res.json();
+                inputTokens += data?.usage?.input_tokens || 0;
+                return data;
             }
             // 401 — ключ, 422 — наши вопросы не прошли проверку: повторять нечего
             if (!RETRY_STATUS.has(res.status) || attempt >= RETRY_DELAYS_MS.length) {

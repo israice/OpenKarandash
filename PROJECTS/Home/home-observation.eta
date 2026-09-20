@@ -12,6 +12,10 @@
     <% /* суждения о ходах: их поломка ничего не роняет и потому невидима —
         поэтому состояние стоит здесь, а не прячется в настройках */ %>
     <li><span>Turn judgment</span><strong class="obs-card__stat--<%= it.judgment.kind %>"><%= it.judgment.text %></strong></li>
+    <% /* сколько сессий просят вмешаться: суждение о ходе считалось и раньше,
+        но видно было только в самой ленте (DOCS/decisions/055). Ноль — тоже
+        ответ, поэтому строка не прячется */ %>
+    <li><span>Needs you</span><strong<% if (it.attention) { %> class="obs-card__stat--error"<% } %>><%= it.attention %></strong></li>
 </ul>
 
 <ul class="obs-list" id="obsRunningList" hx-swap-oob="true">
