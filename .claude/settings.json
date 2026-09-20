@@ -1,6 +1,8 @@
 {
     "enabledPlugins": {
-        "typescript-lsp@claude-plugins-official": false
+        "typescript-lsp@claude-plugins-official": false,
+        "ecc@ecc": false,
+        "n8n-skills@n8n-io": false
     },
     "permissions": {
         "allow": [
