@@ -55,6 +55,11 @@ const THRESHOLDS = {
     // То же число повторено в SYSTEM/judgment-badge.js: тот рисует пометку в
     // браузере и серверный модуль подключить не может — меняя здесь, меняй там
     attentionShown: 1.5,
+    // отчёт утверждает, что что-то проверено. Высоко: пометка «сказано
+    // „проверено“, а проверять было нечем» — обвинение, и бросаться им по
+    // слабому признаку нельзя. Срабатывает только вместе с жёстким фактом от
+    // кода: ход не сделал ни одного шага инструментом
+    claimsVerified: 0.8,
 };
 
 // сколько символов текста хода отдаём на суждение: доке важен не объём, а то,
@@ -130,6 +135,27 @@ const TURN_QUESTIONS = {
             false: { what: 'It reports or continues on its own; nothing is being asked of the person.' },
         },
     },
+    // Судим только язык отчёта: утверждает ли он, что что-то проверено. Сам
+    // факт держит код — он знает, сделал ли ход хоть один шаг инструментом.
+    // Это приём «verify and escalate» из документации, и делить обязанности
+    // так важно: модель плохо считает и плохо сверяет длинные списки, зато
+    // хорошо понимает, что написано. А «проверил» без единого шага — это
+    // противоречие, которое видно без всякой модели
+    claims_verified: {
+        type: 'noul',
+        instructions: 'Does `turn.answer` state that something was checked, tested, run or verified during this turn?',
+        criteria: {
+            true: {
+                what: 'It reports a check that was carried out: tests run, a page opened, output looked at.',
+                examples: ['Проверку прогнал, ошибок нет.', 'Открыл страницу — всё на месте.'],
+            },
+            false: {
+                what: 'It reports no check, or says outright that something was not checked.',
+                not_for: 'A claim that a check was done earlier, by someone else, or will be done later.',
+                examples: ['Правку внёс, живьём не проверял.', 'Вот как это устроено.'],
+            },
+        },
+    },
     work_kind: {
         type: 'choice',
         instructions: 'What kind of work does `turn.answer` describe?',
@@ -169,7 +195,7 @@ const TURN_QUESTIONS = {
 
 // ход уже записан в базу и отдан в ленту, когда нас зовут, поэтому лишние
 // ~200 мс здесь никого не задерживают
-async function judgeTurn({ request, answer, errorText, stopReason }) {
+async function judgeTurn({ request, answer, errorText, stopReason, toolSteps }) {
     if (!typesafe.isEnabled()) return null;
     const text = String(answer || errorText || '').trim();
     if (!text) return null;
@@ -190,6 +216,7 @@ async function judgeTurn({ request, answer, errorText, stopReason }) {
 
     const finalReport = typesafe.noul(res.answers, 'final_report');
     const workDone = typesafe.noul(res.answers, 'work_done');
+    const claimsVerified = typesafe.noul(res.answers, 'claims_verified');
     const awaitsHuman = typesafe.noul(res.answers, 'awaits_human');
     const workKind = typesafe.choice(res.answers, 'work_kind');
     const attention = typesafe.score(res.answers, 'needs_attention');
@@ -198,6 +225,14 @@ async function judgeTurn({ request, answer, errorText, stopReason }) {
         model: res.model || typesafe.MODEL,
         finalReport,
         workDone,
+        claimsVerified,
+        toolSteps: toolSteps ?? null,
+        // жёсткое противоречие, а не оттенок: отчёт говорит «проверено», а ход
+        // не сделал ни одного шага инструментом — значит, проверять было нечем.
+        // Факт берём у кода, утверждение — у модели, и совпасть они обязаны
+        unverifiedClaim: Boolean(
+            toolSteps === 0 && (claimsVerified ?? 0) >= THRESHOLDS.claimsVerified,
+        ),
         awaitsHuman,
         workKind: workKind?.value || null,
         workKindConfidence: workKind?.confidence ?? null,

@@ -82,6 +82,10 @@
         chip(row, KIND_LABELS[j.workKind] || j.workKind, 'kind');
         chip(row, attentionLabel(j.needsAttention), 'attention');
         chip(row, NOTIFY_LABELS[j.notified?.reason], j.notified?.send ? 'sent' : 'muted');
+        // сказано «проверено», а ход не сделал ни одного шага инструментом.
+        // Это не оттенок, а противоречие: утверждение судила модель, факт
+        // посчитал код, и совпасть они обязаны (DOCS/decisions/056)
+        if (j.unverifiedClaim) chip(row, 'сказано «проверено», но проверять было нечем', 'attention');
 
         // числа целиком — во всплывающей подсказке: в строке им тесно, а при
         // разборе «почему письмо не ушло» они первое, что нужно

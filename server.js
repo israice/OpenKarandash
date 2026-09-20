@@ -1082,6 +1082,10 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
                 answer: ctx.answer,
                 errorText: ctx.errorText,
                 stopReason: meta.stopReason,
+                // факт, который держит код: сделал ли ход хоть один шаг
+                // инструментом. Отчёт «проверено» без единого шага — жёсткое
+                // противоречие, и ловится оно здесь, а не моделью
+                toolSteps: countToolSteps.get(ctx.session, ctx.userPosition).n,
             }).catch(() => null);
             // решение о письме принимается до записи хода: оно само часть
             // суждения и должно лежать в той же строке, а не теряться
@@ -3218,6 +3222,10 @@ const sumSessionUsage = db.prepare(`
 `);
 
 const countMessages = db.prepare('SELECT COUNT(*) AS n FROM messages WHERE session_id = ?');
+
+// шаги инструментов этого хода: всё, что записано после строки с вопросом
+// человека. Нужен для сверки отчёта с делом (DOCS/decisions/056)
+const countToolSteps = db.prepare("SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND position > ? AND role = 'tool'");
 
 // правка собственной реплики на графе Flow (см. DOCS/decisions/018): роль проверяем
 // отдельным запросом, потому что менять разрешено только строку пользователя
