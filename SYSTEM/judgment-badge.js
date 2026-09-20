@@ -22,6 +22,7 @@
         'no-judgment': 'в телеграм: без суждения',
         'awaits-human': 'в телеграм: ждёт ответа',
         'final-report': 'в телеграм: законченный ход',
+        'work-done': 'в телеграм: работа сделана, отчёта нет',
         intermediate: 'в телеграм не ушло: середина работы',
     };
 
@@ -67,9 +68,13 @@
         row.className = 'judgment';
 
         const finished = typeof j.finalReport === 'number' && j.finalReport >= 0.6;
+        const worked = typeof j.workDone === 'number' && j.workDone >= 0.8;
         const waiting = typeof j.awaitsHuman === 'number' && j.awaitsHuman >= 0.5;
         if (waiting) chip(row, `ждёт ответа ${percent(j.awaitsHuman)}`, 'wait');
-        else chip(row, `${finished ? 'законченный ход' : 'середина работы'} ${percent(j.finalReport)}`, finished ? 'done' : 'mid');
+        else if (finished) chip(row, `законченный ход ${percent(j.finalReport)}`, 'done');
+        // работа сделана, но отчётом не оформлена — свой случай, а не «середина»
+        else if (worked) chip(row, `работа сделана ${percent(j.workDone)}`, 'done');
+        else chip(row, `середина работы ${percent(j.finalReport)}`, 'mid');
 
         chip(row, KIND_LABELS[j.workKind] || j.workKind, 'kind');
         chip(row, attentionLabel(j.needsAttention), 'attention');
@@ -79,6 +84,7 @@
         // разборе «почему письмо не ушло» они первое, что нужно
         row.title = [
             `final_report: ${j.finalReport}`,
+            `work_done: ${j.workDone}`,
             `awaits_human: ${j.awaitsHuman}`,
             `work_kind: ${j.workKind} (confidence ${j.workKindConfidence})`,
             `needs_attention: ${j.needsAttention} (confidence ${j.needsAttentionConfidence})`,

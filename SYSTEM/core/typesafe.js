@@ -11,8 +11,13 @@
 // так их можно прочитать и подправить, не разбираясь в транспорте.
 
 const API_URL = 'https://api.typesafe.ai/v1/systemone';
-// jev-latest — рекомендованный докой алиас: отвечает текущая версия (jev-1.13.x)
-const MODEL = 'jev-latest';
+// Версия закреплена, а не алиас `jev-latest`, и это прямое указание доки
+// (страница Models, «Aliases»): алиас переезжает на новый выпуск сам, а
+// пороги в turn-judgment.js подогнаны на нашем материале именно под эту
+// версию — переехав, они молча перестали бы значить то же самое. На новую
+// версию переходим сами, перемерив пороги. Какая версия ответила на деле,
+// всё равно пишется в строку хода: ответ несёт своё поле model
+const MODEL = 'jev-1.13.0';
 
 // суждение не должно задерживать ни ход, ни письмо в Telegram: типичный запрос
 // укладывается в ~100 мс, всё, что дольше нескольких секунд, — уже сбой сети
@@ -20,6 +25,21 @@ const TIMEOUT_MS = 8000;
 // 429 и 529 доку велит повторять с растущей паузой, остальные коды — окончательны
 const RETRY_STATUS = new Set([429, 529]);
 const RETRY_DELAYS_MS = [300, 900];
+// сколько ждать по просьбе самого сервиса: заголовок retry-after сильнее нашей
+// лесенки — он знает про свои лимиты то, чего не знаем мы. Ограничиваем сверху,
+// чтобы ход не завис из-за чужого «приходите через минуту»
+const RETRY_AFTER_CAP_MS = 5000;
+
+// заголовок бывает в секундах и датой — доку интересует только первое, но
+// разобрать второе дешевле, чем потом гадать, почему повтор ушёл сразу
+function retryAfterMs(res) {
+    const raw = res.headers.get('retry-after');
+    if (!raw) return null;
+    const seconds = Number(raw);
+    const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(raw) - Date.now();
+    if (!Number.isFinite(ms) || ms <= 0) return null;
+    return Math.min(ms, RETRY_AFTER_CAP_MS);
+}
 
 function apiKey() {
     return (process.env.TYPESAFE_API_KEY || '').trim();
@@ -55,6 +75,7 @@ async function systemOne(state, questions) {
     if (!key || !questions || !Object.keys(questions).length) return null;
 
     const body = JSON.stringify({ model: MODEL, state, questions });
+    let wait = null;
     for (let attempt = 0; ; attempt += 1) {
         try {
             const res = await fetch(API_URL, {
@@ -72,13 +93,15 @@ async function systemOne(state, questions) {
                 lastError = `HTTP ${res.status}`;
                 return null;
             }
+            wait = retryAfterMs(res);
         } catch (err) {
             if (attempt >= RETRY_DELAYS_MS.length) {
                 lastError = err.message;
                 return null;
             }
+            wait = null; // сети не было — заголовка тоже
         }
-        await sleep(RETRY_DELAYS_MS[attempt]);
+        await sleep(wait ?? RETRY_DELAYS_MS[attempt]);
     }
 }
 

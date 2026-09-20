@@ -33,6 +33,10 @@ const THRESHOLDS = {
     // ход встал и ждёт человека — письмо нужно даже если это не отчёт: по этому
     // же письму человек отвечает обратно в сессию через телеграм-мост
     awaitsHuman: 0.5,
+    // работа сделана, хоть и не оформлена отчётом. Планка высокая: этот вопрос
+    // ловит остаток после двух предыдущих, и ошибиться в сторону «отправить»
+    // здесь значит вернуть ровно тот поток реплик, от которого уходили
+    workDone: 0.8,
     // записку дописываем в контекст, когда «читать надо» вероятнее, чем «не
     // надо». Планка ровно половина, и это не лень: цена ошибки несимметрична —
     // лишняя подсказка стоит двух строк в запросе, а пропущенная записка стоит
@@ -46,33 +50,64 @@ const THRESHOLDS = {
 // чтобы в state попало только относящееся к вопросу
 const TEXT_LIMIT = 4000;
 const PROMPT_LIMIT = 2000;
+// у jev-1.13 на запрос 64 тысячи токенов, и на state вместе с самым длинным
+// вопросом — 32 тысячи (страница Models). Описания записок едут именно в
+// вопросе и растут вместе с папкой: полсотни записок это около тысячи токенов,
+// но папка пополняется каждую неделю, и молча упереться в предел нельзя.
+// Считаем грубо — три знака на токен, — и режем список, оставляя свежие:
+// в них решения, которые ещё действуют
+const CRITERIA_BUDGET_CHARS = 60000;
 
 // ---------- суждение о законченном ходе ----------
 
 const TURN_QUESTIONS = {
     // отдельный узкий вопрос, а не «оцени ход целиком»: широкий вопрос спрятал бы
     // несколько суждений за одним числом (антипаттерн из «how to build»)
+    // вопрос написан ровно про то, что нужно правилу отправки: закрыт ли
+    // запрос этой репликой. Первая редакция спрашивала про «законченный
+    // отчёт о работе», и модель честно, буквально отвечала «нет» на полный
+    // ответ на вопрос в Chat — работы-то не было. Буквальность модели доку
+    // называет первой её слабостью: условие пишут целиком, а не намёком
     final_report: {
         type: 'noul',
         instructions: {
-            question: 'Is `turn.answer` a finished report that closes the task in `turn.request`?',
-            focus: 'Judge the reply itself, not whether the work was good.',
+            question: 'Does `turn.answer` deliver everything `turn.request` asked for, so that nothing is left for the assistant to continue?',
+            focus: 'A request can ask for work to be done or for a question to be answered; both count.',
         },
         criteria: {
             true: {
-                what: 'The reply states the task is done and summarises the outcome.',
+                what: 'The reply delivers the asked-for result in full: the work is reported as done, or the question is answered.',
                 examples: [
                     'Готово: правка внесена, проверка пройдена, вот что изменилось.',
-                    'Задача закрыта, осталось только принять решение по следующему шагу.',
+                    'Потому что сторож остаётся жить после завершения сессии и держит папку проекта.',
                 ],
             },
             false: {
-                what: 'The reply is a step along the way: a plan, a progress note, a question, an intermediate finding.',
-                not_for: 'A finished report that happens to be short.',
+                what: 'The reply is a step along the way: a plan, a progress note, an intermediate finding, or a question back.',
+                not_for: 'A complete answer that happens to be short.',
                 examples: [
                     'Сейчас посмотрю файлы и вернусь.',
                     'Нашёл причину, приступаю к правке.',
                 ],
+            },
+        },
+    },
+    // отдельный вопрос, а не оттенок предыдущего: «сделал, но живьём не
+    // проверил» — это конец работы, который владелец обязан увидеть, а как
+    // «законченный отчёт» он читается лишь наполовину (0.33 на нашем замере).
+    // Доку такое велит разбирать ещё одним атомарным вопросом и складывать в
+    // коде, а не двигать порог у чужого вопроса
+    work_done: {
+        type: 'noul',
+        instructions: 'Does `turn.answer` report work that was actually carried out, rather than work that is planned or still under way?',
+        criteria: {
+            true: {
+                what: 'Something was changed, written, fixed or found out, and the reply says so.',
+                examples: ['Правку внёс, но живьём не проверял.', 'Сделал, вот результат.'],
+            },
+            false: {
+                what: 'The reply announces an intention, asks something, or describes work still in progress.',
+                examples: ['Сейчас посмотрю и вернусь.', 'Приступаю к правке.'],
             },
         },
     },
@@ -95,13 +130,28 @@ const TURN_QUESTIONS = {
             failure: { what: 'The turn ended in an error or was interrupted before doing the work.' },
         },
     },
+    // уровни описывают положение дел, а не степень: «умеренно важно» доку
+    // прямо называет плохим уровнем. Одна ось на вопрос — здесь это «сколько
+    // работы осталось на человеке», и ничего кроме
     needs_attention: {
         type: 'score',
-        instructions: 'How much does this turn need the person to step in?',
+        instructions: {
+            question: 'How much of the task in `turn.request` is left for the person to finish or check?',
+            focus: 'Judge what `turn.answer` leaves undone, not how well it is written.',
+        },
         criteria: [
-            { what: 'Nothing to do — the turn did what was asked and said so.' },
-            { what: 'Worth a glance — something was assumed, skipped or left unverified.' },
-            { what: 'Must be looked at — the turn failed, got blocked, or asks for a decision.' },
+            {
+                what: 'The turn did the whole task and said what it checked. Nothing is left over.',
+                examples: ['Правка внесена, проверка пройдена, вот результат.'],
+            },
+            {
+                what: 'The turn did the task but left part of it unchecked, assumed or postponed.',
+                examples: ['Сделал, но живьём не проверил.', 'Сделал основное, остальное отложил.'],
+            },
+            {
+                what: 'The task is not done: the turn failed, stopped on an obstacle, or waits for a decision.',
+                examples: ['Не получилось, упёрся в ошибку.', 'Нужно решить, каким путём идти.'],
+            },
         ],
     },
 };
@@ -128,6 +178,7 @@ async function judgeTurn({ request, answer, errorText, stopReason }) {
     if (!res || !res.answers) return null;
 
     const finalReport = typesafe.noul(res.answers, 'final_report');
+    const workDone = typesafe.noul(res.answers, 'work_done');
     const awaitsHuman = typesafe.noul(res.answers, 'awaits_human');
     const workKind = typesafe.choice(res.answers, 'work_kind');
     const attention = typesafe.score(res.answers, 'needs_attention');
@@ -135,6 +186,7 @@ async function judgeTurn({ request, answer, errorText, stopReason }) {
     return {
         model: res.model || typesafe.MODEL,
         finalReport,
+        workDone,
         awaitsHuman,
         workKind: workKind?.value || null,
         workKindConfidence: workKind?.confidence ?? null,
@@ -152,6 +204,9 @@ function shouldNotify(judgment, { errorText }) {
     if (!judgment) return { send: true, reason: 'no-judgment' };
     if ((judgment.awaitsHuman ?? 0) >= THRESHOLDS.awaitsHuman) return { send: true, reason: 'awaits-human' };
     if ((judgment.finalReport ?? 0) >= THRESHOLDS.finalReport) return { send: true, reason: 'final-report' };
+    // работа сделана, но отчётом не оформлена — «правку внёс, проверить не
+    // успел». Для сессии это всё равно конец, и знать о нём владелец обязан
+    if ((judgment.workDone ?? 0) >= THRESHOLDS.workDone) return { send: true, reason: 'work-done' };
     return { send: false, reason: 'intermediate' };
 }
 
@@ -205,6 +260,21 @@ function readDecisions() {
     return items;
 }
 
+// Choice берёт до 255 вариантов, но раньше упрётся предел контекста, и доке
+// важнее другое: большой state и большой вопрос, набитые не относящимся к
+// делу, роняют точность («Large state full of irrelevant detail»). Поэтому
+// список записок режется сверху, а не отдаётся целиком, сколько бы их ни было
+function fitToBudget(items) {
+    const fitted = [];
+    let size = 0;
+    for (const item of [...items].reverse()) { // с самых свежих
+        size += item.title.length + item.summary.length;
+        if (size > CRITERIA_BUDGET_CHARS || fitted.length >= 254) break;
+        fitted.push(item);
+    }
+    return fitted.reverse();
+}
+
 // Вариант «ничего не подходит» обязателен: доке важно, чтобы у модели был
 // выход, иначе она выберет ближайшее и выдаст ложную подсказку
 const NO_MATCH = 'none';
@@ -224,13 +294,17 @@ async function pickDecisionHints(request) {
     const text = String(request || '').trim();
     if (text.length < 20) return null; // «привет» и «продолжай» подсказки не требуют
 
-    const items = readDecisions();
+    const items = fitToBudget(readDecisions());
     if (!items.length) return null;
     const state = { request: text.slice(0, PROMPT_LIMIT) };
 
     // ступень 1: сужаем список
+    // ключи строго из документированного набора Choice — what / not_for /
+    // examples («Advanced: structure»). Свой ключ рядом с ними модель читает
+    // как попало, а заголовок и первый абзац записки — это одно описание,
+    // поэтому они и идут одним what
     const criteria = { [NO_MATCH]: { what: 'No note here explains this request; the code is enough.' } };
-    for (const item of items) criteria[item.id] = { what: item.title, context: item.summary };
+    for (const item of items) criteria[item.id] = { what: `${item.title}. ${item.summary}` };
 
     const first = await typesafe.systemOne(state, {
         decision_note: {

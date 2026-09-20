@@ -125,7 +125,13 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
     // старой версией из памяти. Список собираем по правилам раскладки, а не руками:
     // перечисленный руками отставал от кода (PROJECTS/Chat/pages-server.js и
     // SYSTEM/core/* в нём не было, и правка страниц молча не доезжала до сервера).
-    // Новый файл сторож увидит после ручного перезапуска — список читается один раз
+    //
+    // Список перечитывается на каждом замере, а не собирается один раз при старте
+    // сторожа: иначе модуль, заведённый уже после запуска, не попадал в него
+    // никогда. Так и вышло с SYSTEM/core/typesafe.js и turn-judgment.js — сервер
+    // сутки крутил бы их первую версию, а правки молча не доезжали, потому что
+    // Node держит require-кэш до перезапуска процесса. Соседний замер файлов
+    // моста читает свой список именно так, и по той же причине
     const serverModules = (dir) => {
         try {
             return fs.readdirSync(dir).filter((f) => f.endsWith('-server.js')).map((f) => path.join(dir, f));
@@ -133,18 +139,24 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
             return []; // не папка или её нет — просто нечего смотреть
         }
     };
-    const WATCHED_FILES = [
-        __filename,
-        ...fs.readdirSync(path.join(ROOT, 'PROJECTS')).flatMap((name) => serverModules(path.join(ROOT, 'PROJECTS', name))),
-        ...serverModules(path.join(ROOT, 'SYSTEM')),
-        ...fs.readdirSync(path.join(ROOT, 'SYSTEM/core')).map((f) => path.join(ROOT, 'SYSTEM/core', f)),
-    ];
+    const watchedFiles = () => {
+        try {
+            return [
+                __filename,
+                ...fs.readdirSync(path.join(ROOT, 'PROJECTS')).flatMap((name) => serverModules(path.join(ROOT, 'PROJECTS', name))),
+                ...serverModules(path.join(ROOT, 'SYSTEM')),
+                ...fs.readdirSync(path.join(ROOT, 'SYSTEM/core')).map((f) => path.join(ROOT, 'SYSTEM/core', f)),
+            ];
+        } catch {
+            return [__filename]; // папку переименовывают прямо сейчас — замер не повод падать
+        }
+    };
 
     // сломанная правка не должна ронять сторожа вместе с сервером:
     // файл с синтаксической ошибкой не запускаем, старый процесс продолжает работать
     const isValid = () => {
         try {
-            for (const file of WATCHED_FILES) execFileSync(process.execPath, ['--check', file], { stdio: 'ignore' });
+            for (const file of watchedFiles()) execFileSync(process.execPath, ['--check', file], { stdio: 'ignore' });
             return true;
         } catch {
             console.error('one of the server files does not parse — keeping the previous version running');
@@ -219,7 +231,7 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
     // ошибку statSync замер падал целиком и опрос молча выходил из строя навсегда.
     // Достаточно было переименовать любой из watched-файлов (screenshot.js →
     // karandash-server.js) — и сервер до конца дня продолжал крутить старый код
-    const latestMtime = () => WATCHED_FILES.reduce((max, file) => {
+    const latestMtime = () => watchedFiles().reduce((max, file) => {
         try {
             return Math.max(max, fs.statSync(file).mtimeMs);
         } catch {
