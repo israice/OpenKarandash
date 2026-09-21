@@ -83,7 +83,7 @@ const ASK_PREAMBLE = '[OpenKarandash — правило оформления о�
     + 'Свой вариант человек допишет сам, «Другое» не добавляй. Открытый вопрос без вариантов задавай обычным текстом. '
     + 'Поручение человека — ниже.\n\n';
 
-function create({ database, callApi, users, runInSession, sessionExists, remember, ownGraceMs = OWN_GRACE_MS }) {
+function create({ database, callApi, users, runInSession, sessionExists, remember, inlineKeyboardFor = () => undefined, moveInline = () => {}, isBottomInline = () => false, ownGraceMs = OWN_GRACE_MS }) {
     // Опрос живёт в базе, а не в памяти, по той же причине, что и связь
     // «сообщение → сессия»: человек отвечает через час, а сервер за это время
     // перезапускался не раз. ask_id связывает копии одного вопроса у разных
@@ -160,7 +160,10 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
         let lastError = null;
         for (const chatId of chats) {
             try {
-                const message = await callApi('sendPoll', { chat_id: chatId, ...payload });
+                // опрос — тоже сообщение: если он нижний, кнопки пульта под ним,
+                // а с прошлого письма их снимает moveInline
+                const message = await callApi('sendPoll', { chat_id: chatId, ...payload, reply_markup: inlineKeyboardFor(chatId) });
+                moveInline(chatId, message.message_id);
                 // постоянные id вариантов выдаёт Telegram; по ним poll_answer
                 // называет выбранное, даже если варианты потом дописывали
                 const stored = (message.poll?.options || []).map((o, i) => ({ id: o.persistent_id ?? null, text: o.text ?? texts[i] }));
@@ -185,7 +188,9 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
     async function finalize(row, answer, own) {
         if (!markAnswered.run(new Date().toISOString(), row.ask_id).changes) return; // уже ответили
         for (const copy of pollsOfAsk.all(row.ask_id)) {
-            callApi('stopPoll', { chat_id: copy.chat_id, message_id: copy.message_id })
+            // закрытый опрос без reply_markup теряет кнопки; если он ещё нижний — оставляем
+            const keep = isBottomInline(copy.chat_id, copy.message_id) ? { reply_markup: inlineKeyboardFor(copy.chat_id) } : {};
+            callApi('stopPoll', { chat_id: copy.chat_id, message_id: copy.message_id, ...keep })
                 .catch((err) => console.error('Telegram stopPoll:', err.message));
         }
         const text = `Ответ на вопрос «${row.question}»${own ? ' (свой вариант)' : ''}: ${answer}`;

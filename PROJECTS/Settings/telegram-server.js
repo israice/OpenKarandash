@@ -343,6 +343,22 @@ async function callApi(method, payload, timeoutMs = 15000, extraSignal = null) {
     return data.result;
 }
 
+// Встроенные кнопки живут только под самым нижним письмом, отправленным в чат:
+// стоит уйти новому сообщению (письму, опросу, ответу на кнопку), как кнопки
+// прошлого снимаются. messageId = null — новое сообщение без встроенных кнопок.
+// Память в процессе: после перезапуска сервера кнопки прежнего письма остаются
+const bottomInline = new Map(); // chatId → message_id
+function moveInline(chatId, messageId) {
+    const key = String(chatId);
+    const prev = bottomInline.get(key);
+    if (messageId) bottomInline.set(key, messageId); else bottomInline.delete(key);
+    if (prev && prev !== messageId) {
+        callApi('editMessageReplyMarkup', { chat_id: chatId, message_id: prev, reply_markup: { inline_keyboard: [] } })
+            .catch(() => {}); // письмо старое или уже без кнопок — не ошибка
+    }
+}
+const isBottomInline = (chatId, messageId) => bottomInline.get(String(chatId)) === messageId;
+
 function remember(chatId, messageId, sessionId) {
     rememberReply.run(String(chatId), Number(messageId), sessionId, new Date().toISOString());
     trimReplies.run(MESSAGE_MEMORY); // старое подчищаем сразу, как и у истории выше
@@ -357,14 +373,16 @@ const SEND_RETRY_DELAYS_MS = [1000, 4000];
 async function send(chatId, text, replyMarkup) {
     for (let attempt = 0; ; attempt += 1) {
         try {
-            return await callApi('sendMessage', {
+            const sent = await callApi('sendMessage', {
                 chat_id: chatId,
                 text,
                 disable_web_page_preview: true,
-                // под каждым письмом — встроенные кнопки; обычная клавиатура
+                // встроенные кнопки — только у нижнего письма; обычная клавиатура
                 // остаётся с прошлого показа (её шлёт showKeyboard)
                 reply_markup: replyMarkup || inlineKeyboardFor(chatId),
             });
+            moveInline(chatId, replyMarkup ? null : sent.message_id);
+            return sent;
         } catch (err) {
             // «Telegram answered …» и текст его описания — это ответ сервиса,
             // а не сбой связи: сеть отработала, повторять нечего
@@ -781,6 +799,9 @@ function init(dependencies) {
         runInSession,
         sessionExists: (id) => deps.sessionExists(id),
         remember,
+        inlineKeyboardFor,
+        moveInline,
+        isBottomInline,
     });
     token = process.env[TOKEN_KEY] || '';
     users = parseUsers(process.env[USERS_KEY]);
