@@ -3664,10 +3664,58 @@ const handoverWatch = new Map();
 // Суждение выносится заранее (await classifyFailure перед вызовом), сюда
 // приходит уже из памяти; нет суждения — как раньше, передаём всё, кроме
 // остановки человеком и перезапуска
-function nextExecutor(errorText, tried) {
+function nextExecutor(errorText, state) {
     if (FALLBACK_OFF || NO_HANDOVER.test(String(errorText || ''))) return null;
     if (turnJudgment.knownFailure(errorText)?.handover === false) return null;
-    return Object.keys(AGENTS).find((key) => !tried.has(key) && AGENTS[key].connected()) || null;
+    if (state.attempts >= MAX_HANDOVERS) return null;
+    const dead = new Set(state.dead);
+    if (agentIsSpent(state.current, errorText)) dead.add(state.current);
+    // сначала всё бесплатное: другая бесплатная модель того же агента, потом
+    // другой бесплатный агент — и только потом платные (решение владельца
+    // 2026-09-21: платные подписки бережём, DOCS/decisions/066)
+    for (const name of FREE_AGENTS) {
+        if (dead.has(name) || !AGENTS[name].connected()) continue;
+        const model = (freeModels.get(name)?.models || []).find((m) => !state.tried.has(`${name}|${m}`));
+        if (model) return { name, model };
+    }
+    const paid = Object.keys(AGENTS).find((key) => !FREE_AGENTS.includes(key) && !dead.has(key) && AGENTS[key].connected());
+    return paid ? { name: paid, model: null } : null;
+}
+
+// агент исчерпан целиком, а не одна его модель: платного пробуем один раз, а у
+// бесплатного другая модель не поможет, если не принят ключ или он не подключён
+function agentIsSpent(name, errorText) {
+    if (!FREE_AGENTS.includes(name)) return true;
+    const reason = turnJudgment.knownFailure(errorText)?.reason;
+    return reason === 'auth' || reason === 'not_connected' || /not connected/i.test(String(errorText || ''));
+}
+
+// ---------- бесплатные модели: кому отдавать работу в первую очередь ----------
+
+const FREE_AGENTS = ['opencode', 'pi'];
+const FREE_MODEL_RE = /(:free|-free|\/free)$/i;
+// сколько раз за одну цепочку работа переходит дальше: бесплатных моделей у
+// OpenRouter десятки, перебирать их все — минуты тишины для человека
+const MAX_HANDOVERS = 4;
+const FREE_MODELS_TTL_MS = 10 * 60 * 1000;
+const FREE_MODELS_WAIT_MS = 25000;
+// агент → { at, models }. Список спрашивается у самого CLI и стоит секунд,
+// поэтому держим его в памяти: nextExecutor обязан отвечать сразу — по нему же
+// runTurn решает, слать ли письмо об ошибке (willHandOver)
+const freeModels = new Map();
+
+async function refreshFreeModels() {
+    const activeTargets = { opencode: activeOpenCodeTarget, pi: activePiTarget };
+    await Promise.all(FREE_AGENTS.map(async (name) => {
+        const target = activeTargets[name];
+        if (!target || Date.now() - (freeModels.get(name)?.at || 0) < FREE_MODELS_TTL_MS) return;
+        const list = await Promise.race([
+            AGENTS[name].models(target).catch(() => []),
+            new Promise((resolve) => setTimeout(() => resolve(null), FREE_MODELS_WAIT_MS)),
+        ]);
+        if (!list) return; // не дождались — остаёмся при прежнем списке
+        freeModels.set(name, { at: Date.now(), models: list.filter((m) => FREE_MODEL_RE.test(m) || m === 'opencode/big-pickle') });
+    }));
 }
 
 function willHandOver(sessionId, errorText) {
@@ -3675,50 +3723,59 @@ function willHandOver(sessionId, errorText) {
     // подключённом запасном агенте тоже считался «сейчас подхватят» — и письмо
     // о конце работы не уходило вовсе
     if (!errorText) return false;
-    const tried = sessionId && handoverWatch.get(sessionId);
-    return Boolean(tried && nextExecutor(errorText, tried));
+    const state = sessionId && handoverWatch.get(sessionId);
+    return Boolean(state && nextExecutor(errorText, state));
 }
 
 // { failure, started }: failure — ошибка последнего, кто пробовал (null — работа
 // сделана), started — завёлся ли вообще ход (отказ до старта в базу не попал)
 async function askWithFallback(name, params, onEvent) {
-    const tried = new Set();
-    let current = name;
+    // tried — пары «агент|модель», dead — агенты, исчерпанные целиком
+    const state = { tried: new Set(), dead: new Set(), attempts: 0, current: name };
     let request = params;
     let sessionId = params.sessionId || null;
+    let everStarted = false;
+    // список бесплатных моделей нужен до первой ошибки: после неё решать уже
+    // некогда. Первый раз стоит секунд, дальше берётся из памяти
+    if (!FALLBACK_OFF) await refreshFreeModels().catch(() => {});
     try {
         for (;;) {
-            tried.add(current);
-            if (sessionId) handoverWatch.set(sessionId, tried);
-            let started = false;
+            state.tried.add(`${state.current}|${request.model || ''}`);
+            if (sessionId) handoverWatch.set(sessionId, state);
             let failure = null;
-            await AGENTS[current].ask(request, (event) => {
+            await AGENTS[state.current].ask(request, (event) => {
                 if (event.type === 'session') {
-                    started = true;
+                    everStarted = true;
                     sessionId = event.id;
-                    handoverWatch.set(sessionId, tried);
+                    handoverWatch.set(sessionId, state);
                 }
                 if (event.type === 'error') failure = event.error;
                 onEvent(event);
             });
             if (!failure) return { failure: null, started: true };
             await turnJudgment.classifyFailure(failure).catch(() => null);
-            const spare = nextExecutor(failure, tried);
-            if (!spare) return { failure, started };
-            telegramTell(`🔁 ${current} не справился: ${telegramLetters.humanReason(failure)}. Работу продолжает ${spare}.`);
-            // модель и effort у каждого CLI свои — следующему их не передаём
+            const spare = nextExecutor(failure, state);
+            if (!spare) return { failure, started: everStarted };
+            if (agentIsSpent(state.current, failure)) state.dead.add(state.current);
+            state.attempts += 1;
+            const was = request.model ? `${state.current} (${request.model})` : state.current;
+            const next = spare.model ? `${spare.name} (${spare.model}, бесплатно)` : `${spare.name} (платный)`;
+            telegramTell(`🔁 ${was} не справился: ${telegramLetters.humanReason(failure)}. Работу продолжает ${next}.`);
+            // effort у каждого CLI свой — следующему его не передаём; модель —
+            // только бесплатную из его же списка
             request = {
                 // ход даже не начался — сессии нет, продолжать нечего: следующий
                 // получает поручение как есть (оно же станет заголовком сессии)
-                prompt: !started ? params.prompt
-                    : `[OpenKarandash] Предыдущий исполнитель (${current}) оборвался с ошибкой: «${String(failure).slice(0, 300)}». `
+                prompt: !everStarted ? params.prompt
+                    : `[OpenKarandash] Предыдущий исполнитель (${was}) оборвался с ошибкой: «${String(failure).slice(0, 300)}». `
                     + `Доведи до конца последнее поручение человека:\n\n${params.prompt}`,
                 sessionId: sessionId || undefined,
+                model: spare.model || undefined,
                 mode: params.mode,
                 hints: params.hints,
                 plan: params.plan,
             };
-            current = spare;
+            state.current = spare.name;
         }
     } finally {
         if (sessionId) handoverWatch.delete(sessionId);
