@@ -67,6 +67,14 @@ const THRESHOLDS = {
     // слабому признаку нельзя. Срабатывает только вместе с жёстким фактом от
     // кода: ход не сделал ни одного шага инструментом
     claimsVerified: 0.8,
+    // отчёт написан человеческим языком, без имён файлов и функций. Ниже планки
+    // письмо не блокируется и не переписывается — суждение только пишется в
+    // строку хода: править по нему нечем, пока не измерено, как часто модель
+    // ошибается на настоящих отчётах
+    plainLanguage: 0.5,
+    // в диффе ветки есть правки, которых поручение не просило. Высоко и только
+    // как подсказка рецензенту: ветку по этому числу никто не отклоняет
+    branchOffTask: 0.7,
 };
 
 // сколько символов текста хода отдаём на суждение: доке важен не объём, а то,
@@ -163,6 +171,24 @@ const TURN_QUESTIONS = {
             },
         },
     },
+    // правило проекта: итоговый ответ — отчёт руководителю, без имён файлов и
+    // функций. Модель судит язык, а форму (сколько абзацев, есть ли список)
+    // считает код в judgeTurn: считать модель не умеет, а здесь и не надо
+    plain_language: {
+        type: 'noul',
+        instructions: 'Is `turn.answer` written in plain language for a non-programmer, without file names, function names, code identifiers or programmer jargon?',
+        criteria: {
+            true: {
+                what: 'It says in ordinary words what was done and what changes for the person.',
+                examples: ['Теперь письмо в Telegram уходит сразу, а не через минуту.', 'Проверил на живом сервере: всё работает, ошибок нет.'],
+            },
+            false: {
+                what: 'It names files, functions, line numbers or uses words like commit, refactoring, endpoint.',
+                not_for: 'A short plain answer that merely mentions a product feature by its name.',
+                examples: ['Правка в server.js, функция runTurn, строка 1104.', 'Сделал рефакторинг и закоммитил.'],
+            },
+        },
+    },
     work_kind: {
         type: 'choice',
         instructions: 'What kind of work does `turn.answer` describe?',
@@ -200,6 +226,14 @@ const TURN_QUESTIONS = {
     },
 };
 
+// сколько абзацев в ответе и есть ли в нём список: правило «три абзаца, без
+// списков» проверяется кодом, а не моделью
+function reportShape(text) {
+    const paragraphs = String(text || '').split(/\n\s*\n/).filter((p) => p.trim()).length;
+    const bulleted = /^\s*(?:[-*•]|\d+[.)])\s+\S/m.test(String(text || ''));
+    return { paragraphs, bulleted };
+}
+
 // ход уже записан в базу и отдан в ленту, когда нас зовут, поэтому лишние
 // ~200 мс здесь никого не задерживают
 async function judgeTurn({ request, answer, errorText, stopReason, toolSteps }) {
@@ -224,6 +258,7 @@ async function judgeTurn({ request, answer, errorText, stopReason, toolSteps }) 
     const finalReport = typesafe.noul(res.answers, 'final_report');
     const workDone = typesafe.noul(res.answers, 'work_done');
     const claimsVerified = typesafe.noul(res.answers, 'claims_verified');
+    const plainLanguage = typesafe.noul(res.answers, 'plain_language');
     const awaitsHuman = typesafe.noul(res.answers, 'awaits_human');
     const workKind = typesafe.choice(res.answers, 'work_kind');
     const attention = typesafe.score(res.answers, 'needs_attention');
@@ -233,6 +268,10 @@ async function judgeTurn({ request, answer, errorText, stopReason, toolSteps }) 
         finalReport,
         workDone,
         claimsVerified,
+        plainLanguage,
+        // форма отчёта — факт, а не суждение: считает код. Абзацы — куски текста,
+        // разделённые пустой строкой; список — строки, начинающиеся с «-», «*» или «1.»
+        reportShape: reportShape(text),
         toolSteps: toolSteps ?? null,
         // жёсткое противоречие, а не оттенок: отчёт говорит «проверено», а ход
         // не сделал ни одного шага инструментом — значит, проверять было нечем.
@@ -691,4 +730,47 @@ async function judgeSkill({ title, how, proof }, existingTitles) {
     return { ok: true, proven };
 }
 
-module.exports = { judgeSkill, matchPollReply, pickRelevantTurns, classifyFailure, knownFailure, judgeTurn, shouldNotify, pickDecisionHints, hintPreamble, classifyInbox, THRESHOLDS, TURN_QUESTIONS };
+// ---------- ветка исполнителя: по делу ли дифф ----------
+
+const DIFF_LIMIT = 12000;
+
+// Подсказка рецензенту перед разбором ветки (SYSTEM/branch-gate.mjs): делает ли
+// дифф то, о чём просило поручение, и нет ли в нём правок, которых не просили.
+// Ветку по этому числу не отклоняют — судья ошибается, а рецензент читает код;
+// цель — показать, куда смотреть в первую очередь. Суждения нет — null
+async function judgeBranch({ task, diff, files }) {
+    const request = String(task || '').trim();
+    const patch = String(diff || '').trim();
+    if (!typesafe.isEnabled() || !request || !patch) return null;
+    const state = {
+        task: request.slice(0, PROMPT_LIMIT),
+        changed_files: (files || []).slice(0, 60).join('\n'),
+        diff: patch.slice(0, DIFF_LIMIT),
+        diff_truncated: patch.length > DIFF_LIMIT,
+    };
+    const res = await typesafe.systemOne(state, {
+        on_task: {
+            type: 'noul',
+            instructions: 'Does `diff` carry out what `task` asks for?',
+            criteria: {
+                true: { what: 'The changes are the ones the task calls for.' },
+                false: { what: 'The changes do not do what the task asks, or only a small part of it.' },
+            },
+        },
+        off_task: {
+            type: 'noul',
+            instructions: 'Does `diff` contain changes that `task` did not ask for?',
+            criteria: {
+                true: { what: 'Files or behaviour unrelated to the task are changed, or extra features are added.', not_for: 'Small edits that the task needs (a version line, a note about the change).' },
+                false: { what: 'Every change serves the task.' },
+            },
+        },
+    });
+    if (!res?.answers) return null;
+    const onTask = typesafe.noul(res.answers, 'on_task');
+    const offTask = typesafe.noul(res.answers, 'off_task');
+    if (onTask === null && offTask === null) return null;
+    return { onTask, offTask, flagged: (offTask ?? 0) >= THRESHOLDS.branchOffTask, truncated: patch.length > DIFF_LIMIT };
+}
+
+module.exports = { judgeBranch, judgeSkill, matchPollReply, pickRelevantTurns, classifyFailure, knownFailure, judgeTurn, shouldNotify, pickDecisionHints, hintPreamble, classifyInbox, THRESHOLDS, TURN_QUESTIONS };

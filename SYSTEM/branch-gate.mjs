@@ -2,6 +2,9 @@
 //
 //   1. машинная    — `npm run check` на рабочей копии ветки (SYSTEM/checks.js --root);
 //   2. интерфейс   — если ветка трогает клиент: прогон `/branch/<ветка>/` (SYSTEM/ui-walk.mjs);
+//   2а. подсказка jev — только если дано поручение (--task): по делу ли дифф и нет ли
+//      правок, которых не просили. Ветку по ней не отклоняют, она лишь говорит
+//      рецензенту, куда смотреть первым (turn-judgment.js, judgeBranch);
 //   3. дешёвый рецензент, 4. дорогой — их зовёт Hermes, не этот скрипт
 //      (оркестрация живёт в Hermes, DOCS/decisions/040): скрипт только говорит,
 //      дошла ли ветка до рецензента, и отдаёт ему список правок.
@@ -9,7 +12,7 @@
 // Ветка, упавшая на шаге 1 или 2, до рецензента не доходит вовсе — в этом и
 // экономия: модель не тратится на то, что ловит линтер. DOCS/decisions/049.
 //
-// Запуск: `npm run gate -- <ветка> [--json]`. Код выхода: 0 — к рецензенту,
+// Запуск: `npm run gate -- <ветка> [--task "поручение"] [--json]`. Код выхода: 0 — к рецензенту,
 // 1 — на доработку, 2 — ветку нельзя проверить (нет копии, нет правок),
 // 3 — интерфейс отсюда не проверить, повторить на хосте.
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -20,7 +23,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const asJson = args.includes('--json');
-const branch = args.find((a) => !a.startsWith('--'));
+const taskAt = args.indexOf('--task');
+const task = taskAt >= 0 ? String(args[taskAt + 1] || '').trim() : '';
+const branch = args.find((a, i) => !a.startsWith('--') && i !== taskAt + 1);
 const git = (...a) => execFileSync('git', a, { cwd: ROOT, encoding: 'utf8' }).trim();
 
 const result = { branch, stages: [], verdict: null, next: null, files: [] };
@@ -31,7 +36,7 @@ const finish = (code, verdict, next) => {
     else {
         console.log(`Ветка ${branch}: правок в файлах — ${result.files.length}`);
         for (const s of result.stages) {
-            console.log(`${s.ok === null ? 'пропуск' : s.ok ? '   ok  ' : ' FAIL  '} ${s.name}${s.note ? ` — ${s.note}` : ''}`);
+            console.log(`${s.hint ? 'подсказ' : s.ok === null ? 'пропуск' : s.ok ? '   ok  ' : ' FAIL  '} ${s.name}${s.note ? ` — ${s.note}` : ''}`);
             if (s.ok === false && s.output) console.log(s.output.split('\n').map((l) => `          ${l}`).join('\n'));
         }
         console.log(`\nИтог: ${verdict}. Дальше: ${next}`);
@@ -39,7 +44,7 @@ const finish = (code, verdict, next) => {
     process.exit(code);
 };
 
-if (!branch) { console.error('Нужно имя ветки: npm run gate -- <ветка> [--json]'); process.exit(2); }
+if (!branch) { console.error('Нужно имя ветки: npm run gate -- <ветка> [--task "поручение"] [--json]'); process.exit(2); }
 
 // рабочая копия ветки — по самому git, как и предпросмотр (DOCS/decisions/042)
 let worktree = null;
@@ -86,5 +91,22 @@ if (!clientFiles.length) {
     if (walk.status !== 0) finish(1, 'на доработку', 'исполнителю: исправить ошибки интерфейса — рецензента не звать');
 }
 
+// 2а. подсказка jev рецензенту. Нет поручения, ключа или ответа — шага просто нет:
+// ветка доходит до рецензента, как доходила. Отклонить по этому числу нельзя
+let hint = '';
+if (task) {
+    let diff = '';
+    try { diff = execFileSync('git', ['diff', `main...${branch}`], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }); } catch {}
+    const { createRequire } = await import('node:module');
+    const judged = await createRequire(import.meta.url)('./core/turn-judgment.js').judgeBranch({ task, diff, files: result.files }).catch(() => null);
+    if (judged) {
+        const pct = (n) => (n === null ? '—' : `${Math.round(n * 100)}%`);
+        result.stages.push({ name: 'jev: дифф по поручению', ok: true, hint: true, note: `по делу ${pct(judged.onTask)}, лишнего ${pct(judged.offTask)}${judged.truncated ? ' (дифф усечён)' : ''}` });
+        if (judged.flagged) hint = 'jev видит в диффе правки, которых поручение не просило, — рецензенту смотреть их первыми; ';
+    } else {
+        result.stages.push({ name: 'jev: дифф по поручению', ok: null, note: 'суждения нет (нет ключа или ответа)' });
+    }
+}
+
 const serverTouched = result.files.some((f) => f === 'server.js' || /-server\.js$/.test(f) || f.startsWith('SYSTEM/core/'));
-finish(0, 'прошла машинные проверки', `дешёвый рецензент (hermes-home/bin/handoff reviewer); дорогой проверяющий — только если дешёвый принял${serverTouched ? '. Ветка меняет сервер: предпросмотр этого не показывает, рецензенту смотреть код' : ''}`);
+finish(0, 'прошла машинные проверки', `${hint}дешёвый рецензент (hermes-home/bin/handoff reviewer); дорогой проверяющий — только если дешёвый принял${serverTouched ? '. Ветка меняет сервер: предпросмотр этого не показывает, рецензенту смотреть код' : ''}`);
