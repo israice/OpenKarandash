@@ -465,6 +465,17 @@ function answerWithoutTurn(intent, sessionId) {
     return '👌';
 }
 
+// Последняя работа лички, которая ещё есть в пульте. Удалённые забываем молча:
+// иначе сообщение без reply упиралось в «работа удалена», хотя человек писал
+// не в неё, а просто в личку
+function liveLastSession(chatId) {
+    for (;;) {
+        const sessionId = lastSessionOfChat.get(chatId)?.sessionId;
+        if (!sessionId || deps.sessionExists(sessionId)) return sessionId || null;
+        forgetSession.run(sessionId);
+    }
+}
+
 // что кнопка делает и что ответить человеку
 function pressButton(chatId, button) {
     const now = new Date().toISOString();
@@ -489,7 +500,7 @@ function pressButton(chatId, button) {
 
 // Первое сообщение после END: поручение заводит новую сессию в пульте
 async function startNewSession(chatId, text, messageId) {
-    const like = lastSessionOfChat.get(chatId)?.sessionId || null;
+    const like = liveLastSession(chatId) || null;
     let created = null;
     try {
         await deps.startNew({
@@ -553,7 +564,7 @@ async function handleUpdate(update) {
         await startNewSession(chatId, message.text, message.message_id);
         return;
     }
-    const sessionId = repliedSession || lastSessionOfChat.get(chatId)?.sessionId;
+    const sessionId = repliedSession || liveLastSession(chatId);
     // отвечать некуда — значит, это поручение на новую работу, как после END
     if (!sessionId) {
         await startNewSession(chatId, message.text, message.message_id);

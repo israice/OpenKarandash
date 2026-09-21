@@ -956,6 +956,9 @@ if (process.send) {
 }
 
 // счётчик идущих ходов: по нему откладывается и пересборка карты, и перезапуск
+// сколько отложенный перезапуск ждёт письмо о конце хода (см. finally в runTurn)
+const MAIL_WAIT_MS = 30000;
+
 function setBusy(delta) {
     running += delta;
     if (running === 0) confirmRestart();
@@ -985,6 +988,7 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
     // итоговый duration_ms в базе
     const run = { sessionId: sessionId || null, child: null, done: null, target, startedAt: Date.now() };
     let resolveDone;
+    let mail = null; // письмо о конце хода: перезапуск сервера его дожидается
     run.done = new Promise((resolve) => { resolveDone = resolve; });
 
     // usage/cost/duration копим по ходу стрима и пишем разом в finishExchange:
@@ -1115,7 +1119,7 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
             // ошибка и ход, остановившийся с вопросом к человеку, уходят всегда.
             // Без await: почта не должна ни задерживать ход, ни ронять его
             if (notify.send && !willHandOver(ctx.session, ctx.errorText)) {
-                notifyTurnFinished({
+                mail = notifyTurnFinished({
                     sessionId: ctx.session,
                     title: getSessionTitle.get(ctx.session)?.title || '',
                     text: ctx.answer || '',
@@ -1123,7 +1127,7 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
                     // и шаги, которые агент успел сделать до обрыва
                     errorText: ctx.errorText || null,
                     steps: ctx.errorText ? listToolSteps.all(ctx.session, ctx.userPosition).map((row) => row.text) : null,
-                });
+                }).catch(() => {});
             }
         }
         // работа окончена — отпускаем подключившиеся страницы
@@ -1133,9 +1137,15 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
         }
         // занятость снимаем только после записи в базу, иначе отложенный
         // перезапуск сервера может оборвать нас между ответом и записью
-        setBusy(-1);
         activeRuns.delete(runId);
         resolveDone();
+        // Ход, правивший серверный файл, заканчивается отложенным перезапуском —
+        // и письмо о конце работы гибло вместе с процессом: работа сделана, а в
+        // Telegram тишина. Поэтому занятость держим, пока письмо не ушло (с
+        // потолком: зависшая почта не должна держать перезапуск вечно). Ход для
+        // страниц и очереди уже закончен — ждёт только перезапуск
+        if (mail) await Promise.race([mail, new Promise((resolve) => setTimeout(resolve, MAIL_WAIT_MS))]);
+        setBusy(-1);
         // переписка живёт в .sessions.db, а этот файл слежение намеренно не видит:
         // без явного вызова память о только что прошедшей сессии не попала бы
         // ни в vault, ни в поиск до следующей правки любого файла
@@ -3628,6 +3638,10 @@ function nextExecutor(errorText, tried) {
 }
 
 function willHandOver(sessionId, errorText) {
+    // подхватывают только сломавшийся ход. Без этой строки успешный ход при
+    // подключённом запасном агенте тоже считался «сейчас подхватят» — и письмо
+    // о конце работы не уходило вовсе
+    if (!errorText) return false;
     const tried = sessionId && handoverWatch.get(sessionId);
     return Boolean(tried && nextExecutor(errorText, tried));
 }
