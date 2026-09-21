@@ -17,16 +17,6 @@ const turnJudgment = require('../../SYSTEM/core/turn-judgment.js');
 // свой экземпляр Eta со своей папкой шаблонов (см. «Серверные фрагменты» в
 // AGENTS.md): cache:false — правка .eta подхватывается без перезапуска
 const eta = new Eta({ views: __dirname, cache: false });
-// ВРЕМЕННО: дневник опроса — понять, откуда берётся Conflict
-const fsDiag = require('fs');
-const diagStart = Date.now();
-function diag(text) {
-    try {
-        fsDiag.appendFileSync('DATA/telegram-poll.log',
-            `${new Date().toISOString()} pid=${process.pid} +${Math.round((Date.now() - diagStart) / 1000)}s ${text}\n`);
-    } catch { /* дневник не должен ронять мост */ }
-}
-
 const TOKEN_KEY = 'TELEGRAM_BOT_TOKEN';
 const USERS_KEY = 'TELEGRAM_USER_IDS';
 
@@ -261,8 +251,8 @@ function state() {
 // Длинный опрос ходит своим соединением, мимо общего пула fetch. В общем пуле
 // отправка вставала в очередь за висящим getUpdates и уходила, только когда он
 // возвращался: письмо либо опаздывало на десятки секунд, либо все три попытки
-// send успевали истечь по таймауту — при исправном Telegram. Поймано на
-// журнале: «send ok» случался через 0,2 с после «ok run=… took=50074ms»
+// send успевали истечь по таймауту — при исправном Telegram. Поймано замером:
+// отправка проходила через 0,2 с после возврата 50-секундного опроса
 const https = require('https');
 const pollAgent = new https.Agent({ keepAlive: true, maxSockets: 1 });
 
@@ -326,8 +316,7 @@ const SEND_RETRY_DELAYS_MS = [1000, 4000];
 async function send(chatId, text) {
     for (let attempt = 0; ; attempt += 1) {
         try {
-            const sendStarted = Date.now();
-            const sent = await callApi('sendMessage', {
+            return await callApi('sendMessage', {
                 chat_id: chatId,
                 text,
                 disable_web_page_preview: true,
@@ -335,13 +324,10 @@ async function send(chatId, text) {
                 // ближайшее же сообщение
                 reply_markup: KEYBOARD,
             });
-            diag(`send ok attempt=${attempt} took=${Date.now() - sendStarted}ms`);
-            return sent;
         } catch (err) {
             // «Telegram answered …» и текст его описания — это ответ сервиса,
             // а не сбой связи: сеть отработала, повторять нечего
             const answered = /Telegram answered|chat not found|bot was blocked|Forbidden/i.test(err.message);
-            diag(`send err attempt=${attempt} msg=${err.message} cause=${err.cause?.code || err.cause?.message || '-'}`);
             if (answered || attempt >= SEND_RETRY_DELAYS_MS.length) throw err;
             await sleep(SEND_RETRY_DELAYS_MS[attempt]);
         }
@@ -549,7 +535,6 @@ async function pollLoop(myRun) {
                 skipping ? 15000 : (POLL_TIMEOUT_S + 15) * 1000,
                 pollAbort.signal,
             );
-            diag(`ok run=${myRun} skipping=${skipping} took=${Date.now() - startedAt}ms n=${updates?.length ?? 0}`);
             if (pollRun !== myRun) return; // опрос сменили, пока запрос висел
             conflictSince = null;
             lastError = null;
@@ -574,7 +559,6 @@ async function pollLoop(myRun) {
             // без этой паузы цикл превратился бы в холостую молотилку
             if (Date.now() - startedAt < 1000) await sleep(1000);
         } catch (err) {
-            diag(`err run=${myRun} pollRun=${pollRun} msg=${err.message}`);
             if (pollRun !== myRun) return; // ключ сменили прямо во время запроса
             if (!/conflict/i.test(err.message)) {
                 conflictSince = null;
@@ -591,7 +575,6 @@ async function pollLoop(myRun) {
 }
 
 function stopPolling() {
-    diag(`stopPolling from ${new Error().stack.split('\n')[2].trim()}`);
     pollRun += 1;           // всё, что крутилось до этого, больше не наше
     pollAbort?.abort();
     pollAbort = null;
@@ -610,7 +593,6 @@ function startPolling() {
 // ---------- подключение ----------
 
 async function connect() {
-    diag('connect()');
     const me = await callApi('getMe');
     botName = me.username ? `@${me.username}` : me.first_name || 'bot';
     lastError = null;

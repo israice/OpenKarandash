@@ -7,7 +7,8 @@
 //   (обновление poll_answer);
 // - allow_adding_options — человек дописывает свой вариант прямо в опрос, боту
 //   приходит служебное сообщение poll_option_added с его текстом. Это и есть
-//   «поле для своего ответа»: отдельного текстового поля у опроса нет;
+//   «поле для своего ответа»: отдельного текстового поля у опроса нет. Ответом
+//   становится голос за дописанный вариант, а не само дописывание;
 // - ответ текстом (reply) на сообщение с опросом — тот же свой ответ, запасным
 //   путём: старые приложения дописывать варианты не умеют;
 // - stopPoll — отвеченный опрос закрывается, второй раз на него не ответить.
@@ -24,9 +25,15 @@ const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
 const QUESTION_LIMIT = 300;
 const OPTION_LIMIT = 100;
 const OPTIONS_MAX = 12;
-const OWN_ANSWER_HINT = 'Свой ответ: добавьте вариант в опрос или ответьте на это сообщение текстом.';
+// Сколько дописанный вариант ждёт голоса за себя, прежде чем стать ответом сам.
+// Дописать вариант и проголосовать за него — два разных касания. Ответом
+// считаем голос: опрос закрывается уже с ним, и человек видит свои 100% и
+// счётчик, как при обычном выборе. Раньше ответом был сам дописанный вариант,
+// опрос закрывался до голоса — и оставался с нулём проголосовавших. Срок
+// нужен на случай, если человек дописал и не нажал: ответ не должен пропасть
+const OWN_GRACE_MS = 20000;
 
-function create({ database, callApi, users, runInSession, sessionExists, remember }) {
+function create({ database, callApi, users, runInSession, sessionExists, remember, ownGraceMs = OWN_GRACE_MS }) {
     // Опрос живёт в базе, а не в памяти, по той же причине, что и связь
     // «сообщение → сессия»: человек отвечает через час, а сервер за это время
     // перезапускался не раз. ask_id связывает копии одного вопроса у разных
@@ -52,6 +59,10 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
     const pollsOfAsk = database.prepare('SELECT chat_id, message_id FROM telegram_polls WHERE ask_id = ?');
     // «кто первый ответил» решает база одной командой, а не проверка в коде:
     // голос и дописанный вариант приходят двумя обновлениями почти разом
+    const saveOptions = database.prepare('UPDATE telegram_polls SET options = ? WHERE ask_id = ? AND chat_id = ?');
+    // голос за вариант, текста которого мы ещё не знаем: poll_answer обогнал
+    // служебное сообщение о дописанном варианте. Живёт в памяти — это секунды
+    const pendingVotes = new Map(); // poll_id → [persistent id]
     const markAnswered = database.prepare('UPDATE telegram_polls SET answered_at = ? WHERE ask_id = ? AND answered_at IS NULL');
 
     // Ход, задавший опрос, кончается словами вроде «жду ответа», и мост слал их
@@ -89,8 +100,10 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
             is_anonymous: false,
             allows_multiple_answers: Boolean(multiple),
             allows_revoting: false, // ответ уходит агенту сразу — передумать уже некуда
+            // подсказку про свой ответ в description не кладём: она вставала
+            // лишней строкой над вопросом, а «добавить вариант» Telegram
+            // показывает и сам
             allow_adding_options: true,
-            description: OWN_ANSWER_HINT,
         };
 
         let sent = 0;
@@ -138,20 +151,38 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
         if (!picked.length) return; // голос отозван
         // выбран вариант, которого мы не знаем, — это только что дописанный
         // свой: его текст принесёт poll_option_added, он и станет ответом
-        if (picked.some((text) => text === undefined)) return;
-        await finalize(row, picked.join(', '), false);
+        if (picked.some((text) => text === undefined)) {
+            pendingVotes.set(row.poll_id, answer.option_persistent_ids || []);
+            return;
+        }
+        const own = (answer.option_persistent_ids || []).some((id) => options.find((o) => o.id === id)?.own);
+        await finalize(row, picked.join(', '), own);
     }
 
     // служебное сообщение poll_option_added: человек дописал свой вариант.
-    // Считаем это ответом сразу, не дожидаясь голоса за него: дописывают
-    // вариант затем, чтобы его и выбрать
+    // Запоминаем его текст и ждём голоса за него (см. OWN_GRACE_MS)
     async function handleOptionAdded(message) {
         const chatId = String(message.chat?.id ?? '');
         if (!users().includes(chatId)) return;
         const added = message.poll_option_added;
         const row = added.poll_message?.message_id && pollByMessage.get(chatId, Number(added.poll_message.message_id));
         if (!row || row.answered_at || !added.option_text) return;
-        await finalize(row, added.option_text, true);
+        const options = JSON.parse(row.options);
+        options.push({ id: added.option_persistent_id ?? null, text: added.option_text, own: true });
+        saveOptions.run(JSON.stringify(options), row.ask_id, row.chat_id);
+
+        // голос уже пришёл и ждал только текста
+        const voted = pendingVotes.get(row.poll_id);
+        if (voted) {
+            pendingVotes.delete(row.poll_id);
+            const texts = voted.map((id) => options.find((o) => o.id === id)?.text).filter(Boolean);
+            if (texts.length) { await finalize(row, texts.join(', '), true); return; }
+        }
+        // finalize сам не даст ответить дважды, если голос успеет раньше
+        const timer = setTimeout(() => {
+            finalize(row, added.option_text, true).catch((err) => console.error('Telegram poll own answer:', err.message));
+        }, ownGraceMs);
+        timer.unref();
     }
 
     // текст ответом (reply) на сообщение с открытым опросом — свой ответ.
