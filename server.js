@@ -1185,9 +1185,9 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode, plan },
 // Они едут тем же каналом, что и пересказ истории: это не вопрос человека,
 // а служебная преамбула, поэтому в тексте строки сессии её быть не должно —
 // зато она попадает в «Sent to model» там, где коннектор его пишет
-function resumeAndHandoff(sessionId, targetId, hints, plan) {
+async function resumeAndHandoff(sessionId, targetId, hints, plan, prompt) {
     const resumeId = sessionId ? getCliSession.get(sessionId, targetId)?.id : null;
-    const history = sessionId && !resumeId ? handoffPreamble(sessionId) : '';
+    const history = sessionId && !resumeId ? await handoffPreamble(sessionId, prompt) : '';
     // третья часть приставки — как задать человеку вопрос опросом Telegram
     // (блок [ASK], DOCS/decisions/059); пусто, пока мост не настроен
     // четвёртая — ход начат из Telegram: агент первой строкой говорит, как понял
@@ -1291,7 +1291,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode, hints, plan }
         return send({ type: 'error', error: `Unknown effort level: ${effort}` });
     }
 
-    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints, plan);
+    const { resumeId, handoff } = await resumeAndHandoff(sessionId, target.id, hints, plan, prompt);
 
     const args = ['-p', '--output-format', 'stream-json', '--verbose', ...LEAN_ARGS, ...THINKING_ARGS, ...PARTIAL_ARGS];
     if (model) args.push('--model', model);
@@ -1702,7 +1702,7 @@ async function askOpenCode({ prompt, model, sessionId, mode, hints, plan }, send
     const target = activeOpenCodeTarget;
     if (!prompt) return send({ type: 'error', error: 'Empty request' });
 
-    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints, plan);
+    const { resumeId, handoff } = await resumeAndHandoff(sessionId, target.id, hints, plan, prompt);
     const args = ['run', handoff + prompt, '--format', 'json'];
     if (model) args.push('--model', model);
     if (resumeId) args.push('--session', resumeId);
@@ -2063,7 +2063,7 @@ async function askPi({ prompt, model, effort, sessionId, mode, hints, plan }, se
         return send({ type: 'error', error: `Unknown effort level: ${effort}` });
     }
 
-    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints, plan);
+    const { resumeId, handoff } = await resumeAndHandoff(sessionId, target.id, hints, plan, prompt);
 
     const args = ['-p', '--mode', 'json'];
     if (model) args.push('--model', model);
@@ -2526,7 +2526,7 @@ async function askHermes({ prompt, sessionId, mode, model, effort, hints, plan }
         // (target.id): с жёстким 'hermes' она не находилась никогда, и каждый
         // ход уходил с преамбулой «у тебя нет своей истории», хотя Hermes держит
         // её сам — модель путалась и повторяла разбор с нуля
-        const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints, plan);
+        const { resumeId, handoff } = await resumeAndHandoff(sessionId, target.id, hints, plan, prompt);
         let hermesId = resumeId;
         if (!hermesId) {
             hermesId = `ok-${ctx.session}`;
@@ -3108,10 +3108,25 @@ const setCliSession = db.prepare(`
 // базы, чтобы он понимал, о чём речь, и продолжал по существу
 const RESUME_MESSAGES = 12;
 
-function handoffPreamble(sessionId) {
-    const history = listMessages.all(sessionId)
-        .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.text?.trim())
-        .slice(-RESUME_MESSAGES);
+// Пересказ для агента, у которого своей истории нет. Раньше — просто последние
+// RESUME_MESSAGES реплик: в длинной работе (а работа из Telegram тянется днями)
+// из пересказа выпадало само поручение и решения, принятые в начале. Теперь
+// всегда едут первое поручение человека и свежий хвост, а из середины — те
+// реплики, которые jev считает нужными для текущего запроса
+// (pickRelevantTurns, DOCS/decisions/068). Нет суждения — середина пропускается
+const RESUME_TAIL = 8;
+const RESUME_PICKED = 4;
+
+async function handoffPreamble(sessionId, prompt) {
+    const all = listMessages.all(sessionId)
+        .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.text?.trim());
+    let history = all.slice(-RESUME_MESSAGES);
+    if (all.length > RESUME_MESSAGES) {
+        const tail = all.slice(-RESUME_TAIL);
+        const middle = all.slice(1, -RESUME_TAIL);
+        const picked = await turnJudgment.pickRelevantTurns(prompt, middle.map((m) => m.text), RESUME_PICKED).catch(() => []);
+        history = [all[0], ...picked.map((index) => middle[index]), ...tail];
+    }
     if (!history.length) return '';
 
     const lines = history.map((m) => `${m.role === 'user' ? 'Human' : 'Assistant'}: ${clip(m.text.trim())}`);

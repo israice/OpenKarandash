@@ -20,6 +20,7 @@
 
 const crypto = require('crypto');
 const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
+const turnJudgment = require('../../SYSTEM/core/turn-judgment.js');
 
 // пределы самого Telegram: проверяем до сети, чтобы отказ был понятным
 const QUESTION_LIMIT = 300;
@@ -268,7 +269,14 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
     async function handleReply(chatId, replyTo, text) {
         const row = replyTo && pollByMessage.get(String(chatId), Number(replyTo));
         if (!row || row.answered_at) return false;
-        await finalize(row, String(text).trim(), true);
+        // ответ словами часто называет готовый вариант («давай второй, но попроще»):
+        // какой именно — выбирает jev, а слова человека едут следом, чтобы
+        // уточнение не потерялось. Не уверен — это свой вариант, как раньше
+        const reply = String(text).trim();
+        const options = JSON.parse(row.options).filter((o) => !o.own).map((o) => o.text);
+        const index = await turnJudgment.matchPollReply(row.question, options, reply).catch(() => null);
+        if (index === null) await finalize(row, reply, true);
+        else await finalize(row, `${options[index]} (словами человека: «${reply}»)`, false);
         return true;
     }
 

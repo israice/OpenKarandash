@@ -590,4 +590,105 @@ function knownFailure(errorText) {
     return failureCache.get(String(errorText || '').trim()) || null;
 }
 
-module.exports = { classifyFailure, knownFailure, judgeTurn, shouldNotify, pickDecisionHints, hintPreamble, classifyInbox, THRESHOLDS, TURN_QUESTIONS };
+// ---------- что из старой переписки нужно новому агенту ----------
+
+const TURNS_MAX = 40;        // сколько реплик середины отдаём на суждение
+const TURN_EXCERPT = 500;
+const TURN_RELEVANT = 0.6;
+
+// Индексы реплик (по возрастанию), без которых новый агент не поймёт текущий
+// запрос: принятые решения, ограничения, названные файлы. Не больше limit штук;
+// суждения нет — пустой список
+async function pickRelevantTurns(request, turns, limit) {
+    const text = String(request || '').trim();
+    if (!typesafe.isEnabled() || !text || !Array.isArray(turns) || !turns.length) return [];
+    // берём ближайшие к концу: они вероятнее относятся к текущему делу
+    const offset = Math.max(0, turns.length - TURNS_MAX);
+    const state = { request: text.slice(0, PROMPT_LIMIT), turns: {} };
+    const questions = {};
+    turns.slice(offset).forEach((turn, i) => {
+        const id = `t${i}`;
+        state.turns[id] = String(turn || '').replace(/\s+/g, ' ').trim().slice(0, TURN_EXCERPT);
+        questions[id] = {
+            type: 'noul',
+            instructions: `Would an assistant who has not seen the conversation need \`turns.${id}\` to carry out \`request\` correctly?`,
+            criteria: {
+                true: { what: 'It states a decision, a constraint, a preference, a named file or place, or a result that the request builds on.' },
+                false: { what: 'It is about another matter, is small talk, or only repeats what the request itself says.' },
+            },
+        };
+    });
+    const res = await typesafe.systemOne(state, questions);
+    if (!res?.answers) return [];
+    return Object.keys(questions)
+        .map((id, i) => ({ index: offset + i, relevance: typesafe.noul(res.answers, id) ?? 0 }))
+        .filter((t) => t.relevance >= TURN_RELEVANT)
+        .sort((a, b) => b.relevance - a.relevance)
+        .slice(0, limit)
+        .map((t) => t.index)
+        .sort((a, b) => a - b);
+}
+
+// ---------- ответ на опрос своими словами ----------
+
+const REPLY_MATCH = 0.7;
+
+// Человек ответил на опрос текстом: «давай второй», «тот, что с базой, но
+// попроще». Какой готовый вариант он имел в виду — индекс в options либо null
+// (свой ответ, не из списка). Агенту уходят и вариант, и слова человека:
+// уточнение терять нельзя
+async function matchPollReply(question, options, reply) {
+    const text = String(reply || '').trim();
+    if (!typesafe.isEnabled() || !text || !Array.isArray(options) || options.length < 2) return null;
+    const criteria = {};
+    options.forEach((option, i) => {
+        criteria[`o${i + 1}`] = { what: `The person chooses option number ${i + 1}: "${String(option).slice(0, 120)}".` };
+    });
+    criteria.own = { what: 'The person gives an answer of their own that is none of the listed options, or asks something back.' };
+    const res = await typesafe.systemOne(
+        { question: String(question || '').slice(0, 300), reply: text.slice(0, 500) },
+        { pick: { type: 'choice', instructions: 'Which option does `reply` choose as the answer to `question`? Options may be referred to by number, by position or by meaning.', criteria } },
+    );
+    const pick = typesafe.choice(res?.answers, 'pick');
+    if (!pick || pick.value === 'own' || (pick.confidence ?? 0) < REPLY_MATCH) return null;
+    const index = Number(pick.value.slice(1)) - 1;
+    return Number.isInteger(index) && options[index] !== undefined ? index : null;
+}
+
+// ---------- запись приёма в память работника ----------
+
+const SKILL_PROVEN = 0.6;
+const SKILL_SAME = 0.5;
+
+// В память работника идёт только проверенный приём (DOCS/decisions/035), а
+// держалось это на честности пишущего агента. Два суждения: подтверждён ли приём
+// настоящей проверкой и не записан ли он уже. { ok, reason } либо null — суждения
+// нет, решает правило, как раньше
+async function judgeSkill({ title, how, proof }, existingTitles) {
+    if (!typesafe.isEnabled()) return null;
+    const titles = (existingTitles || []).slice(-40);
+    const questions = {
+        proven: {
+            type: 'noul',
+            instructions: 'Does `skill.proof` describe a concrete check that was actually carried out and showed that the technique in `skill.how` works?',
+            criteria: {
+                true: { what: 'It names what was run or observed and what the result was.', examples: ['Прогнал пробный ход на живом сервере: письмо ушло за 339 мс', 'npm run check упал до правки и прошёл после'] },
+                false: { what: 'It is empty, a guess, a belief, or a plan to check later.', examples: ['не указано', 'должно работать', 'наверное, помогает', 'проверю позже'] },
+            },
+        },
+    };
+    if (titles.length) {
+        const criteria = { new: { what: 'None of the listed techniques is the same as this one.' } };
+        titles.forEach((t, i) => { criteria[`s${i}`] = { what: `It is the same technique as the already recorded "${String(t).slice(0, 120)}".` }; });
+        questions.same = { type: 'choice', instructions: 'Is the technique in `skill` already recorded under another title?', criteria };
+    }
+    const res = await typesafe.systemOne({ skill: { title: String(title || '').slice(0, 200), how: String(how || '').slice(0, 1500), proof: String(proof || '').slice(0, 800) } }, questions);
+    if (!res?.answers) return null;
+    const proven = typesafe.noul(res.answers, 'proven');
+    if (proven !== null && proven < SKILL_PROVEN) return { ok: false, reason: 'unproven', proven };
+    const same = typesafe.choice(res.answers, 'same');
+    if (same && same.value !== 'new' && (same.confidence ?? 0) >= SKILL_SAME) return { ok: false, reason: 'duplicate', of: titles[Number(same.value.slice(1))] };
+    return { ok: true, proven };
+}
+
+module.exports = { judgeSkill, matchPollReply, pickRelevantTurns, classifyFailure, knownFailure, judgeTurn, shouldNotify, pickDecisionHints, hintPreamble, classifyInbox, THRESHOLDS, TURN_QUESTIONS };
