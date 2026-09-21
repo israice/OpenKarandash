@@ -1,0 +1,194 @@
+// Подбор записки DOCS/decisions к новому запросу: какая записка объясняет,
+// почему в проекте сделано так, и потому обязана попасть агенту в контекст
+// ещё до того, как он начнёт. Вынесено из turn-judgment.js, когда тот перерос
+// норму в 400 строк (DOCS/decisions/022); turn-judgment.js по-прежнему отдаёт
+// pickDecisionHints и hintPreamble наружу, так что вызывающим ничего менять не нужно.
+//
+// Возвращает null, когда ключа нет или сервис не ответил: подсказка —
+// необязательная добавка, ход без неё работает ровно как раньше.
+
+const fs = require('fs');
+const path = require('path');
+const typesafe = require('./typesafe.js');
+
+const ROOT = path.join(__dirname, '..', '..');
+const DECISIONS_DIR = path.join(ROOT, 'DOCS', 'decisions');
+
+// записку дописываем в контекст, когда «читать надо» вероятнее, чем «не
+// надо». Планка ровно половина, и это не лень: цена ошибки несимметрична —
+// лишняя подсказка стоит двух строк в запросе, а пропущенная записка стоит
+// работы, сделанной против решения проекта, и последующей переделки.
+// Мерено на наших же запросах: при 0.7 отсекались верные попадания (022 на
+// «разбей файл на модули» давала 0.56 при тощем описании записки)
+const DECISION_HINT = 0.5;
+
+// сколько символов запроса отдаём на суждение (то же число, что PROMPT_LIMIT
+// в turn-judgment.js)
+const REQUEST_LIMIT = 2000;
+// у jev-1.13 на запрос 64 тысячи токенов, и на state вместе с самым длинным
+// вопросом — 32 тысячи (страница Models). Описания записок едут именно в
+// вопросе и растут вместе с папкой: полсотни записок это около тысячи токенов,
+// но папка пополняется каждую неделю, и молча упереться в предел нельзя.
+// Считаем грубо — три знака на токен, — и режем список, оставляя свежие:
+// в них решения, которые ещё действуют
+const CRITERIA_BUDGET_CHARS = 60000;
+
+// ---------- подбор записки DOCS/decisions ----------
+
+// заголовок и первый абзац каждой записки: из них получаются criteria выбора.
+// Читаем один раз и перечитываем, когда папка изменилась, — записок полсотни,
+// и гонять диск на каждом ходе незачем
+let decisionsCache = { key: '', items: [] };
+
+function readDecisions() {
+    let files;
+    try {
+        files = fs.readdirSync(DECISIONS_DIR).filter((name) => /^\d+-.*\.md$/.test(name)).sort();
+    } catch {
+        return [];
+    }
+    const key = files.join('|');
+    if (key === decisionsCache.key) return decisionsCache.items;
+
+    const items = [];
+    for (const name of files) {
+        let text;
+        try {
+            text = fs.readFileSync(path.join(DECISIONS_DIR, name), 'utf8');
+        } catch {
+            continue;
+        }
+        const lines = text.split(/\r?\n/);
+        const title = (lines.find((line) => line.startsWith('# ')) || name).replace(/^#\s*/, '').trim();
+        // первые абзацы после заголовка «## Решение» — в них суть записки.
+        // Одного абзаца не хватало: по нему вторая ступень не могла отличить
+        // «записка про эту работу» от «записка про соседнюю тему» и отвечала
+        // около половины, то есть ничего
+        const start = lines.findIndex((line) => line.startsWith('## '));
+        const body = lines.slice(start + 1)
+            .filter((line) => line.trim().length > 40 && !line.startsWith('#'))
+            .slice(0, 3)
+            .join(' ');
+        items.push({
+            id: name.replace(/\.md$/, ''),
+            file: `DOCS/decisions/${name}`,
+            title,
+            // короткая строка идёт в criteria первой ступени (полсотни записок
+            // в одном запросе), длинная — во вторую, где кандидатов единицы
+            summary: body.trim().replace(/[`*]/g, '').slice(0, 240),
+            detail: body.trim().replace(/[`*]/g, '').slice(0, 700),
+        });
+    }
+    decisionsCache = { key, items };
+    return items;
+}
+
+// Choice берёт до 255 вариантов, но раньше упрётся предел контекста, и доке
+// важнее другое: большой state и большой вопрос, набитые не относящимся к
+// делу, роняют точность («Large state full of irrelevant detail»). Поэтому
+// список записок режется сверху, а не отдаётся целиком, сколько бы их ни было
+function fitToBudget(items) {
+    const fitted = [];
+    let size = 0;
+    for (const item of [...items].reverse()) { // с самых свежих
+        size += item.title.length + item.summary.length;
+        if (size > CRITERIA_BUDGET_CHARS || fitted.length >= 254) break;
+        fitted.push(item);
+    }
+    return fitted.reverse();
+}
+
+// Вариант «ничего не подходит» обязателен: доке важно, чтобы у модели был
+// выход, иначе она выберет ближайшее и выдаст ложную подсказку
+const NO_MATCH = 'none';
+// сколько записок Choice передаёт на вторую ступень и сколько попадёт агенту
+const SHORTLIST = 4;
+const MAX_HINTS = 2;
+
+// Подбор идёт в два захода — так советует cookbook «hierarchical classification»,
+// и на нашем материале это видно: к запросу «завести новую пометку в ленте»
+// одинаково относятся сразу несколько записок, и один Choice размазывает
+// вероятность между ними, не дотягивая до порога ни одной. Поэтому Choice
+// только сужает полсотни записок до нескольких, а решает по каждой отдельный
+// Noul — они независимы, считаются в одном запросе параллельно и не мешают
+// друг другу, как мешали бы варианты одного выбора.
+async function pickDecisionHints(request) {
+    if (!typesafe.isEnabled()) return null;
+    const text = String(request || '').trim();
+    if (text.length < 20) return null; // «привет» и «продолжай» подсказки не требуют
+
+    const items = fitToBudget(readDecisions());
+    if (!items.length) return null;
+    const state = { request: text.slice(0, REQUEST_LIMIT) };
+
+    // ступень 1: сужаем список
+    // ключи строго из документированного набора Choice — what / not_for /
+    // examples («Advanced: structure»). Свой ключ рядом с ними модель читает
+    // как попало, а заголовок и первый абзац записки — это одно описание,
+    // поэтому они и идут одним what
+    const criteria = { [NO_MATCH]: { what: 'No note here explains this request; the code is enough.' } };
+    for (const item of items) criteria[item.id] = { what: `${item.title}. ${item.summary}` };
+
+    const first = await typesafe.systemOne(state, {
+        decision_note: {
+            type: 'choice',
+            instructions: {
+                question: 'Which project decision note is most relevant to `request`?',
+                focus: 'These notes record why the project is built the way it is.',
+            },
+            criteria,
+        },
+    });
+    const probabilities = first?.answers?.decision_note?.probabilities;
+    if (!probabilities) return null;
+
+    const shortlist = Object.entries(probabilities)
+        .filter(([id, p]) => id !== NO_MATCH && p > 0)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, SHORTLIST)
+        .map(([id]) => items.find((one) => one.id === id))
+        .filter(Boolean);
+    // «ничего не подходит» увереннее любого кандидата — второй заход не нужен
+    if (!shortlist.length || (probabilities[NO_MATCH] ?? 0) >= shortlist.reduce((max, one) => Math.max(max, probabilities[one.id]), 0)) {
+        return null;
+    }
+
+    // ступень 2: по вопросу на каждого кандидата, все в одном запросе
+    const questions = {};
+    const notes = {};
+    for (const item of shortlist) {
+        notes[item.id] = { title: item.title, summary: item.detail };
+        questions[item.id] = {
+            type: 'noul',
+            instructions: `Must the note \`notes.${item.id}\` be read before doing \`request\`?`,
+            criteria: {
+                true: { what: 'Doing the request without this note would produce work that contradicts it.' },
+                false: {
+                    what: 'The note is on a neighbouring topic, or the request does not touch what it decides.',
+                    not_for: 'A note that genuinely constrains the request.',
+                },
+            },
+        };
+    }
+
+    const second = await typesafe.systemOne({ ...state, notes }, questions);
+    if (!second?.answers) return null;
+
+    const picked = shortlist
+        .map((item) => ({ ...item, noul: typesafe.noul(second.answers, item.id) ?? 0 }))
+        .filter((item) => item.noul >= DECISION_HINT)
+        .sort((a, b) => b.noul - a.noul)
+        .slice(0, MAX_HINTS);
+    return picked.length ? picked : null;
+}
+
+// то, что дописывается к запросу агента. Отдельной функцией, чтобы текст
+// подсказки был виден в одном месте, а не собирался по кускам в server.js
+function hintPreamble(hints) {
+    if (!hints || !hints.length) return '';
+    const list = hints.map((hint) => `${hint.file} — «${hint.title}»`).join('; ');
+    return `[OpenKarandash] Перед этой работой прочитай: ${list}. `
+        + 'Записки объясняют, почему в проекте сделано так; идти против них нельзя, не переписав саму записку.\n\n';
+}
+
+module.exports = { pickDecisionHints, hintPreamble, DECISION_HINT };
