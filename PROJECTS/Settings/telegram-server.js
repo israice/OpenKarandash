@@ -654,7 +654,14 @@ function init(dependencies) {
             console.error('Telegram getMe:', err.message);
         });
     }
-    return { notifyTurnFinished, askPreamble };
+    return { notifyTurnFinished, askPreamble, tell };
+}
+
+// короткая служебная строка всем людям из списка (сервер сменил исполнителя).
+// Без await у зовущего и без исключений наружу: это не должно задерживать ход
+function tell(text) {
+    if (!token) return;
+    for (const chatId of users) send(chatId, text).catch((err) => { sendError = err.message; });
 }
 
 // приставка про блок [ASK] нужна агенту, только когда опрос есть кому слать

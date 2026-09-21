@@ -43,6 +43,8 @@ SCREENSHOT_SCREEN=0
 HERMES_STACK=1
 # Host dependencies checked/installed by the watchdog (git, python, Docker, claude CLI + login); 0 turns it off
 HOST_DEPS=1
+# When an agent fails mid-work (provider error, limit, missing model) the next connected agent takes the work over; 0 turns it off
+AGENT_FALLBACK=1
 
 # Telegram bridge: the bot token and the ids of the users allowed to talk to it
 # (comma separated). Both are filled from Settings in the interface
@@ -1112,7 +1114,7 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
             // законченным, решает правило в turn-judgment.js поверх суждения;
             // ошибка и ход, остановившийся с вопросом к человеку, уходят всегда.
             // Без await: почта не должна ни задерживать ход, ни ронять его
-            if (notify.send) {
+            if (notify.send && !willHandOver(ctx.session, ctx.errorText)) {
                 notifyTurnFinished({
                     sessionId: ctx.session,
                     title: getSessionTitle.get(ctx.session)?.title || '',
@@ -3605,6 +3607,75 @@ function finishExchange(sessionId, answer, meta = {}) {
     return position;
 }
 
+// ---------- сломался исполнитель — работу берёт следующий ----------
+
+// Ход оборвался ошибкой (поставщик модели, лимит, нет такой модели) — работу
+// подхватывает следующий подключённый агент: сессию может продолжить любой CLI,
+// контекст он получает пересказом (handoffPreamble), а поручение — с пометкой,
+// кто и на чём оборвался. Решение владельца 2026-09-21 (DOCS/decisions/061):
+// бесплатная модель упала — платный claude доделывает сам, человеку приходит
+// строка о замене, а не письмо об ошибке. Выключатель — AGENT_FALLBACK=0 в .env
+const FALLBACK_OFF = process.env.AGENT_FALLBACK === '0';
+// остановил человек или уходит сам сервер — это не поломка исполнителя
+const NO_HANDOVER = /Stopped by the user|restarting/i;
+// сессия → кто её уже пробовал в этой цепочке. По нему же runTurn решает,
+// слать ли письмо об ошибке: если работу сейчас подхватят, письмо — шум
+const handoverWatch = new Map();
+
+function nextExecutor(errorText, tried) {
+    if (FALLBACK_OFF || NO_HANDOVER.test(String(errorText || ''))) return null;
+    return Object.keys(AGENTS).find((key) => !tried.has(key) && AGENTS[key].connected()) || null;
+}
+
+function willHandOver(sessionId, errorText) {
+    const tried = sessionId && handoverWatch.get(sessionId);
+    return Boolean(tried && nextExecutor(errorText, tried));
+}
+
+// { failure, started }: failure — ошибка последнего, кто пробовал (null — работа
+// сделана), started — завёлся ли вообще ход (отказ до старта в базу не попал)
+async function askWithFallback(name, params, onEvent) {
+    const tried = new Set();
+    let current = name;
+    let request = params;
+    let sessionId = params.sessionId || null;
+    try {
+        for (;;) {
+            tried.add(current);
+            if (sessionId) handoverWatch.set(sessionId, tried);
+            let started = false;
+            let failure = null;
+            await AGENTS[current].ask(request, (event) => {
+                if (event.type === 'session') {
+                    started = true;
+                    sessionId = event.id;
+                    handoverWatch.set(sessionId, tried);
+                }
+                if (event.type === 'error') failure = event.error;
+                onEvent(event);
+            });
+            if (!failure) return { failure: null, started: true };
+            const spare = nextExecutor(failure, tried);
+            if (!spare) return { failure, started };
+            telegramTell(`🔁 ${current} не справился: ${telegramLetters.humanReason(failure)}. Работу продолжает ${spare}.`);
+            // модель и effort у каждого CLI свои — следующему их не передаём
+            request = {
+                // ход даже не начался — сессии нет, продолжать нечего: следующий
+                // получает поручение как есть (оно же станет заголовком сессии)
+                prompt: !started ? params.prompt
+                    : `[OpenKarandash] Предыдущий исполнитель (${current}) оборвался с ошибкой: «${String(failure).slice(0, 300)}». `
+                    + `Доведи до конца последнее поручение человека:\n\n${params.prompt}`,
+                sessionId: sessionId || undefined,
+                mode: params.mode,
+                hints: params.hints,
+            };
+            current = spare;
+        }
+    } finally {
+        if (sessionId) handoverWatch.delete(sessionId);
+    }
+}
+
 // ход, начатый не из браузера — сейчас это ответ человека в Telegram.
 // Исполнителя и параметры берём из самой сессии, поток событий никуда не пишем:
 // подключённые страницы всё равно получат его через broadcast внутри runTurn,
@@ -3656,15 +3727,11 @@ async function askOutsideBrowser({ sessionId, text, note }) {
     // отказ до старта хода (не подключён, пустой запрос) в базу не попадёт и
     // обратно сам не уедет — такой возвращаем ошибкой. Всё, что случилось уже
     // внутри хода, дописано в сессию и уйдёт в Telegram обычным путём
-    let started = false;
-    let failure = null;
     const hints = await turnJudgment.pickDecisionHints(text).catch(() => null);
-    await adapter.ask(
+    const { failure, started } = await askWithFallback(
+        name,
         { prompt: text, sessionId, model: last.model || undefined, effort: last.effort || undefined, mode: last.mode || undefined, hints },
-        (event) => {
-            if (event.type === 'session') started = true;
-            if (event.type === 'error') failure = event.error;
-        },
+        () => {},
     );
     if (failure && !started) throw new Error(failure);
 }
@@ -3715,7 +3782,8 @@ function activeRunStartedAt(sessionId) {
 const telegram = require('./PROJECTS/Settings/telegram-server.js');
 // stop и status нужны мосту затем, что не всякое сообщение из Telegram — это
 // поручение: «стоп» и «что там» раньше запускали настоящий ход (DOCS/decisions/054)
-const { notifyTurnFinished, askPreamble } = telegram.init({
+const telegramLetters = require('./PROJECTS/Settings/telegram-letters-server.js');
+const { notifyTurnFinished, askPreamble, tell: telegramTell } = telegram.init({
     setEnvValue,
     ask: askOutsideBrowser,
     db,
@@ -3849,7 +3917,9 @@ async function handleApi(req, res, urlPath) {
             // функция сразу отдаёт null, и ход идёт как раньше
             body.hints = await turnJudgment.pickDecisionHints(body.prompt).catch(() => null);
 
-            await adapter.ask(body, (event) => {
+            // сломавшегося исполнителя сменяет следующий подключённый; его события
+            // идут в этот же поток — для страницы это продолжение той же работы
+            await askWithFallback(body.agent, body, (event) => {
                 if (open) res.write(JSON.stringify(event) + '\n');
             });
             if (open) res.end();
