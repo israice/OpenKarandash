@@ -25,7 +25,7 @@ const USERS_KEY = 'TELEGRAM_USER_IDS';
 const API = 'https://api.telegram.org/bot';
 // poll_answer — голос в опросе-вопросе (telegram-polls-server.js); без явного списка
 // Telegram присылал бы и то, что мосту не нужно
-const ALLOWED_UPDATES = ['message', 'poll_answer'];
+const ALLOWED_UPDATES = ['message', 'poll_answer', 'callback_query'];
 const POLL_TIMEOUT_S = 50;      // длинный опрос: ответ приходит сразу, как только есть сообщение
 const POLL_RETRY_MS = 5000;     // сеть отвалилась — не долбим Telegram в цикле
 const CONFLICT_RETRY_MS = 2000; // пересменка: ключ отвоёвывается быстрее обычной ошибки
@@ -78,6 +78,19 @@ function keyboardFor(chatId) {
         resize_keyboard: true,  // без этого одна строка кнопок растянута на высоту обычной клавиатуры
         is_persistent: true,    // не прячется после нажатия
         input_field_placeholder: 'Ответ агенту или кнопка ниже',
+    };
+}
+// Те же кнопки встроенной клавиатурой — под каждым письмом бота. Она не прячется,
+// пока набираешь текст, но привязана к сообщению; выбранная помечена так же — 【 】
+function inlineKeyboardFor(chatId) {
+    let mode = 'action';
+    try { mode = readChatState?.get(String(chatId))?.mode || 'action'; } catch { /* по умолчанию */ }
+    return {
+        inline_keyboard: [BUTTONS.map(({ label, text, style }) => {
+            const shown = label.toLowerCase() === mode ? `【${text}】` : text;
+            const button = { text: shown, callback_data: `btn:${label}` };
+            return style ? { ...button, style } : button;
+        })],
     };
 }
 // нажатие приходит текстом кнопки вместе с эмодзи (и меткой выбора, если кнопка
@@ -341,16 +354,16 @@ function remember(chatId, messageId, sessionId) {
 // самого Telegram (заблокировал бота, неверный чат): их повтор не исправит
 const SEND_RETRY_DELAYS_MS = [1000, 4000];
 
-async function send(chatId, text) {
+async function send(chatId, text, replyMarkup) {
     for (let attempt = 0; ; attempt += 1) {
         try {
             return await callApi('sendMessage', {
                 chat_id: chatId,
                 text,
                 disable_web_page_preview: true,
-                // с каждым письмом: убранную человеком клавиатуру вернёт
-                // ближайшее же сообщение
-                reply_markup: keyboardFor(chatId),
+                // под каждым письмом — встроенные кнопки; обычная клавиатура
+                // остаётся с прошлого показа (её шлёт showKeyboard)
+                reply_markup: replyMarkup || inlineKeyboardFor(chatId),
             });
         } catch (err) {
             // «Telegram answered …» и текст его описания — это ответ сервиса,
@@ -378,7 +391,7 @@ async function showKeyboard(attempt = 0) {
     for (const chatId of users) {
         if ((readKeyboard.get(chatId)?.version ?? 0) >= KEYBOARD_VERSION) continue;
         try {
-            await send(chatId, `⌨️ Кнопки пульта: ${BUTTONS.map((b) => b.text).join(' · ')}. ⏹ END — начать новую работу: следующее сообщение станет её поручением.`);
+            await send(chatId, `⌨️ Кнопки пульта: ${BUTTONS.map((b) => b.text).join(' · ')}. ⏹ END — начать новую работу: следующее сообщение станет её поручением.`, keyboardFor(chatId));
             saveKeyboard.run(chatId, KEYBOARD_VERSION, new Date().toISOString());
         } catch (err) {
             failed = true;
@@ -532,7 +545,30 @@ async function startNewSession(chatId, text, messageId) {
     }
 }
 
+// нажатие встроенной кнопки: те же действия, что у обычной, плюс перерисовка
+// пометки на самом письме, под которым нажали
+async function handleCallback(query) {
+    const chatId = String(query.message?.chat?.id ?? query.from?.id ?? '');
+    if (!users.includes(chatId)) return;
+    const button = BUTTONS.find((b) => `btn:${b.label}` === query.data);
+    if (!button) {
+        await callApi('answerCallbackQuery', { callback_query_id: query.id }).catch(() => {});
+        return;
+    }
+    const reply = pressButton(chatId, button);
+    await callApi('answerCallbackQuery', { callback_query_id: query.id, text: reply.split('\n')[0].slice(0, 200) }).catch(() => {});
+    if (query.message?.message_id) {
+        await callApi('editMessageReplyMarkup', {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            reply_markup: inlineKeyboardFor(chatId),
+        }).catch(() => {}); // «не изменилась» — не ошибка
+    }
+    await send(chatId, reply, keyboardFor(chatId)).catch(() => {});
+}
+
 async function handleUpdate(update) {
+    if (update.callback_query) { await handleCallback(update.callback_query); return; }
     const message = update.message;
     // человек дописал свой вариант в опрос — это ответ на вопрос, а не текст
     if (message?.poll_option_added) {
@@ -550,7 +586,8 @@ async function handleUpdate(update) {
     // агенту настоящим поручением
     const button = pressedButton(message.text);
     if (button) {
-        await send(chatId, pressButton(chatId, button)).catch(() => {});
+        // ответ на нажатие несёт обычную клавиатуру: у неё метка выбора обновляется
+        await send(chatId, pressButton(chatId, button), keyboardFor(chatId)).catch(() => {});
         return;
     }
 
