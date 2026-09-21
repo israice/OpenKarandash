@@ -31,6 +31,9 @@ const TOKEN_KEY = 'TELEGRAM_BOT_TOKEN';
 const USERS_KEY = 'TELEGRAM_USER_IDS';
 
 const API = 'https://api.telegram.org/bot';
+// poll_answer — голос в опросе-вопросе (telegram-polls-server.js); без явного списка
+// Telegram присылал бы и то, что мосту не нужно
+const ALLOWED_UPDATES = ['message', 'poll_answer'];
 const POLL_TIMEOUT_S = 50;      // длинный опрос: ответ приходит сразу, как только есть сообщение
 const POLL_RETRY_MS = 5000;     // сеть отвалилась — не долбим Telegram в цикле
 const CONFLICT_RETRY_MS = 2000; // пересменка: ключ отвоёвывается быстрее обычной ошибки
@@ -85,7 +88,10 @@ const KEYBOARD_VERSION = 3;
 const TOKEN_RE = /^\d{5,}:[A-Za-z0-9_-]{20,}$/;
 const USER_RE = /^-?\d+$/;
 
-let deps = { setEnvValue: () => {}, ask: null, db: null, stop: null, status: null };
+let deps = { setEnvValue: () => {}, ask: null, db: null, stop: null, status: null, sessionExists: () => true, isRunning: () => false };
+// интерактивные вопросы опросом Telegram — отдельный модуль (telegram-polls-server.js);
+// заводится в init, когда есть база
+let polls = null;
 
 let token = '';
 let users = [];        // кому шлём и от кого принимаем — остальные для бота не существуют
@@ -424,6 +430,11 @@ function answerWithoutTurn(intent, sessionId) {
 
 async function handleUpdate(update) {
     const message = update.message;
+    // человек дописал свой вариант в опрос — это ответ на вопрос, а не текст
+    if (message?.poll_option_added) {
+        await polls.handleOptionAdded(message);
+        return;
+    }
     if (!message || !message.text) return;
 
     const chatId = String(message.chat?.id ?? '');
@@ -440,6 +451,8 @@ async function handleUpdate(update) {
     }
 
     const replyTo = message.reply_to_message?.message_id;
+    // текст ответом на сообщение с открытым опросом — свой вариант ответа
+    if (await polls.handleReply(chatId, replyTo, message.text)) return;
     const sessionId = (replyTo && sessionByReply.get(chatId, Number(replyTo))?.sessionId)
         || lastSessionOfChat.get(chatId)?.sessionId;
     if (!sessionId) {
@@ -457,6 +470,22 @@ async function handleUpdate(update) {
         return;
     }
 
+    await runInSession(chatId, sessionId, message.text);
+}
+
+// Сколько ответ на опрос ждёт, пока сессия освободится. Вопрос задают изнутри
+// идущего хода, и человек успевает ответить раньше, чем ход закончится, —
+// терять такой ответ нельзя, а второй ход поверх первого запускать тоже
+const IDLE_WAIT_MS = 10 * 60 * 1000;
+const IDLE_CHECK_MS = 2000;
+
+// Слова человека уходят в сессию настоящим ходом. Общий путь и для обычного
+// сообщения, и для ответа на опрос (telegram-polls-server.js)
+async function runInSession(chatId, sessionId, text, { waitIdle = false } = {}) {
+    if (waitIdle) {
+        const deadline = Date.now() + IDLE_WAIT_MS;
+        while ((busySessions.has(sessionId) || deps.isRunning(sessionId)) && Date.now() < deadline) await sleep(IDLE_CHECK_MS);
+    }
     if (busySessions.has(sessionId)) {
         await send(chatId, '⏳ This session is still working — wait for its answer.').catch(() => {});
         return;
@@ -465,7 +494,7 @@ async function handleUpdate(update) {
     busySessions.add(sessionId);
     try {
         // ответ придёт сюда же сам: закончившийся ход снова позовёт notifyTurnFinished
-        await deps.ask({ sessionId, text: message.text });
+        await deps.ask({ sessionId, text });
     } catch (err) {
         // сессию могли удалить из пульта уже после того, как человек прочитал
         // её ответ, — «Session not found» в личке выглядит поломкой моста,
@@ -512,8 +541,8 @@ async function pollLoop(myRun) {
             const updates = await callApi(
                 'getUpdates',
                 skipping
-                    ? { offset: -1, timeout: 0, allowed_updates: ['message'] }
-                    : { offset, timeout: POLL_TIMEOUT_S, allowed_updates: ['message'] },
+                    ? { offset: -1, timeout: 0, allowed_updates: ALLOWED_UPDATES }
+                    : { offset, timeout: POLL_TIMEOUT_S, allowed_updates: ALLOWED_UPDATES },
                 skipping ? 15000 : (POLL_TIMEOUT_S + 15) * 1000,
                 pollAbort.signal,
             );
@@ -534,7 +563,8 @@ async function pollLoop(myRun) {
                 saveOffset.run(offset, new Date().toISOString());
                 // ход может идти часами — опрос его не ждёт, иначе следующие
                 // сообщения человека молча копились бы до конца работы
-                handleUpdate(update).catch((err) => { lastError = err.message; });
+                const handled = update.poll_answer ? polls.handlePollAnswer(update.poll_answer) : handleUpdate(update);
+                handled.catch((err) => { lastError = err.message; });
             }
             // длинный опрос обязан висеть до POLL_TIMEOUT_S, но между нами и
             // Telegram бывает прокси, который отвечает пустотой сразу же —
@@ -588,6 +618,14 @@ async function connect() {
 function init(dependencies) {
     deps = { ...deps, ...dependencies };
     initDb(deps.db);
+    polls = require('./telegram-polls-server.js').create({
+        database: deps.db,
+        callApi,
+        users: () => users,
+        runInSession,
+        sessionExists: (id) => deps.sessionExists(id),
+        remember,
+    });
     token = process.env[TOKEN_KEY] || '';
     users = parseUsers(process.env[USERS_KEY]);
     // ключ из .env уже есть — мост поднимается вместе с сервером, без захода
@@ -605,6 +643,7 @@ function init(dependencies) {
 
 function createRoutes() {
     return {
+        ...polls.routes,
         '/api/telegram/state': async (req, res) => {
             sendJson(res, state());
         },

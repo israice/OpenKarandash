@@ -3678,6 +3678,10 @@ const { notifyTurnFinished } = telegram.init({
     ask: askOutsideBrowser,
     db,
     stop: (sessionId) => stopActiveRun(sessionId || null),
+    // для вопроса опросом (telegram-polls-server.js): спросить можно только живую
+    // сессию, а ответ ждёт, пока она освободится
+    sessionExists: (id) => Boolean(getSessionTitle.get(id)),
+    isRunning: (id) => runs.has(id),
     status: () => ({
         running: activeRuns.size,
         titles: [...activeRuns.values()]
