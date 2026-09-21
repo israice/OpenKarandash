@@ -3684,15 +3684,30 @@ async function askOutsideBrowser({ sessionId, text, note }) {
     if (!getSessionTitle.get(sessionId)) throw new Error('Session not found');
     if (stopping) throw new Error(RESTART_ERROR);
 
-    const sessionTarget = getSessionMeta.get(sessionId)?.target;
+    const { name, replaced } = await readyExecutor(getSessionMeta.get(sessionId)?.target, sessionId, note);
+    // модель и effort у каждого CLI свои — чужому агенту их не передаём
+    const last = replaced ? { mode: getLastTurnParams.get(sessionId)?.mode } : (getLastTurnParams.get(sessionId) || {});
+    // отказ до старта хода (не подключён, пустой запрос) в базу не попадёт и
+    // обратно сам не уедет — такой возвращаем ошибкой. Всё, что случилось уже
+    // внутри хода, дописано в сессию и уйдёт в Telegram обычным путём
+    const hints = await turnJudgment.pickDecisionHints(text).catch(() => null);
+    const { failure, started } = await askWithFallback(
+        name,
+        { prompt: text, sessionId, model: last.model || undefined, effort: last.effort || undefined, mode: last.mode || undefined, hints },
+        () => {},
+    );
+    if (failure && !started) throw new Error(failure);
+}
+
+// Кто поведёт ход не из браузера. Подключение живёт в памяти процесса, а сторож
+// перезапускает сервер на каждой правке серверного файла. Страница пульта после
+// этого подключает свой CLI заново, но у хода не из браузера страницы нет: ответ
+// человека из Telegram упирался в «pi is not connected», хотя pi стоял на месте.
+// Поэтому сначала возвращаем подключение сами — тем же путём, что
+// /api/agent/connect: запуск версии доказывает, что CLI жив
+async function readyExecutor(sessionTarget, label, note) {
     let name = agentNameByTarget(sessionTarget);
-    let adapter = AGENTS[name];
-    // Подключение живёт в памяти процесса, а сторож перезапускает сервер на
-    // каждой правке серверного файла. Страница пульта после этого подключает
-    // свой CLI заново, но у хода не из браузера страницы нет: ответ человека
-    // из Telegram упирался в «pi is not connected», хотя pi стоял на месте.
-    // Поэтому сначала возвращаем подключение сами — тем же путём, что
-    // /api/agent/connect: запуск версии доказывает, что CLI жив
+    const adapter = AGENTS[name];
     if (!adapter.connected()) {
         const target = adapter.targets().find((t) => t.id === sessionTarget);
         try {
@@ -3706,32 +3721,41 @@ async function askOutsideBrowser({ sessionId, text, note }) {
                 }
             }
         } catch (err) {
-            console.warn(`Reconnect ${name} for ${sessionId} failed: ${err.message}`);
+            console.warn(`Reconnect ${name} for ${label} failed: ${err.message}`);
         }
     }
     // Свой CLI так и не поднялся — работу берёт любой подключённый: сессию
     // может продолжить кто угодно, контекст он получит пересказом
     // (handoffPreamble). Человеку об этом говорим: замена может стоить денег
-    let replaced = false;
-    if (!adapter.connected()) {
-        const spare = Object.keys(AGENTS).find((key) => AGENTS[key].connected());
-        if (!spare) throw new Error(`${name} is not connected and no other agent is — open Settings and connect one`);
-        if (note) note(`🔁 ${name} недоступен — работу продолжит ${spare}.`);
-        name = spare;
-        adapter = AGENTS[spare];
-        replaced = true;
-    }
+    if (adapter.connected()) return { name, replaced: false };
+    const spare = Object.keys(AGENTS).find((key) => AGENTS[key].connected());
+    if (!spare) throw new Error(`${name} is not connected and no other agent is — open Settings and connect one`);
+    if (note) note(`🔁 ${name} недоступен — работу ведёт ${spare}.`);
+    name = spare;
+    return { name, replaced: true };
+}
 
-    // модель и effort у каждого CLI свои — чужому агенту их не передаём
-    const last = replaced ? { mode: getLastTurnParams.get(sessionId)?.mode } : (getLastTurnParams.get(sessionId) || {});
-    // отказ до старта хода (не подключён, пустой запрос) в базу не попадёт и
-    // обратно сам не уедет — такой возвращаем ошибкой. Всё, что случилось уже
-    // внутри хода, дописано в сессию и уйдёт в Telegram обычным путём
+// Новая работа не из браузера: человек нажал в Telegram END и написал поручение.
+// Исполнителя, модель и режим берём у его прошлой работы (likeSessionId) — это
+// тот агент, которым он пользуется; прошлой нет — первый подключённый.
+// onSession сообщает id новой сессии сразу, не дожидаясь конца хода: мосту он
+// нужен, чтобы следующие сообщения шли уже в неё
+async function startOutsideBrowser({ text, likeSessionId, note, onSession }) {
+    if (stopping) throw new Error(RESTART_ERROR);
+    const like = likeSessionId && getSessionTitle.get(likeSessionId) ? likeSessionId : null;
+    const { name, replaced } = await readyExecutor(like ? getSessionMeta.get(like)?.target : null, 'new session', note);
+    const last = like ? (getLastTurnParams.get(like) || {}) : {};
     const hints = await turnJudgment.pickDecisionHints(text).catch(() => null);
     const { failure, started } = await askWithFallback(
         name,
-        { prompt: text, sessionId, model: last.model || undefined, effort: last.effort || undefined, mode: last.mode || undefined, hints },
-        () => {},
+        {
+            prompt: text,
+            model: (!replaced && last.model) || undefined,
+            effort: (!replaced && last.effort) || undefined,
+            mode: last.mode || undefined,
+            hints,
+        },
+        (event) => { if (event.type === 'session' && onSession) onSession(event.id); },
     );
     if (failure && !started) throw new Error(failure);
 }
@@ -3786,6 +3810,7 @@ const telegramLetters = require('./PROJECTS/Settings/telegram-letters-server.js'
 const { notifyTurnFinished, askPreamble, tell: telegramTell } = telegram.init({
     setEnvValue,
     ask: askOutsideBrowser,
+    startNew: startOutsideBrowser,
     db,
     stop: (sessionId) => stopActiveRun(sessionId || null),
     // для вопроса опросом (telegram-polls-server.js): спросить можно только живую

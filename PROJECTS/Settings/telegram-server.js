@@ -43,7 +43,12 @@ const MESSAGE_MEMORY = 500;     // сколько наших сообщений 
 // клавиатура видна человеку всё время, а не только у последнего письма, и за
 // нажатие не нужно отчитываться answerCallbackQuery. Нажатие приходит обычным
 // текстом кнопки — поэтому handleUpdate перехватывает эти слова раньше, чем
-// они успеют стать поручением. Логики у кнопок пока нет
+// они успеют стать поручением.
+//
+// Логика (решение владельца 2026-09-21): END закрывает разговор о текущей
+// работе — следующее сообщение станет новой работой в пульте, а не ответом в
+// старую. После END выбран режим ACTION: сообщение — это поручение. ASK и LOOP
+// пока без логики
 //
 // Вид — то, что даёт Bot API кнопке клавиатуры: style заливает её цветом
 // («primary» синий, «success» зелёный, «danger» красный, без поля — цвет
@@ -72,7 +77,7 @@ function pressedButton(text) {
 // увидел её сразу, а не с ближайшим отчётом, шлём одно письмо — и помним, кому
 // какой набор уже показан: перезапуск сервера не должен слать его заново.
 // Сменился набор кнопок — поднять номер
-const KEYBOARD_VERSION = 3;
+const KEYBOARD_VERSION = 4;
 
 // вид ключа бота: «<цифры>:<буквенный хвост>». Проверяем до сети, чтобы очевидная
 // опечатка не превращалась в загадочный отказ Telegram
@@ -149,6 +154,8 @@ let trimSent = null;
 let rememberReply = null;
 let sessionByReply = null;
 let lastSessionOfChat = null;
+let saveChatState = null;
+let readChatState = null;
 let trimReplies = null;
 let forgetSession = null;
 let saveOffset = null;
@@ -204,6 +211,12 @@ function initDb(database) {
     readOffset = database.prepare('SELECT value, at FROM telegram_offset WHERE id = 1');
     forgetSession = database.prepare('DELETE FROM telegram_replies WHERE session_id = ?');
     // кому какой набор кнопок уже показан (см. KEYBOARD_VERSION)
+    // состояние лички: fresh = 1 — человек нажал END, следующее сообщение
+    // начинает новую работу. В базе, а не в памяти: сторож перезапускает сервер
+    // на каждой правке, и нажатие не должно теряться
+    database.exec("CREATE TABLE IF NOT EXISTS telegram_chat_state (chat_id TEXT PRIMARY KEY, mode TEXT NOT NULL DEFAULT 'action', fresh INTEGER NOT NULL DEFAULT 0, at TEXT NOT NULL);");
+    saveChatState = database.prepare('INSERT INTO telegram_chat_state (chat_id, mode, fresh, at) VALUES (?, ?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET mode = excluded.mode, fresh = excluded.fresh, at = excluded.at');
+    readChatState = database.prepare('SELECT mode, fresh FROM telegram_chat_state WHERE chat_id = ?');
     database.exec('CREATE TABLE IF NOT EXISTS telegram_keyboard (chat_id TEXT PRIMARY KEY, version INTEGER NOT NULL, at TEXT NOT NULL);');
     saveKeyboard = database.prepare('INSERT INTO telegram_keyboard (chat_id, version, at) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET version = excluded.version, at = excluded.at');
     readKeyboard = database.prepare('SELECT version FROM telegram_keyboard WHERE chat_id = ?');
@@ -351,7 +364,7 @@ async function showKeyboard(attempt = 0) {
     for (const chatId of users) {
         if ((readKeyboard.get(chatId)?.version ?? 0) >= KEYBOARD_VERSION) continue;
         try {
-            await send(chatId, `⌨️ Кнопки пульта: ${BUTTONS.map((b) => b.text).join(' · ')}. Пока они ничего не делают.`);
+            await send(chatId, `⌨️ Кнопки пульта: ${BUTTONS.map((b) => b.text).join(' · ')}. ⏹ END — начать новую работу: следующее сообщение станет её поручением.`);
             saveKeyboard.run(chatId, KEYBOARD_VERSION, new Date().toISOString());
         } catch (err) {
             failed = true;
@@ -438,6 +451,57 @@ function answerWithoutTurn(intent, sessionId) {
     return '👌';
 }
 
+// что кнопка делает и что ответить человеку
+function pressButton(chatId, button) {
+    const now = new Date().toISOString();
+    if (button.label === 'END') {
+        saveChatState.run(chatId, 'action', 1, now);
+        return 'Начинаем с новой сессии\n\n⚡ Выбран ACTION: напишите поручение — оно станет новой работой в пульте.';
+    }
+    if (button.label === 'ACTION') {
+        const fresh = readChatState.get(chatId)?.fresh ? 1 : 0;
+        saveChatState.run(chatId, 'action', fresh, now);
+        return fresh
+            ? '⚡ ACTION: напишите поручение — оно станет новой работой в пульте.'
+            : '⚡ ACTION: сообщение уйдёт поручением в текущую работу. Новую работу начинает ⏹ END.';
+    }
+    return `${button.text} — кнопка пока ничего не делает.`;
+}
+
+// Первое сообщение после END: поручение заводит новую сессию в пульте
+async function startNewSession(chatId, text, messageId) {
+    const like = lastSessionOfChat.get(chatId)?.sessionId || null;
+    let created = null;
+    try {
+        await deps.startNew({
+            text,
+            likeSessionId: like,
+            note: (line) => { send(chatId, line).catch(() => {}); },
+            // id приходит в начале хода: сразу снимаем «новую работу» и
+            // привязываем личку к сессии — следующее сообщение пойдёт уже в неё,
+            // а не заведёт ещё одну
+            onSession: (sessionId) => {
+                if (created) return;
+                created = sessionId;
+                busySessions.add(sessionId);
+                saveChatState.run(chatId, 'action', 0, new Date().toISOString());
+                // привязка сразу, по сообщению самого человека: письмо ниже
+                // может задержаться, а следующее сообщение уже в пути
+                remember(chatId, messageId, sessionId);
+                send(chatId, '🆕 Новая работа начата. Ответ придёт сюда.')
+                    .then((sent) => remember(chatId, sent.message_id, sessionId))
+                    .catch(() => {});
+            },
+        });
+    } catch (err) {
+        // работа не завелась — «новая работа» остаётся включённой: человек
+        // повторит поручение, и оно не уйдёт в старую сессию
+        await send(chatId, `⚠️ Новую работу начать не удалось: ${letters.humanReason(err.message)}.\n\nПовторите поручение, когда причина устранена.\n\nТекст ошибки: ${String(err.message).slice(0, 300)}`).catch(() => {});
+    } finally {
+        if (created) busySessions.delete(created);
+    }
+}
+
 async function handleUpdate(update) {
     const message = update.message;
     // человек дописал свой вариант в опрос — это ответ на вопрос, а не текст
@@ -452,21 +516,28 @@ async function handleUpdate(update) {
     // запускать агента в проекте — пускаем только перечисленные в .env id
     if (!users.includes(chatId)) return;
 
-    // нажатие кнопки приходит её текстом. Логики у кнопок пока нет, а без
-    // перехвата слово «ASK» ушло бы агенту настоящим поручением
+    // нажатие кнопки приходит её текстом: без перехвата слово «ASK» ушло бы
+    // агенту настоящим поручением
     const button = pressedButton(message.text);
     if (button) {
-        await send(chatId, `${button.text} — кнопка пока ничего не делает.`).catch(() => {});
+        await send(chatId, pressButton(chatId, button)).catch(() => {});
         return;
     }
 
     const replyTo = message.reply_to_message?.message_id;
     // текст ответом на сообщение с открытым опросом — свой вариант ответа
     if (await polls.handleReply(chatId, replyTo, message.text)) return;
-    const sessionId = (replyTo && sessionByReply.get(chatId, Number(replyTo))?.sessionId)
-        || lastSessionOfChat.get(chatId)?.sessionId;
+    const repliedSession = replyTo && sessionByReply.get(chatId, Number(replyTo))?.sessionId;
+    // после END сообщение начинает новую работу. Ответ reply на письмо старой
+    // работы — по-прежнему в неё: человек сам назвал адресата
+    if (!repliedSession && readChatState.get(chatId)?.fresh) {
+        await startNewSession(chatId, message.text, message.message_id);
+        return;
+    }
+    const sessionId = repliedSession || lastSessionOfChat.get(chatId)?.sessionId;
+    // отвечать некуда — значит, это поручение на новую работу, как после END
     if (!sessionId) {
-        await send(chatId, 'Пока некуда отвечать: работа появится здесь после первого законченного задания в пульте.').catch(() => {});
+        await startNewSession(chatId, message.text, message.message_id);
         return;
     }
 
@@ -780,4 +851,5 @@ async function stop() {
     }
 }
 
-module.exports = { init, createRoutes, stop };
+// handleUpdate наружу — только для проверки на поддельных обновлениях, без сети
+module.exports = { init, createRoutes, stop, handleUpdate };
