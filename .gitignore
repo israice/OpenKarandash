@@ -11,6 +11,9 @@
 # hermes-home —
 # рантайм-данные конкретного запуска Hermes (сессии, конфиг), logs — его же логи
 /hermes/
+# jev-ultrafast (browser-use) — чужой код для управления браузером, клонируем сами
+# (PROJECTS/Browser/README.md); в git — только наша обвязка в PROJECTS/Browser
+/jev-ultrafast/
 claude-bridge/__pycache__/
 /hermes-home/
 /logs/

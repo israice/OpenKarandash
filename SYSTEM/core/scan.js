@@ -7,6 +7,6 @@
 // hermes/ — чужой submodule (12 тысяч файлов), hermes-home/ и logs/ — рантайм
 // Hermes-стека, worktrees — копии проекта у агентов: без этих исключений
 // сборка карты при старте длится минуты и выглядит как зависание сервера
-const SKIP_NAMES = ['node_modules', '.git', 'DATA', 'hermes', 'hermes-home', 'logs', '.worktrees', 'worktrees'];
+const SKIP_NAMES = ['node_modules', '.git', 'DATA', 'hermes', 'hermes-home', 'logs', '.worktrees', 'worktrees', 'jev-ultrafast'];
 
 module.exports = { SKIP_NAMES };
