@@ -189,6 +189,9 @@ let saveOffset = null;
 let readOffset = null;
 let saveKeyboard = null;
 let readKeyboard = null;
+let saveInline = null;
+let readInline = null;
+let dropInline = null;
 
 function initDb(database) {
     database.exec(`
@@ -247,6 +250,13 @@ function initDb(database) {
     database.exec('CREATE TABLE IF NOT EXISTS telegram_keyboard (chat_id TEXT PRIMARY KEY, version INTEGER NOT NULL, at TEXT NOT NULL);');
     saveKeyboard = database.prepare('INSERT INTO telegram_keyboard (chat_id, version, at) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET version = excluded.version, at = excluded.at');
     readKeyboard = database.prepare('SELECT version FROM telegram_keyboard WHERE chat_id = ?');
+    // какое сообщение чата сейчас нижнее со встроенными кнопками. В базе, а не в
+    // памяти: сторож перезапускает сервер на каждой правке, и забытое нижнее
+    // письмо навсегда оставляло бы кнопки на старом сообщении
+    database.exec('CREATE TABLE IF NOT EXISTS telegram_inline (chat_id TEXT PRIMARY KEY, message_id INTEGER NOT NULL);');
+    saveInline = database.prepare('INSERT INTO telegram_inline (chat_id, message_id) VALUES (?, ?) ON CONFLICT(chat_id) DO UPDATE SET message_id = excluded.message_id');
+    readInline = database.prepare('SELECT message_id AS messageId FROM telegram_inline WHERE chat_id = ?');
+    dropInline = database.prepare('DELETE FROM telegram_inline WHERE chat_id = ?');
     trimReplies = database.prepare(`
         DELETE FROM telegram_replies WHERE id NOT IN (
             SELECT id FROM telegram_replies ORDER BY id DESC LIMIT ?
@@ -346,18 +356,23 @@ async function callApi(method, payload, timeoutMs = 15000, extraSignal = null) {
 // Встроенные кнопки живут только под самым нижним письмом, отправленным в чат:
 // стоит уйти новому сообщению (письму, опросу, ответу на кнопку), как кнопки
 // прошлого снимаются. messageId = null — новое сообщение без встроенных кнопок.
-// Память в процессе: после перезапуска сервера кнопки прежнего письма остаются
-const bottomInline = new Map(); // chatId → message_id
+// Нижнее сообщение помнится в базе (telegram_inline): сторож перезапускает
+// сервер на каждой правке, и в памяти оно терялось бы вместе с процессом
 function moveInline(chatId, messageId) {
     const key = String(chatId);
-    const prev = bottomInline.get(key);
-    if (messageId) bottomInline.set(key, messageId); else bottomInline.delete(key);
+    let prev = null;
+    try { prev = readInline?.get(key)?.messageId ?? null; } catch { /* база ещё не готова */ }
+    try {
+        if (messageId) saveInline?.run(key, Number(messageId)); else dropInline?.run(key);
+    } catch { /* не записалось — кнопки снимутся со следующим письмом */ }
     if (prev && prev !== messageId) {
         callApi('editMessageReplyMarkup', { chat_id: chatId, message_id: prev, reply_markup: { inline_keyboard: [] } })
             .catch(() => {}); // письмо старое или уже без кнопок — не ошибка
     }
 }
-const isBottomInline = (chatId, messageId) => bottomInline.get(String(chatId)) === messageId;
+function isBottomInline(chatId, messageId) {
+    try { return readInline?.get(String(chatId))?.messageId === messageId; } catch { return false; }
+}
 
 function remember(chatId, messageId, sessionId) {
     rememberReply.run(String(chatId), Number(messageId), sessionId, new Date().toISOString());
@@ -370,7 +385,7 @@ function remember(chatId, messageId, sessionId) {
 // самого Telegram (заблокировал бота, неверный чат): их повтор не исправит
 const SEND_RETRY_DELAYS_MS = [1000, 4000];
 
-async function send(chatId, text, replyMarkup) {
+async function send(chatId, text, replyMarkup, { keepInline = false } = {}) {
     for (let attempt = 0; ; attempt += 1) {
         try {
             const sent = await callApi('sendMessage', {
@@ -381,7 +396,9 @@ async function send(chatId, text, replyMarkup) {
                 // остаётся с прошлого показа (её шлёт showKeyboard)
                 reply_markup: replyMarkup || inlineKeyboardFor(chatId),
             });
-            moveInline(chatId, replyMarkup ? null : sent.message_id);
+            // keepInline: сообщение с обычной клавиатурой (ответ на нажатие) не
+            // должно снимать кнопки с нижнего письма — иначе после нажатия их нет нигде
+            if (!(replyMarkup && keepInline)) moveInline(chatId, replyMarkup ? null : sent.message_id);
             return sent;
         } catch (err) {
             // «Telegram answered …» и текст его описания — это ответ сервиса,
@@ -582,7 +599,7 @@ async function handleCallback(query) {
             reply_markup: inlineKeyboardFor(chatId),
         }).catch(() => {}); // «не изменилась» — не ошибка
     }
-    await send(chatId, reply, keyboardFor(chatId)).catch(() => {});
+    await send(chatId, reply, keyboardFor(chatId), { keepInline: true }).catch(() => {});
 }
 
 async function handleUpdate(update) {
