@@ -3602,15 +3602,50 @@ function finishExchange(sessionId, answer, meta = {}) {
 // Исполнителя и параметры берём из самой сессии, поток событий никуда не пишем:
 // подключённые страницы всё равно получат его через broadcast внутри runTurn,
 // а человеку в Telegram уйдёт готовый ответ из notifyTurnFinished
-async function askOutsideBrowser({ sessionId, text }) {
+async function askOutsideBrowser({ sessionId, text, note }) {
     if (!getSessionTitle.get(sessionId)) throw new Error('Session not found');
     if (stopping) throw new Error(RESTART_ERROR);
 
-    const name = agentNameByTarget(getSessionMeta.get(sessionId)?.target);
-    const adapter = AGENTS[name];
-    if (!adapter.connected()) throw new Error(`${name} is not connected — open Settings and connect it`);
+    const sessionTarget = getSessionMeta.get(sessionId)?.target;
+    let name = agentNameByTarget(sessionTarget);
+    let adapter = AGENTS[name];
+    // Подключение живёт в памяти процесса, а сторож перезапускает сервер на
+    // каждой правке серверного файла. Страница пульта после этого подключает
+    // свой CLI заново, но у хода не из браузера страницы нет: ответ человека
+    // из Telegram упирался в «pi is not connected», хотя pi стоял на месте.
+    // Поэтому сначала возвращаем подключение сами — тем же путём, что
+    // /api/agent/connect: запуск версии доказывает, что CLI жив
+    if (!adapter.connected()) {
+        const target = adapter.targets().find((t) => t.id === sessionTarget);
+        try {
+            if (!target) throw new Error(`unknown environment ${sessionTarget}`);
+            const version = await adapter.version(target);
+            if (!adapter.connected()) { // пока ждали версию, человек мог подключить сам
+                adapter.activate(target);
+                if (name === 'claude') {
+                    activeVersion = version;
+                    if (process.send) process.send({ claudeTarget: target.id }, () => {});
+                }
+            }
+        } catch (err) {
+            console.warn(`Reconnect ${name} for ${sessionId} failed: ${err.message}`);
+        }
+    }
+    // Свой CLI так и не поднялся — работу берёт любой подключённый: сессию
+    // может продолжить кто угодно, контекст он получит пересказом
+    // (handoffPreamble). Человеку об этом говорим: замена может стоить денег
+    let replaced = false;
+    if (!adapter.connected()) {
+        const spare = Object.keys(AGENTS).find((key) => AGENTS[key].connected());
+        if (!spare) throw new Error(`${name} is not connected and no other agent is — open Settings and connect one`);
+        if (note) note(`🔁 ${name} недоступен — работу продолжит ${spare}.`);
+        name = spare;
+        adapter = AGENTS[spare];
+        replaced = true;
+    }
 
-    const last = getLastTurnParams.get(sessionId) || {};
+    // модель и effort у каждого CLI свои — чужому агенту их не передаём
+    const last = replaced ? { mode: getLastTurnParams.get(sessionId)?.mode } : (getLastTurnParams.get(sessionId) || {});
     // отказ до старта хода (не подключён, пустой запрос) в базу не попадёт и
     // обратно сам не уедет — такой возвращаем ошибкой. Всё, что случилось уже
     // внутри хода, дописано в сессию и уйдёт в Telegram обычным путём

@@ -384,6 +384,8 @@ async function showKeyboard(attempt = 0) {
 // ход, ни ронять его своей ошибкой — поэтому внутри всё под try/catch
 async function notifyTurnFinished({ sessionId, title, text }) {
     if (!token || !users.length || !text) return;
+    // ход задал вопрос опросом — опрос и есть письмо, второе не нужно
+    if (polls.swallowsNotice(sessionId)) return;
     const head = title ? `✅ ${title}` : '✅ Done';
     const body = text.length > TEXT_LIMIT ? `${text.slice(0, TEXT_LIMIT)}…` : text;
     const message = `${head}\n\n${body}`;
@@ -494,7 +496,8 @@ async function runInSession(chatId, sessionId, text, { waitIdle = false } = {}) 
     busySessions.add(sessionId);
     try {
         // ответ придёт сюда же сам: закончившийся ход снова позовёт notifyTurnFinished
-        await deps.ask({ sessionId, text });
+        // note — что сервер хочет сказать человеку по дороге (заменил агента)
+        await deps.ask({ sessionId, text, note: (line) => { send(chatId, line).catch(() => {}); } });
     } catch (err) {
         // сессию могли удалить из пульта уже после того, как человек прочитал
         // её ответ, — «Session not found» в личке выглядит поломкой моста,

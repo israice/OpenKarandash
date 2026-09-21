@@ -44,6 +44,8 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
             at TEXT NOT NULL
         );
     `);
+    // таблица могла быть заведена до этой колонки
+    try { database.exec('ALTER TABLE telegram_polls ADD COLUMN silenced_at TEXT'); } catch { /* уже есть */ }
     const insertPoll = database.prepare('INSERT INTO telegram_polls (poll_id, ask_id, chat_id, message_id, session_id, question, options, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
     const pollById = database.prepare('SELECT * FROM telegram_polls WHERE poll_id = ?');
     const pollByMessage = database.prepare('SELECT * FROM telegram_polls WHERE chat_id = ? AND message_id = ?');
@@ -51,6 +53,15 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
     // «кто первый ответил» решает база одной командой, а не проверка в коде:
     // голос и дописанный вариант приходят двумя обновлениями почти разом
     const markAnswered = database.prepare('UPDATE telegram_polls SET answered_at = ? WHERE ask_id = ? AND answered_at IS NULL');
+
+    // Ход, задавший опрос, кончается словами вроде «жду ответа», и мост слал их
+    // письмом следом за опросом — человек получал один вопрос дважды. Открытый
+    // опрос глушит одно такое письмо: первое после себя. Одно, а не все —
+    // иначе забытый без ответа опрос навсегда оставил бы сессию без писем
+    const silenceOnce = database.prepare('UPDATE telegram_polls SET silenced_at = ? WHERE session_id = ? AND answered_at IS NULL AND silenced_at IS NULL');
+    function swallowsNotice(sessionId) {
+        return silenceOnce.run(new Date().toISOString(), sessionId).changes > 0;
+    }
 
     function validate({ sessionId, question, options }) {
         if (!sessionId || !sessionExists(sessionId)) return 'Session not found';
@@ -165,7 +176,7 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
         },
     };
 
-    return { askPoll, handlePollAnswer, handleOptionAdded, handleReply, routes };
+    return { askPoll, swallowsNotice, handlePollAnswer, handleOptionAdded, handleReply, routes };
 }
 
 module.exports = { create };
