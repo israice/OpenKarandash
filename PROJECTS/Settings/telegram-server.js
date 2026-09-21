@@ -14,6 +14,7 @@ const { formatWhen } = require('../../SYSTEM/core/format.js');
 const { Eta } = require('eta');
 const turnJudgment = require('../../SYSTEM/core/turn-judgment.js');
 const pollsModule = require('./telegram-polls-server.js');
+const letters = require('./telegram-letters-server.js');
 
 // свой экземпляр Eta со своей папкой шаблонов (см. «Серверные фрагменты» в
 // AGENTS.md): cache:false — правка .eta подхватывается без перезапуска
@@ -36,7 +37,6 @@ const CONFLICT_RETRY_MS = 2000; // пересменка: ключ отвоёвы
 const CONFLICT_GRACE_MS = (POLL_TIMEOUT_S + 15) * 1000;
 const CONFLICT_IDLE_MS = 60000; // дальше не тянем ключ на себя каждые две секунды
 const RELEASE_TIMEOUT_MS = 3000; // отпускание опроса на выходе: перезапуск не ждёт недоступный Telegram
-const TEXT_LIMIT = 3500;        // у Telegram потолок 4096 на сообщение, остальное — заголовок
 const MESSAGE_MEMORY = 500;     // сколько наших сообщений помним для ответа reply
 
 // Кнопки под полем ввода (ReplyKeyboardMarkup), а не под сообщением: такая
@@ -369,8 +369,15 @@ async function showKeyboard(attempt = 0) {
 
 // Зовётся из runTurn (server.js) без await: телеграм не должен ни задерживать
 // ход, ни ронять его своей ошибкой — поэтому внутри всё под try/catch
-async function notifyTurnFinished({ sessionId, title, text }) {
-    if (!token || !users.length || !text) return;
+async function notifyTurnFinished({ sessionId, title, text, errorText, steps }) {
+    if (!token || !users.length || (!text && !errorText)) return;
+    // сломавшийся ход — своё письмо: что случилось, что успето, что делать
+    // дальше (telegram-letters-server.js). Блок [ASK] в оборванном ответе не
+    // разбираем: вопрос из недописанного ответа задавать рано
+    if (errorText) {
+        await sendNotice({ sessionId, title, text, errorText, steps });
+        return;
+    }
     // ответ кончается блоком [ASK] — вопрос уходит опросом, остальное письмом
     const ask = pollsModule.parseAsk(text);
     if (ask) {
@@ -387,9 +394,8 @@ async function notifyTurnFinished({ sessionId, title, text }) {
     await sendNotice({ sessionId, title, text });
 }
 
-async function sendNotice({ sessionId, title, text }) {
-    const head = title ? `✅ ${title}` : '✅ Done';
-    const body = text.length > TEXT_LIMIT ? `${text.slice(0, TEXT_LIMIT)}…` : text;
+async function sendNotice({ sessionId, title, text, errorText, steps }) {
+    const { head, body } = letters.turnLetter({ title, text, errorText, steps });
     const message = `${head}\n\n${body}`;
     // одна запись на ход, а не на получателя: адресатов может быть несколько,
     // а во вкладке Telegram это одно и то же уведомление
@@ -460,7 +466,7 @@ async function handleUpdate(update) {
     const sessionId = (replyTo && sessionByReply.get(chatId, Number(replyTo))?.sessionId)
         || lastSessionOfChat.get(chatId)?.sessionId;
     if (!sessionId) {
-        await send(chatId, 'No session to continue yet — it appears here after the first finished run.').catch(() => {});
+        await send(chatId, 'Пока некуда отвечать: работа появится здесь после первого законченного задания в пульте.').catch(() => {});
         return;
     }
 
@@ -490,8 +496,15 @@ async function runInSession(chatId, sessionId, text, { waitIdle = false } = {}) 
         const deadline = Date.now() + IDLE_WAIT_MS;
         while ((busySessions.has(sessionId) || deps.isRunning(sessionId)) && Date.now() < deadline) await sleep(IDLE_CHECK_MS);
     }
-    if (busySessions.has(sessionId)) {
-        await send(chatId, '⏳ This session is still working — wait for its answer.').catch(() => {});
+    // busySessions знает только ходы, начатые отсюда; ход той же сессии из
+    // браузера виден через deps.isRunning — второй поверх него не запускаем
+    if (busySessions.has(sessionId) || deps.isRunning(sessionId)) {
+        // ответ на опрос, не дождавшийся свободной сессии, называем дословно:
+        // опрос уже закрыт, и без этого выбор человека пропал бы молча
+        const note = waitIdle
+            ? `⏳ Работа всё ещё выполняется, и ваш ответ «${text.slice(0, 300)}» агенту не передан. Ответьте на это письмо, когда она закончится, — ответ уйдёт в неё же.`
+            : '⏳ Эта работа ещё выполняется — дождитесь её ответа. Остановить её можно словом «стоп».';
+        await send(chatId, note).then((sent) => remember(chatId, sent.message_id, sessionId)).catch(() => {});
         return;
     }
 
@@ -504,14 +517,18 @@ async function runInSession(chatId, sessionId, text, { waitIdle = false } = {}) 
         // сессию могли удалить из пульта уже после того, как человек прочитал
         // её ответ, — «Session not found» в личке выглядит поломкой моста,
         // хотя мост исправен. Говорим, что случилось на самом деле
-        let text = `⚠️ ${err.message}`;
+        // слова человека до агента не дошли — говорим какие и почему, и
+        // привязываем это письмо к сессии: ответ на него уйдёт туда же
+        let reply = letters.undeliveredLetter(text, err.message);
         if (/session not found/i.test(err.message)) {
             // и забываем её: иначе сообщение без reply снова и снова
             // отправлялось бы в ту же несуществующую сессию
             forgetSession.run(sessionId);
-            text = '🗑 Эта сессия удалена из пульта — отвечать в неё больше некуда. Следующее сообщение уйдёт в предыдущую сессию, а новую работу начните из пульта.';
+            reply = '🗑 Эта работа удалена из пульта — отвечать в неё больше некуда. Следующее сообщение уйдёт в предыдущую работу, а новую начните из пульта.';
         }
-        await send(chatId, text).catch(() => {});
+        await send(chatId, reply)
+            .then((sent) => { if (!/session not found/i.test(err.message)) remember(chatId, sent.message_id, sessionId); })
+            .catch(() => {});
     } finally {
         busySessions.delete(sessionId);
     }

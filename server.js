@@ -1116,7 +1116,11 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
                 notifyTurnFinished({
                     sessionId: ctx.session,
                     title: getSessionTitle.get(ctx.session)?.title || '',
-                    text: ctx.answer || `⚠️ ${ctx.errorText}`,
+                    text: ctx.answer || '',
+                    // сломавшийся ход уходит своим письмом: причина по-человечески
+                    // и шаги, которые агент успел сделать до обрыва
+                    errorText: ctx.errorText || null,
+                    steps: ctx.errorText ? listToolSteps.all(ctx.session, ctx.userPosition).map((row) => row.text) : null,
                 });
             }
         }
@@ -3227,6 +3231,7 @@ const countMessages = db.prepare('SELECT COUNT(*) AS n FROM messages WHERE sessi
 
 // шаги инструментов этого хода: всё, что записано после строки с вопросом
 // человека. Нужен для сверки отчёта с делом (DOCS/decisions/056)
+const listToolSteps = db.prepare("SELECT text FROM messages WHERE session_id = ? AND position > ? AND role = 'tool' ORDER BY position");
 const countToolSteps = db.prepare("SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND position > ? AND role = 'tool'");
 
 // правка собственной реплики на графе Flow (см. DOCS/decisions/018): роль проверяем
