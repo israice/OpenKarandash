@@ -1113,6 +1113,9 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode, plan },
             }).catch(() => null);
             // решение о письме принимается до записи хода: оно само часть
             // суждения и должно лежать в той же строке, а не теряться
+            // причина поломки — до решения о письме: по ней willHandOver ниже знает,
+            // подхватят ли работу, а письмо об ошибке называет её человеку
+            if (ctx.errorText) await turnJudgment.classifyFailure(ctx.errorText).catch(() => null);
             const notify = turnJudgment.shouldNotify(judgment, { errorText: ctx.errorText });
             if (judgment) meta.resultMeta = { ...(meta.resultMeta || {}), judgment: { ...judgment, notified: notify } };
             // durationMs: только askClaude реально разбирает event.duration_ms
@@ -3655,8 +3658,15 @@ const NO_HANDOVER = /Stopped by the user|restarting/i;
 // слать ли письмо об ошибке: если работу сейчас подхватят, письмо — шум
 const handoverWatch = new Map();
 
+// Есть ли смысл менять исполнителя, решает суждение jev о причине поломки
+// (classifyFailure в turn-judgment.js, DOCS/decisions/065): переполненный
+// контекст или отказ по содержанию следующий агент не исправит, а стоить будет.
+// Суждение выносится заранее (await classifyFailure перед вызовом), сюда
+// приходит уже из памяти; нет суждения — как раньше, передаём всё, кроме
+// остановки человеком и перезапуска
 function nextExecutor(errorText, tried) {
     if (FALLBACK_OFF || NO_HANDOVER.test(String(errorText || ''))) return null;
+    if (turnJudgment.knownFailure(errorText)?.handover === false) return null;
     return Object.keys(AGENTS).find((key) => !tried.has(key) && AGENTS[key].connected()) || null;
 }
 
@@ -3692,6 +3702,7 @@ async function askWithFallback(name, params, onEvent) {
                 onEvent(event);
             });
             if (!failure) return { failure: null, started: true };
+            await turnJudgment.classifyFailure(failure).catch(() => null);
             const spare = nextExecutor(failure, tried);
             if (!spare) return { failure, started };
             telegramTell(`🔁 ${current} не справился: ${telegramLetters.humanReason(failure)}. Работу продолжает ${spare}.`);

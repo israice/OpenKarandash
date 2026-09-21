@@ -7,6 +7,8 @@
 // знать: что случилось, что агент успел сделать и что делать дальше. Исходный
 // текст ошибки остаётся последней строкой — по нему ищут причину
 
+const turnJudgment = require('../../SYSTEM/core/turn-judgment.js');
+
 const TEXT_LIMIT = 3500; // у Telegram потолок 4096 на сообщение, остальное — заголовок
 const STEPS_SHOWN = 6;
 const STEP_LIMIT = 90;
@@ -24,7 +26,23 @@ const REASONS = [
     [/finish_reason|overload|upstream|provider|\b5\d\d\b|internal server/i, 'поставщик модели оборвал ответ — сбой на его стороне, не в пульте и не в задании'],
 ];
 
+// причина по суждению jev (turn-judgment.js, classifyFailure): он понимает и
+// незнакомую формулировку. К моменту письма суждение уже вынесено сервером —
+// здесь оно берётся из памяти, без сети; нет его — работает таблица выше
+const JUDGED_REASONS = {
+    limit: REASONS[0][1],
+    no_model: REASONS[1][1],
+    auth: REASONS[2][1],
+    not_connected: REASONS[3][1],
+    network: REASONS[6][1],
+    provider: REASONS[7][1],
+    agent_fault: 'агент или его модель сработали неправильно — сбились на вызове инструмента, упёрлись в предел шагов или завершились сами',
+    task: 'в таком виде поручение не выполнит ни один агент — оно слишком велико для модели или отклонено по содержанию; разбейте его или переформулируйте',
+};
+
 function humanReason(errorText) {
+    const judged = JUDGED_REASONS[turnJudgment.knownFailure(errorText)?.reason];
+    if (judged) return judged;
     const found = REASONS.find(([pattern]) => pattern.test(String(errorText || '')));
     return found ? found[1] : 'агент сообщил об ошибке';
 }
