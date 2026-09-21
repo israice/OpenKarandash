@@ -446,6 +446,11 @@ async function showKeyboard(attempt = 0) {
 // ход, ни ронять его своей ошибкой — поэтому внутри всё под try/catch
 async function notifyTurnFinished({ sessionId, title, text, errorText, steps }) {
     if (!token || !users.length || (!text && !errorText)) return;
+    // строку плана человек уже получил отдельным письмом в начале работы
+    // (PLAN_PREAMBLE) — в итоговом письме она лишняя. Весь ответ из одной этой
+    // строки оставляем, сняв только метку
+    const original = text;
+    text = String(text || '').replace(/^\s*\[PLAN\][^\n]*\n?/, '').trim() || String(original || '').replace(/^\s*\[PLAN\]\s*/, '');
     // сломавшийся ход — своё письмо: что случилось, что успето, что делать
     // дальше (telegram-letters-server.js). Блок [ASK] в оборванном ответе не
     // разбираем: вопрос из недописанного ответа задавать рано
@@ -554,7 +559,7 @@ async function startNewSession(chatId, text, messageId) {
         await deps.startNew({
             text,
             likeSessionId: like,
-            note: (line) => { send(chatId, line).catch(() => {}); },
+            note: (line) => { send(chatId, line).then((sent) => { if (created) remember(chatId, sent.message_id, created); }).catch(() => {}); },
             // id приходит в начале хода: сразу снимаем «новую работу» и
             // привязываем личку к сессии — следующее сообщение пойдёт уже в неё,
             // а не заведёт ещё одну
@@ -685,7 +690,13 @@ async function runInSession(chatId, sessionId, text, { waitIdle = false } = {}) 
     try {
         // ответ придёт сюда же сам: закончившийся ход снова позовёт notifyTurnFinished
         // note — что сервер хочет сказать человеку по дороге (заменил агента)
-        await deps.ask({ sessionId, text, note: (line) => { send(chatId, line).catch(() => {}); } });
+        // промежуточные письма привязываем к сессии: ответ reply на строку
+        // плана («нет, я имел в виду другое») должен уйти в эту же работу
+        await deps.ask({
+            sessionId,
+            text,
+            note: (line) => { send(chatId, line).then((sent) => remember(chatId, sent.message_id, sessionId)).catch(() => {}); },
+        });
     } catch (err) {
         // сессию могли удалить из пульта уже после того, как человек прочитал
         // её ответ, — «Session not found» в личке выглядит поломкой моста,
@@ -830,7 +841,7 @@ function init(dependencies) {
             console.error('Telegram getMe:', err.message);
         });
     }
-    return { notifyTurnFinished, askPreamble, tell };
+    return { notifyTurnFinished, askPreamble, planPreamble, tell };
 }
 
 // короткая служебная строка всем людям из списка (сервер сменил исполнителя).
@@ -841,6 +852,19 @@ function tell(text) {
 }
 
 // приставка про блок [ASK] нужна агенту, только когда опрос есть кому слать
+// Приставка к поручению, пришедшему из Telegram: человек с телефона не видит
+// работы агента, поэтому агент первой строкой говорит, как понял поручение, —
+// пульт ловит строку вживую и пересылает (runTurn.planFeed в server.js).
+// Написана как правило оформления: слабая модель принимала приставку за задание
+const PLAN_PREAMBLE = '[OpenKarandash — обязательное правило начала ответа] '
+    + 'Человек пишет с телефона и не видит твоей работы. СНАЧАЛА, до первого вызова любого инструмента, выведи текстом одну строку: '
+    + '«[PLAN] » и одна-две короткие фразы на языке человека — как ты понял поручение и что сейчас сделаешь. '
+    + 'Пульт сразу перешлёт её человеку, чтобы он убедился, что понят верно. Только после этой строки берись за инструменты и работай как обычно. '
+    + 'Поручение человека — ниже.\n\n';
+function planPreamble() {
+    return PLAN_PREAMBLE;
+}
+
 function askPreamble() {
     return token && users.length ? pollsModule.ASK_PREAMBLE : '';
 }

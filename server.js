@@ -980,7 +980,7 @@ function setBusy(delta) {
 //   meta                 — turnMeta хода: usage/cost/stopReason/resultMeta
 //   run                  — запись в activeRuns: сюда драйвер кладёт child
 //   answer / fail(text)  — итоговый текст ответа и текст ошибки хода
-async function runTurn({ target, prompt, sessionId, model, effort, mode }, send, drive) {
+async function runTurn({ target, prompt, sessionId, model, effort, mode, plan }, send, drive) {
     const runId = nextRunId++;
     // startedAt — момент начала именно этого хода: по нему панель Sessions
     // тикает «живую» длительность активной сессии (см. activeRunStartedAt
@@ -1011,7 +1011,25 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
         // позиция последней записанной строки ответа: finishExchange дописывает
         // метаданные хода на неё, а не вставляет ещё одну строку
         assistantPosition: null,
+        // Строка «[PLAN] …» в начале ответа — как агент понял поручение. Ловим её
+        // из текста по мере прихода и отдаём только начавшему ход (send), не в
+        // ленту: в ленте она и так останется частью ответа. Один раз за ход
+        planBuffer: '',
+        planDone: !plan,
+        // flush — текста больше не будет (начался шаг): строка плана могла прийти
+        // кусками и без перевода строки в конце
+        planFeed(chunk, flush = false) {
+            if (ctx.planDone) return;
+            ctx.planBuffer += chunk;
+            const found = ctx.planBuffer.match(flush ? /\[PLAN\][ \t]*([^\n]+)/ : /\[PLAN\][ \t]*([^\n]+)\n/);
+            if (found) send({ type: 'plan', text: found[1].trim().slice(0, 500) });
+            // длинный текст без строки плана — агент правило не выполнил, дальше не ждём
+            if (found || ctx.planBuffer.length > 1500) ctx.planDone = true;
+        },
         emit(event) {
+            if (event.type === 'text') ctx.planFeed(`${event.text}\n`);
+            // план после первого шага — уже не план, а отчёт: такой не пересылаем
+            if (event.type === 'tool') { ctx.planFeed('', true); ctx.planDone = true; }
             // номер получает и отправитель: оборвись его поток — он продолжит
             // через /api/sessions/attach с того же места
             const stamped = ctx.session ? stampEventSeq(ctx.session, event) : event;
@@ -1161,12 +1179,14 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
 // Они едут тем же каналом, что и пересказ истории: это не вопрос человека,
 // а служебная преамбула, поэтому в тексте строки сессии её быть не должно —
 // зато она попадает в «Sent to model» там, где коннектор его пишет
-function resumeAndHandoff(sessionId, targetId, hints) {
+function resumeAndHandoff(sessionId, targetId, hints, plan) {
     const resumeId = sessionId ? getCliSession.get(sessionId, targetId)?.id : null;
     const history = sessionId && !resumeId ? handoffPreamble(sessionId) : '';
     // третья часть приставки — как задать человеку вопрос опросом Telegram
     // (блок [ASK], DOCS/decisions/059); пусто, пока мост не настроен
-    return { resumeId, handoff: askPreamble() + turnJudgment.hintPreamble(hints) + history };
+    // четвёртая — ход начат из Telegram: агент первой строкой говорит, как понял
+    // поручение, и пульт сразу пересылает её человеку (DOCS/decisions/063)
+    return { resumeId, handoff: askPreamble() + turnJudgment.hintPreamble(hints) + history + (plan ? planPreamble() : '') };
 }
 
 // Chat — обсуждение без последствий. запрета Edit/Write мало: в прошлый раз правка
@@ -1247,7 +1267,7 @@ Reply in the same language the person writes to you in.
 
 `;
 
-async function askClaude({ prompt, model, effort, sessionId, mode, hints }, send) {
+async function askClaude({ prompt, model, effort, sessionId, mode, hints, plan }, send) {
     if (!activeTarget) return send({ type: 'error', error: 'Claude is not connected' });
     // цель фиксируем на весь запуск: пока идёт работа, в настройках могли переключить CLI
     const target = activeTarget;
@@ -1257,7 +1277,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode, hints }, send
     // служит тот же claude, что выбран здесь (мост гоняет подключённую цель).
     // Модель и effort из шапки Hermes не принимает: модель задаёт его конфиг.
     // Агента нет (HERMES_STACK=0, Docker не запущен) — прямой claude, как раньше
-    if (await hermesReady()) return askHermes({ prompt, sessionId, mode, hints }, send);
+    if (await hermesReady()) return askHermes({ prompt, sessionId, mode, hints, plan }, send);
     if (model && !CLAUDE_MODELS.includes(model)) {
         return send({ type: 'error', error: `Unknown model: ${model}` });
     }
@@ -1265,7 +1285,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode, hints }, send
         return send({ type: 'error', error: `Unknown effort level: ${effort}` });
     }
 
-    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints);
+    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints, plan);
 
     const args = ['-p', '--output-format', 'stream-json', '--verbose', ...LEAN_ARGS, ...THINKING_ARGS, ...PARTIAL_ARGS];
     if (model) args.push('--model', model);
@@ -1285,7 +1305,7 @@ async function askClaude({ prompt, model, effort, sessionId, mode, hints }, send
     // только при переключении CLI (своей истории у этой цели нет)
     const input = handoff + (mode === 'Chat' ? CHAT_PREAMBLE + prompt : prompt);
 
-    return runTurn({ target, prompt, sessionId, model, effort, mode }, send, async (ctx) => {
+    return runTurn({ target, prompt, sessionId, model, effort, mode, plan }, send, async (ctx) => {
         // id сессии CLI приходит в каждом событии — связываем один раз
         let cliSessionSeen = false;
         // tool_use_id -> позиция строки шага: tool_result приходит отдельным
@@ -1671,12 +1691,12 @@ async function fetchOpenCodeModels(target) {
     return stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean);
 }
 
-async function askOpenCode({ prompt, model, sessionId, mode, hints }, send) {
+async function askOpenCode({ prompt, model, sessionId, mode, hints, plan }, send) {
     if (!activeOpenCodeTarget) return send({ type: 'error', error: 'OpenCode is not connected' });
     const target = activeOpenCodeTarget;
     if (!prompt) return send({ type: 'error', error: 'Empty request' });
 
-    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints);
+    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints, plan);
     const args = ['run', handoff + prompt, '--format', 'json'];
     if (model) args.push('--model', model);
     if (resumeId) args.push('--session', resumeId);
@@ -1684,7 +1704,7 @@ async function askOpenCode({ prompt, model, sessionId, mode, hints }, send) {
     // (см. память команды) — режим Chat/Action пока только помечает строки в базе
     // (mode-колонка), инструменты CLI на уровне флагов не ограничивает
 
-    return runTurn({ target, prompt, sessionId, model, mode }, send, async (ctx) => {
+    return runTurn({ target, prompt, sessionId, model, mode, plan }, send, async (ctx) => {
         let cliSessionSeen = false;
         // callID вызова инструмента -> позиция строки шага: tool_use приходит дважды
         // на один callID (сперва running, потом completed), вторая запись только
@@ -2029,7 +2049,7 @@ function savePiOpenRouterKey(key) {
     fs.writeFileSync(PI_AUTH_FILE, JSON.stringify(auth, null, 2));
 }
 
-async function askPi({ prompt, model, effort, sessionId, mode, hints }, send) {
+async function askPi({ prompt, model, effort, sessionId, mode, hints, plan }, send) {
     if (!activePiTarget) return send({ type: 'error', error: 'pi is not connected' });
     const target = activePiTarget;
     if (!prompt) return send({ type: 'error', error: 'Empty request' });
@@ -2037,7 +2057,7 @@ async function askPi({ prompt, model, effort, sessionId, mode, hints }, send) {
         return send({ type: 'error', error: `Unknown effort level: ${effort}` });
     }
 
-    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints);
+    const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints, plan);
 
     const args = ['-p', '--mode', 'json'];
     if (model) args.push('--model', model);
@@ -2049,7 +2069,7 @@ async function askPi({ prompt, model, effort, sessionId, mode, hints }, send) {
     // `--` обязателен: без него промпт, начинающийся с дефиса, ушёл бы в разбор флагов
     args.push('--', input);
 
-    return runTurn({ target, prompt, sessionId, model, effort, mode }, send, async (ctx) => {
+    return runTurn({ target, prompt, sessionId, model, effort, mode, plan }, send, async (ctx) => {
         // toolCallId -> позиция строки шага: вызов инструмента приходит дважды
         // (start и end), результат дописывается в ту же строку
         const toolPositions = new Map();
@@ -2469,7 +2489,7 @@ const HERMES_TERMINAL_EVENTS = new Set(['run.completed', 'run.failed', 'run.canc
 // который целиком придёт в assistant.completed и в расшифровке
 const HERMES_SILENT_EVENTS = new Set(['run.started', 'message.started', 'assistant.delta', 'done']);
 
-async function askHermes({ prompt, sessionId, mode, model, effort, hints }, send) {
+async function askHermes({ prompt, sessionId, mode, model, effort, hints, plan }, send) {
     // Правило «исполнитель хода = выбранный в Settings агент» (DOCS/decisions/043):
     // Hermes — оркестратор, но мозгом ему по умолчанию служит claude через
     // claude-bridge. Если сессию ведёт другой прямой CLI (opencode/codex/pi),
@@ -2485,14 +2505,14 @@ async function askHermes({ prompt, sessionId, mode, model, effort, hints }, send
             if (!adapter.connected()) {
                 return send({ type: 'error', error: `${owner} is not connected — open Settings and connect it` });
             }
-            return adapter.ask({ prompt, sessionId, mode, model, effort, hints }, (event) => send(event));
+            return adapter.ask({ prompt, sessionId, mode, model, effort, hints, plan }, (event) => send(event));
         }
     }
     if (!activeHermesTarget) return send({ type: 'error', error: 'Hermes is not connected' });
     const target = activeHermesTarget;
     if (!prompt) return send({ type: 'error', error: 'Empty request' });
 
-    return runTurn({ target, prompt, sessionId, mode }, send, async (ctx) => {
+    return runTurn({ target, prompt, sessionId, mode, plan }, send, async (ctx) => {
         const base = hermesSessionsBase(target.url);
         // Hermes принимает свой id сессии: берём производный от нашего, чтобы
         // его было видно в hermes-home/sessions рядом с нашей базой. Искать
@@ -2500,7 +2520,7 @@ async function askHermes({ prompt, sessionId, mode, model, effort, hints }, send
         // (target.id): с жёстким 'hermes' она не находилась никогда, и каждый
         // ход уходил с преамбулой «у тебя нет своей истории», хотя Hermes держит
         // её сам — модель путалась и повторяла разбор с нуля
-        const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints);
+        const { resumeId, handoff } = resumeAndHandoff(sessionId, target.id, hints, plan);
         let hermesId = resumeId;
         if (!hermesId) {
             hermesId = `ok-${ctx.session}`;
@@ -2568,6 +2588,9 @@ async function askHermes({ prompt, sessionId, mode, model, effort, hints }, send
             let failure = null;
 
             const onEvent = (name, ev) => {
+                // текст ответа Hermes вживую в ленту не идёт (его расставит пересборка
+                // хода), но строку плана человек в Telegram ждёт сейчас, а не в конце
+                if (name === 'assistant.delta' && ev.delta) ctx.planFeed(String(ev.delta));
                 if (name === 'tool.started') {
                     const detail = hermesToolDetail(ev.args);
                     const toolName = ev.tool_name || 'tool';
@@ -3682,6 +3705,7 @@ async function askWithFallback(name, params, onEvent) {
                 sessionId: sessionId || undefined,
                 mode: params.mode,
                 hints: params.hints,
+                plan: params.plan,
             };
             current = spare;
         }
@@ -3707,8 +3731,8 @@ async function askOutsideBrowser({ sessionId, text, note }) {
     const hints = await turnJudgment.pickDecisionHints(text).catch(() => null);
     const { failure, started } = await askWithFallback(
         name,
-        { prompt: text, sessionId, model: last.model || undefined, effort: last.effort || undefined, mode: last.mode || undefined, hints },
-        () => {},
+        { prompt: text, sessionId, model: last.model || undefined, effort: last.effort || undefined, mode: last.mode || undefined, hints, plan: true },
+        (event) => { if (event.type === 'plan' && note) note(`🧭 ${event.text}`); },
     );
     if (failure && !started) throw new Error(failure);
 }
@@ -3768,8 +3792,12 @@ async function startOutsideBrowser({ text, likeSessionId, note, onSession }) {
             effort: (!replaced && last.effort) || undefined,
             mode: last.mode || undefined,
             hints,
+            plan: true,
         },
-        (event) => { if (event.type === 'session' && onSession) onSession(event.id); },
+        (event) => {
+            if (event.type === 'session' && onSession) onSession(event.id);
+            if (event.type === 'plan' && note) note(`🧭 ${event.text}`);
+        },
     );
     if (failure && !started) throw new Error(failure);
 }
@@ -3821,7 +3849,7 @@ const telegram = require('./PROJECTS/Settings/telegram-server.js');
 // stop и status нужны мосту затем, что не всякое сообщение из Telegram — это
 // поручение: «стоп» и «что там» раньше запускали настоящий ход (DOCS/decisions/054)
 const telegramLetters = require('./PROJECTS/Settings/telegram-letters-server.js');
-const { notifyTurnFinished, askPreamble, tell: telegramTell } = telegram.init({
+const { notifyTurnFinished, askPreamble, planPreamble, tell: telegramTell } = telegram.init({
     setEnvValue,
     ask: askOutsideBrowser,
     startNew: startOutsideBrowser,

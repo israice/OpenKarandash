@@ -338,8 +338,13 @@ def stream_turn(cfg: BridgeConfig, messages: list[dict], model: str,
     final.reasoning = ""
     if notes:
         yield ("reasoning", f"\n{notes}\n")
-    if buffering and not final.tool_calls and final.text:
-        yield ("delta", final.text)  # plain answer held back by the tool buffer
+    # Придержанный текст отдаём и тогда, когда ответ оказался вызовом: слова модели
+    # перед вызовом («[PLAN] понял так…», пояснение шага) иначе терялись целиком —
+    # у Hermes такое сообщение оставалось с пустым content, хотя непотоковый путь
+    # (_completion_envelope) прозу рядом с tool_calls отдаёт. В final.text к этому
+    # месту уже только проза: вызовы из неё вынул _attach_tool_calls
+    if buffering and final.text:
+        yield ("delta", final.text)  # held back by the tool buffer
     yield ("done", final)
 
 
