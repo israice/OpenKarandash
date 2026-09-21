@@ -1148,7 +1148,9 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode }, send,
 function resumeAndHandoff(sessionId, targetId, hints) {
     const resumeId = sessionId ? getCliSession.get(sessionId, targetId)?.id : null;
     const history = sessionId && !resumeId ? handoffPreamble(sessionId) : '';
-    return { resumeId, handoff: turnJudgment.hintPreamble(hints) + history };
+    // третья часть приставки — как задать человеку вопрос опросом Telegram
+    // (блок [ASK], DOCS/decisions/059); пусто, пока мост не настроен
+    return { resumeId, handoff: askPreamble() + turnJudgment.hintPreamble(hints) + history };
 }
 
 // Chat — обсуждение без последствий. запрета Edit/Write мало: в прошлый раз правка
@@ -3708,7 +3710,7 @@ function activeRunStartedAt(sessionId) {
 const telegram = require('./PROJECTS/Settings/telegram-server.js');
 // stop и status нужны мосту затем, что не всякое сообщение из Telegram — это
 // поручение: «стоп» и «что там» раньше запускали настоящий ход (DOCS/decisions/054)
-const { notifyTurnFinished } = telegram.init({
+const { notifyTurnFinished, askPreamble } = telegram.init({
     setEnvValue,
     ask: askOutsideBrowser,
     db,

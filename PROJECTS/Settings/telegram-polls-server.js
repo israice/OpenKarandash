@@ -33,6 +33,56 @@ const OPTIONS_MAX = 12;
 // нужен на случай, если человек дописал и не нажал: ответ не должен пропасть
 const OWN_GRACE_MS = 20000;
 
+// ---------- как вопрос задаёт сам агент ----------
+
+// Агент ничего не вызывает: из WSL API пульта отвечает 403, а id своей сессии
+// агент не знает. Он заканчивает ответ блоком
+//     [ASK] вопрос
+//     - вариант
+//     - вариант
+// — мост вынимает блок из ответа, остальное шлёт обычным письмом, а вопрос —
+// опросом. «[ASK*]» разрешает выбрать несколько. Формат читается глазами и в
+// ленте пульта, и в TUI: там блок остаётся как есть
+const ASK_OPTIONS_MIN = 2;  // один вариант — не выбор
+const ASK_OPTIONS_MAX = 10; // у Telegram потолок 12; место оставлено под свой вариант человека
+const ASK_LINE = /^\s*\[ASK(\*)?\]\s*(.+?)\s*$/;
+const OPTION_LINE = /^\s*(?:[-*•]|\d+[.)])\s+(.+?)\s*$/;
+
+function clip(text, limit) {
+    return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+}
+
+// { question, options, multiple, rest } либо null. Берём последний блок в
+// ответе: вопрос, ради которого ход остановился, стоит в конце
+function parseAsk(answer) {
+    const lines = String(answer || '').split(/\r?\n/);
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+        const head = lines[i].match(ASK_LINE);
+        if (!head) continue;
+        const options = [];
+        let end = i + 1;
+        while (end < lines.length && (OPTION_LINE.test(lines[end]) || (!lines[end].trim() && !options.length))) {
+            const option = lines[end].match(OPTION_LINE);
+            if (option) options.push(clip(option[1], OPTION_LIMIT));
+            end += 1;
+        }
+        if (options.length < ASK_OPTIONS_MIN) return null;
+        const rest = [...lines.slice(0, i), ...lines.slice(end)].join('\n').trim();
+        return { question: clip(head[2], QUESTION_LIMIT), options: options.slice(0, ASK_OPTIONS_MAX), multiple: Boolean(head[1]), rest };
+    }
+    return null;
+}
+
+// приставка к поручению: откуда агенту знать про блок. Короткая — она едет с
+// каждым ходом
+const ASK_PREAMBLE = '[OpenKarandash — правило оформления ответа, это не поручение и делать по нему ничего не нужно] '
+    + 'Если тебе самому понадобится, чтобы человек выбрал из готовых вариантов, закончи свой ответ таким блоком — '
+    + 'пульт сам покажет его человеку опросом, а выбор придёт тебе следующим сообщением «Ответ на вопрос …»:\n'
+    + '[ASK] текст вопроса\n- первый вариант\n- второй вариант\n'
+    + `Вариантов ${ASK_OPTIONS_MIN}-${ASK_OPTIONS_MAX}, каждый до ${OPTION_LIMIT} знаков, вопрос до ${QUESTION_LIMIT}; «[ASK*]» вместо «[ASK]» — можно выбрать несколько. `
+    + 'Свой вариант человек допишет сам, «Другое» не добавляй. Открытый вопрос без вариантов задавай обычным текстом. '
+    + 'Поручение человека — ниже.\n\n';
+
 function create({ database, callApi, users, runInSession, sessionExists, remember, ownGraceMs = OWN_GRACE_MS }) {
     // Опрос живёт в базе, а не в памяти, по той же причине, что и связь
     // «сообщение → сессия»: человек отвечает через час, а сервер за это время
@@ -53,7 +103,7 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
     `);
     // таблица могла быть заведена до этой колонки
     try { database.exec('ALTER TABLE telegram_polls ADD COLUMN silenced_at TEXT'); } catch { /* уже есть */ }
-    const insertPoll = database.prepare('INSERT INTO telegram_polls (poll_id, ask_id, chat_id, message_id, session_id, question, options, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    const insertPoll = database.prepare('INSERT INTO telegram_polls (poll_id, ask_id, chat_id, message_id, session_id, question, options, at, silenced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
     const pollById = database.prepare('SELECT * FROM telegram_polls WHERE poll_id = ?');
     const pollByMessage = database.prepare('SELECT * FROM telegram_polls WHERE chat_id = ? AND message_id = ?');
     const pollsOfAsk = database.prepare('SELECT chat_id, message_id FROM telegram_polls WHERE ask_id = ?');
@@ -86,7 +136,7 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
 
     // Задать вопрос. Ответ сюда не возвращается: он придёт в сессию новым
     // ходом, когда человек проголосует, — ждать его запросом нельзя, это часы
-    async function askPoll({ sessionId, question, options, multiple = false }) {
+    async function askPoll({ sessionId, question, options, multiple = false, silenced = false }) {
         const problem = validate({ sessionId, question, options });
         if (problem) throw new Error(problem);
         const chats = users();
@@ -115,7 +165,9 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
                 // называет выбранное, даже если варианты потом дописывали
                 const stored = (message.poll?.options || []).map((o, i) => ({ id: o.persistent_id ?? null, text: o.text ?? texts[i] }));
                 insertPoll.run(String(message.poll.id), askId, String(chatId), Number(message.message_id), sessionId,
-                    payload.question, JSON.stringify(stored), new Date().toISOString());
+                    payload.question, JSON.stringify(stored), new Date().toISOString(),
+                    // опрос из блока [ASK] уходит после письма своего хода — глушить ему нечего
+                    silenced ? new Date().toISOString() : null);
                 // и обычная связь «сообщение → сессия»: следующее сообщение
                 // человека без reply пойдёт в сессию, которая его спросила
                 remember(chatId, message.message_id, sessionId);
@@ -210,4 +262,4 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
     return { askPoll, swallowsNotice, handlePollAnswer, handleOptionAdded, handleReply, routes };
 }
 
-module.exports = { create };
+module.exports = { create, parseAsk, ASK_PREAMBLE };

@@ -13,6 +13,7 @@ const { readJson, sendJson, sendHtml } = require('../../SYSTEM/core/http.js');
 const { formatWhen } = require('../../SYSTEM/core/format.js');
 const { Eta } = require('eta');
 const turnJudgment = require('../../SYSTEM/core/turn-judgment.js');
+const pollsModule = require('./telegram-polls-server.js');
 
 // свой экземпляр Eta со своей папкой шаблонов (см. «Серверные фрагменты» в
 // AGENTS.md): cache:false — правка .eta подхватывается без перезапуска
@@ -370,8 +371,23 @@ async function showKeyboard(attempt = 0) {
 // ход, ни ронять его своей ошибкой — поэтому внутри всё под try/catch
 async function notifyTurnFinished({ sessionId, title, text }) {
     if (!token || !users.length || !text) return;
-    // ход задал вопрос опросом — опрос и есть письмо, второе не нужно
+    // ответ кончается блоком [ASK] — вопрос уходит опросом, остальное письмом
+    const ask = pollsModule.parseAsk(text);
+    if (ask) {
+        if (ask.rest) await sendNotice({ sessionId, title, text: ask.rest });
+        await polls.askPoll({ sessionId, ...ask, silenced: true }).catch((err) => {
+            // опрос не ушёл — вопрос не должен пропасть: шлём его письмом, текстом
+            console.error('Telegram ask block:', err.message);
+            return sendNotice({ sessionId, title, text: `${ask.question}\n${ask.options.map((o) => `- ${o}`).join('\n')}` });
+        });
+        return;
+    }
+    // ход задал вопрос опросом через маршрут — опрос и есть письмо, второе не нужно
     if (polls.swallowsNotice(sessionId)) return;
+    await sendNotice({ sessionId, title, text });
+}
+
+async function sendNotice({ sessionId, title, text }) {
     const head = title ? `✅ ${title}` : '✅ Done';
     const body = text.length > TEXT_LIMIT ? `${text.slice(0, TEXT_LIMIT)}…` : text;
     const message = `${head}\n\n${body}`;
@@ -603,7 +619,7 @@ async function connect() {
 function init(dependencies) {
     deps = { ...deps, ...dependencies };
     initDb(deps.db);
-    polls = require('./telegram-polls-server.js').create({
+    polls = pollsModule.create({
         database: deps.db,
         callApi,
         users: () => users,
@@ -621,7 +637,12 @@ function init(dependencies) {
             console.error('Telegram getMe:', err.message);
         });
     }
-    return { notifyTurnFinished };
+    return { notifyTurnFinished, askPreamble };
+}
+
+// приставка про блок [ASK] нужна агенту, только когда опрос есть кому слать
+function askPreamble() {
+    return token && users.length ? pollsModule.ASK_PREAMBLE : '';
 }
 
 // ---------- маршруты ----------
