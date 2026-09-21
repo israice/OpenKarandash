@@ -61,16 +61,30 @@ const BUTTONS = [
     { label: 'LOOP', text: '🔁 LOOP' },
     { label: 'END', text: '⏹ END', style: 'danger' },
 ];
-const KEYBOARD = {
-    keyboard: [BUTTONS.map(({ text, style }) => (style ? { text, style } : { text }))],
-    resize_keyboard: true,  // без этого одна строка кнопок растянута на высоту обычной клавиатуры
-    is_persistent: true,    // не прячется после нажатия
-    input_field_placeholder: 'Ответ агенту или кнопка ниже',
-};
-// нажатие приходит текстом кнопки вместе с эмодзи; голое слово, набранное
-// руками, считаем тем же нажатием
+// Последняя выбранная кнопка режима (ASK/ACTION/LOOP) остаётся отмеченной,
+// пока человек не выберет другую: Bot API не даёт кнопке рамки, поэтому метка —
+// скобки вокруг текста (плюс цвет style, если он у кнопки есть). END не режим,
+// он всегда возвращает ACTION. Выбор лежит в telegram_chat_state.mode
+const MODE_LABELS = ['ASK', 'ACTION', 'LOOP'];
+const MARK_RE = /^【(.*)】$/;
+function keyboardFor(chatId) {
+    let mode = 'action';
+    try { mode = readChatState?.get(String(chatId))?.mode || 'action'; } catch { /* база ещё не готова — по умолчанию */ }
+    return {
+        keyboard: [BUTTONS.map(({ label, text, style }) => {
+            const shown = label.toLowerCase() === mode ? `【${text}】` : text;
+            return style ? { text: shown, style } : { text: shown };
+        })],
+        resize_keyboard: true,  // без этого одна строка кнопок растянута на высоту обычной клавиатуры
+        is_persistent: true,    // не прячется после нажатия
+        input_field_placeholder: 'Ответ агенту или кнопка ниже',
+    };
+}
+// нажатие приходит текстом кнопки вместе с эмодзи (и меткой выбора, если кнопка
+// выбрана); голое слово, набранное руками, считаем тем же нажатием
 function pressedButton(text) {
-    const value = String(text || '').trim();
+    const raw = String(text || '').trim();
+    const value = raw.replace(MARK_RE, '$1').trim();
     return BUTTONS.find((b) => b.text === value || b.label === value.toUpperCase()) || null;
 }
 // клавиатуру Telegram показывает только вместе с сообщением. Чтобы человек
@@ -336,7 +350,7 @@ async function send(chatId, text) {
                 disable_web_page_preview: true,
                 // с каждым письмом: убранную человеком клавиатуру вернёт
                 // ближайшее же сообщение
-                reply_markup: KEYBOARD,
+                reply_markup: keyboardFor(chatId),
             });
         } catch (err) {
             // «Telegram answered …» и текст его описания — это ответ сервиса,
@@ -465,7 +479,12 @@ function pressButton(chatId, button) {
             ? '⚡ ACTION: напишите поручение — оно станет новой работой в пульте.'
             : '⚡ ACTION: сообщение уйдёт поручением в текущую работу. Новую работу начинает ⏹ END.';
     }
-    return `${button.text} — кнопка пока ничего не делает.`;
+    if (MODE_LABELS.includes(button.label)) {
+        // выбор запоминаем: кнопка остаётся отмеченной до выбора другой
+        const fresh = readChatState.get(chatId)?.fresh ? 1 : 0;
+        saveChatState.run(chatId, button.label.toLowerCase(), fresh, now);
+    }
+    return `${button.text} — выбрано. Пока эта кнопка ничего не меняет в работе.`;
 }
 
 // Первое сообщение после END: поручение заводит новую сессию в пульте
