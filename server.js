@@ -3732,7 +3732,7 @@ async function askOutsideBrowser({ sessionId, text, note }) {
     const { failure, started } = await askWithFallback(
         name,
         { prompt: text, sessionId, model: last.model || undefined, effort: last.effort || undefined, mode: last.mode || undefined, hints, plan: true },
-        (event) => { if (event.type === 'plan' && note) note(`🧭 ${event.text}`); },
+        (event) => { if (event.type === 'plan' && note) note(`📋 План: ${event.text}`); },
     );
     if (failure && !started) throw new Error(failure);
 }
@@ -3796,7 +3796,7 @@ async function startOutsideBrowser({ text, likeSessionId, note, onSession }) {
         },
         (event) => {
             if (event.type === 'session' && onSession) onSession(event.id);
-            if (event.type === 'plan' && note) note(`🧭 ${event.text}`);
+            if (event.type === 'plan' && note) note(`📋 План: ${event.text}`);
         },
     );
     if (failure && !started) throw new Error(failure);

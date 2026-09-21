@@ -529,7 +529,20 @@ function liveLastSession(chatId) {
     }
 }
 
-// что кнопка делает и что ответить человеку
+// Первое письмо на поручение — сразу, до исполнителя: как jev понял, какого рода
+// это дело (turn-judgment.js, вопрос kind). Исполнитель может быть слабой
+// моделью и строки [PLAN] не дать вовсе, а человеку с телефона нужен знак, что
+// его поняли верно, в первую же секунду (DOCS/decisions/064). Неуверенный или
+// недоступный jev — общее «принял»: гадать вслух хуже, чем промолчать о виде
+async function acknowledge(chatId, understood, sessionId) {
+    const line = understood?.kindWords
+        ? `🧭 Понял поручение как: ${understood.kindWords}. Приступаю.`
+        : '🧭 Принял поручение, приступаю.';
+    await send(chatId, line)
+        .then((sent) => { if (sessionId) remember(chatId, sent.message_id, sessionId); })
+        .catch(() => {});
+}
+
 function pressButton(chatId, button) {
     const now = new Date().toISOString();
     if (button.label === 'END') {
@@ -638,12 +651,17 @@ async function handleUpdate(update) {
     // после END сообщение начинает новую работу. Ответ reply на письмо старой
     // работы — по-прежнему в неё: человек сам назвал адресата
     if (!repliedSession && readChatState.get(chatId)?.fresh) {
+        // после END сообщение — поручение без разбора «стоп / что там», но как
+        // оно понято, человеку говорим так же
+        const understood = await turnJudgment.classifyInbox(message.text).catch(() => null);
+        await acknowledge(chatId, understood, null);
         await startNewSession(chatId, message.text, message.message_id);
         return;
     }
     const sessionId = repliedSession || liveLastSession(chatId);
     // отвечать некуда — значит, это поручение на новую работу, как после END
     if (!sessionId) {
+        await acknowledge(chatId, await turnJudgment.classifyInbox(message.text).catch(() => null), null);
         await startNewSession(chatId, message.text, message.message_id);
         return;
     }
@@ -652,11 +670,14 @@ async function handleUpdate(update) {
     // запускали настоящий ход, то есть тратили деньги владельца и занимали
     // очередь. Неуверенный ответ означает поручение — как мост вёл себя всегда
     // (DOCS/decisions/054)
-    const { intent } = await turnJudgment.classifyInbox(message.text).catch(() => ({ intent: 'task' }));
+    const understood = await turnJudgment.classifyInbox(message.text).catch(() => ({ intent: 'task' }));
+    const { intent } = understood;
     if (intent !== 'task') {
         await send(chatId, answerWithoutTurn(intent, sessionId)).catch(() => {});
         return;
     }
+    // занятая работа поручение не примет — «приступаю» было бы неправдой
+    if (!busySessions.has(sessionId) && !deps.isRunning(sessionId)) await acknowledge(chatId, understood, sessionId);
 
     await runInSession(chatId, sessionId, message.text);
 }

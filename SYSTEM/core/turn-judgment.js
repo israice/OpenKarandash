@@ -49,6 +49,9 @@ const THRESHOLDS = {
     // «стоп» внутри задания принять за команду — оборвать чужую работу.
     // Не дотянули — считаем поручением, то есть как мост вёл себя всегда
     inboxIntent: 0.8,
+    // вид поручения для письма «понял как …»; ниже порога письмо остаётся общим.
+    // Порог поставлен на глаз по десятку сообщений владельца, не промерен
+    inboxKind: 0.6,
     // с какого места шкалы ход считается требующим вмешательства: по нему
     // считается счётчик на Home и рисуется пометка в ленте. Верхняя половина
     // трёхуровневой шкалы — «задача не доделана», а не «сделано с оговоркой».
@@ -446,6 +449,59 @@ const INBOX_QUESTION = {
             },
         },
     },
+    // Каким делом человек считает своё поручение. Ответ уходит ему первым же
+    // письмом («понял как …») — раньше, чем исполнитель успеет сказать хоть
+    // слово, и независимо от того, выполнит ли слабая модель правило [PLAN]
+    // (DOCS/decisions/064). Вопрос едет тем же запросом, что intent: лишней
+    // задержки нет
+    kind: {
+        type: 'choice',
+        instructions: {
+            question: 'If `message` is work for the assistant, what kind of work is it?',
+            focus: 'The person writes to an assistant that develops a software project.',
+        },
+        criteria: {
+            fix: {
+                what: 'Something works wrong or not as expected and must be repaired.',
+                examples: ['Кнопки пропадают после нажатия', 'Почему не пришло письмо? Исправь', 'Опрос закрывается сам'],
+            },
+            build: {
+                what: 'Add something new or extend what exists: a feature, a rule, a behaviour.',
+                examples: ['Добавь кнопки ASK и END', 'Сделай, чтобы после END начиналась новая сессия'],
+            },
+            look: {
+                what: 'Change how something looks: layout, colours, wording, order of elements.',
+                examples: ['Сделай кнопки красивее', 'Верни кнопки в одну строку', 'Поменяй текст письма'],
+            },
+            explain: {
+                what: 'A question to answer or a thing to explain; nothing has to be changed.',
+                examples: ['Как устроена логика телеграма?', 'Почему сервер нельзя поднимать из сессии?'],
+            },
+            check: {
+                what: 'Inspect, test or find something and report the findings.',
+                examples: ['Проверь, доделается ли задание', 'Посмотри, что изменил агент', 'Найди, где теряется письмо'],
+            },
+            write: {
+                what: 'Write or rewrite a text for people: a document, a note, a description, a letter.',
+                examples: ['Напиши документ про архитектуру', 'Составь описание для README', 'Перепиши записку короче'],
+            },
+            proceed: {
+                what: 'Carry on with the work already under way, or an answer to the assistant\'s own question.',
+                examples: ['Продолжай', 'Да, делай', 'Второй вариант', 'Доделай до конца'],
+            },
+        },
+    },
+};
+
+// как вид поручения звучит в письме человеку
+const KIND_WORDS = {
+    fix: 'исправить то, что работает не так',
+    build: 'сделать новое или доработать существующее',
+    look: 'изменить внешний вид или формулировки',
+    explain: 'ответить на вопрос, ничего не меняя',
+    check: 'проверить и рассказать, что нашёл',
+    write: 'написать текст или документ',
+    proceed: 'продолжить начатую работу',
 };
 
 // Выбор применяем только уверенный: ошибиться здесь значит либо не выполнить
@@ -458,8 +514,11 @@ async function classifyInbox(text) {
 
     const res = await typesafe.systemOne({ message: message.slice(0, PROMPT_LIMIT) }, INBOX_QUESTION);
     const pick = typesafe.choice(res?.answers, 'intent');
-    if (!pick || (pick.confidence ?? 0) < THRESHOLDS.inboxIntent) return { intent: 'task', confidence: pick?.confidence ?? null };
-    return { intent: pick.value, confidence: pick.confidence };
+    const kindPick = typesafe.choice(res?.answers, 'kind');
+    const kind = kindPick && (kindPick.confidence ?? 0) >= THRESHOLDS.inboxKind ? kindPick.value : null;
+    const understood = { kind, kindWords: kind ? KIND_WORDS[kind] || null : null, kindConfidence: kindPick?.confidence ?? null };
+    if (!pick || (pick.confidence ?? 0) < THRESHOLDS.inboxIntent) return { intent: 'task', confidence: pick?.confidence ?? null, ...understood };
+    return { intent: pick.value, confidence: pick.confidence, ...understood };
 }
 
 module.exports = { judgeTurn, shouldNotify, pickDecisionHints, hintPreamble, classifyInbox, THRESHOLDS, TURN_QUESTIONS };
