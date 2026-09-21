@@ -67,21 +67,12 @@ const BUTTONS = [
 // он всегда возвращает ACTION. Выбор лежит в telegram_chat_state.mode
 const MODE_LABELS = ['ASK', 'ACTION', 'LOOP'];
 const MARK_RE = /^【(.*)】$/;
-function keyboardFor(chatId) {
-    let mode = 'action';
-    try { mode = readChatState?.get(String(chatId))?.mode || 'action'; } catch { /* база ещё не готова — по умолчанию */ }
-    return {
-        keyboard: [BUTTONS.map(({ label, text, style }) => {
-            const shown = label.toLowerCase() === mode ? `【${text}】` : text;
-            return style ? { text: shown, style } : { text: shown };
-        })],
-        resize_keyboard: true,  // без этого одна строка кнопок растянута на высоту обычной клавиатуры
-        is_persistent: true,    // не прячется после нажатия
-        input_field_placeholder: 'Ответ агенту или кнопка ниже',
-    };
-}
-// Те же кнопки встроенной клавиатурой — под каждым письмом бота. Она не прячется,
-// пока набираешь текст, но привязана к сообщению; выбранная помечена так же — 【 】
+// Кнопки только встроенные (решение владельца 2026-09-21): обычной клавиатуры у
+// бота больше нет. Снять её у тех, у кого она осталась с прошлых версий, можно
+// только сообщением с remove_keyboard — его шлёт showKeyboard один раз
+const REMOVE_KEYBOARD = { remove_keyboard: true };
+// Кнопки встроенной клавиатурой — под нижним письмом бота. Она привязана к
+// сообщению; выбранная помечена скобками — 【 】
 function inlineKeyboardFor(chatId) {
     let mode = 'action';
     try { mode = readChatState?.get(String(chatId))?.mode || 'action'; } catch { /* по умолчанию */ }
@@ -100,11 +91,11 @@ function pressedButton(text) {
     const value = raw.replace(MARK_RE, '$1').trim();
     return BUTTONS.find((b) => b.text === value || b.label === value.toUpperCase()) || null;
 }
-// клавиатуру Telegram показывает только вместе с сообщением. Чтобы человек
-// увидел её сразу, а не с ближайшим отчётом, шлём одно письмо — и помним, кому
-// какой набор уже показан: перезапуск сервера не должен слать его заново.
-// Сменился набор кнопок — поднять номер
-const KEYBOARD_VERSION = 4;
+// Обычную клавиатуру Telegram снимает только вместе с сообщением. Шлём одно
+// письмо с remove_keyboard — и помним, кому оно уже ушло: перезапуск сервера не
+// должен слать его заново. Сменился набор кнопок — поднять номер (письмо
+// повторится и снимет клавиатуру, если она вдруг вернулась)
+const KEYBOARD_VERSION = 6;
 
 // вид ключа бота: «<цифры>:<буквенный хвост>». Проверяем до сети, чтобы очевидная
 // опечатка не превращалась в загадочный отказ Telegram
@@ -392,8 +383,8 @@ async function send(chatId, text, replyMarkup, { keepInline = false } = {}) {
                 chat_id: chatId,
                 text,
                 disable_web_page_preview: true,
-                // встроенные кнопки — только у нижнего письма; обычная клавиатура
-                // остаётся с прошлого показа (её шлёт showKeyboard)
+                // встроенные кнопки — только у нижнего письма; replyMarkup нужен
+                // лишь для снятия старой обычной клавиатуры (showKeyboard)
                 reply_markup: replyMarkup || inlineKeyboardFor(chatId),
             });
             // keepInline: сообщение с обычной клавиатурой (ответ на нажатие) не
@@ -426,7 +417,9 @@ async function showKeyboard(attempt = 0) {
     for (const chatId of users) {
         if ((readKeyboard.get(chatId)?.version ?? 0) >= KEYBOARD_VERSION) continue;
         try {
-            await send(chatId, `⌨️ Кнопки пульта: ${BUTTONS.map((b) => b.text).join(' · ')}. ⏹ END — начать новую работу: следующее сообщение станет её поручением.`, keyboardFor(chatId));
+            // keepInline: письмо со снятием клавиатуры не должно забирать встроенные
+            // кнопки у нижнего письма
+            await send(chatId, `⌨️ Кнопки пульта теперь под письмами бота: ${BUTTONS.map((b) => b.text).join(' · ')}. ⏹ END — начать новую работу: следующее сообщение станет её поручением.`, REMOVE_KEYBOARD, { keepInline: true });
             saveKeyboard.run(chatId, KEYBOARD_VERSION, new Date().toISOString());
         } catch (err) {
             failed = true;
@@ -617,7 +610,7 @@ async function handleCallback(query) {
             reply_markup: inlineKeyboardFor(chatId),
         }).catch(() => {}); // «не изменилась» — не ошибка
     }
-    await send(chatId, reply, keyboardFor(chatId), { keepInline: true }).catch(() => {});
+    await send(chatId, reply).catch(() => {});
 }
 
 async function handleUpdate(update) {
@@ -639,8 +632,9 @@ async function handleUpdate(update) {
     // агенту настоящим поручением
     const button = pressedButton(message.text);
     if (button) {
-        // ответ на нажатие несёт обычную клавиатуру: у неё метка выбора обновляется
-        await send(chatId, pressButton(chatId, button), keyboardFor(chatId)).catch(() => {});
+        // так приходит нажатие старой обычной клавиатуры или набранное руками слово;
+        // ответ несёт встроенные кнопки как любое письмо бота
+        await send(chatId, pressButton(chatId, button)).catch(() => {});
         return;
     }
 
