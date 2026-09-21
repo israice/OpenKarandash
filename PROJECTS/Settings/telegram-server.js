@@ -50,17 +50,35 @@ const MESSAGE_MEMORY = 500;     // сколько наших сообщений 
 // нажатие не нужно отчитываться answerCallbackQuery. Нажатие приходит обычным
 // текстом кнопки — поэтому handleUpdate перехватывает эти слова раньше, чем
 // они успеют стать поручением. Логики у кнопок пока нет
-const BUTTONS = ['ASK', 'ACTION', 'LOOP', 'END'];
+//
+// Вид — то, что даёт Bot API кнопке клавиатуры: style заливает её цветом
+// («primary» синий, «success» зелёный, «danger» красный, без поля — цвет
+// приложения). Значок стоит обычным эмодзи в тексте: icon_custom_emoji_id
+// работает только у владельца с Premium или именем с Fragment. Все четыре —
+// одной строкой (решение владельца): клавиатура занимает один этаж экрана
+const BUTTONS = [
+    { label: 'ASK', text: '💬 ASK', style: 'primary' },
+    { label: 'ACTION', text: '⚡ ACTION', style: 'success' },
+    { label: 'LOOP', text: '🔁 LOOP' },
+    { label: 'END', text: '⏹ END', style: 'danger' },
+];
 const KEYBOARD = {
-    keyboard: [BUTTONS.map((text) => ({ text }))],
-    resize_keyboard: true,  // без этого четыре кнопки занимают пол-экрана
+    keyboard: [BUTTONS.map(({ text, style }) => (style ? { text, style } : { text }))],
+    resize_keyboard: true,  // без этого одна строка кнопок растянута на высоту обычной клавиатуры
     is_persistent: true,    // не прячется после нажатия
+    input_field_placeholder: 'Ответ агенту или кнопка ниже',
 };
+// нажатие приходит текстом кнопки вместе с эмодзи; голое слово, набранное
+// руками, считаем тем же нажатием
+function pressedButton(text) {
+    const value = String(text || '').trim();
+    return BUTTONS.find((b) => b.text === value || b.label === value.toUpperCase()) || null;
+}
 // клавиатуру Telegram показывает только вместе с сообщением. Чтобы человек
 // увидел её сразу, а не с ближайшим отчётом, шлём одно письмо — и помним, кому
 // какой набор уже показан: перезапуск сервера не должен слать его заново.
 // Сменился набор кнопок — поднять номер
-const KEYBOARD_VERSION = 1;
+const KEYBOARD_VERSION = 3;
 
 // вид ключа бота: «<цифры>:<буквенный хвост>». Проверяем до сети, чтобы очевидная
 // опечатка не превращалась в загадочный отказ Telegram
@@ -234,11 +252,49 @@ function state() {
 
 // ---------- разговор с Telegram ----------
 
+// Длинный опрос ходит своим соединением, мимо общего пула fetch. В общем пуле
+// отправка вставала в очередь за висящим getUpdates и уходила, только когда он
+// возвращался: письмо либо опаздывало на десятки секунд, либо все три попытки
+// send успевали истечь по таймауту — при исправном Telegram. Поймано на
+// журнале: «send ok» случался через 0,2 с после «ok run=… took=50074ms»
+const https = require('https');
+const pollAgent = new https.Agent({ keepAlive: true, maxSockets: 1 });
+
+function postOwnSocket(url, payload, signal) {
+    return new Promise((resolve, reject) => {
+        const body = JSON.stringify(payload || {});
+        const req = https.request(url, {
+            method: 'POST',
+            agent: pollAgent,
+            signal,
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        }, (res) => {
+            let text = '';
+            res.setEncoding('utf8');
+            res.on('data', (chunk) => { text += chunk; });
+            res.on('end', () => {
+                let data = {};
+                try { data = JSON.parse(text); } catch { /* не JSON — разберёт зовущий по status */ }
+                resolve({ status: res.statusCode, data });
+            });
+            res.on('error', reject);
+        });
+        req.on('error', reject);
+        req.end(body);
+    });
+}
+
 async function callApi(method, payload, timeoutMs = 15000, extraSignal = null) {
     if (!token) throw new Error('Telegram bot token is not set');
     // extraSignal — способ оборвать длинный опрос досрочно: по нему сменившийся
     // ключ отпускает getUpdates сразу, а не через минуту ожидания
     const timeout = AbortSignal.timeout(timeoutMs);
+    if (method === 'getUpdates') {
+        const signal = extraSignal ? AbortSignal.any([extraSignal, timeout]) : timeout;
+        const { status, data } = await postOwnSocket(`${API}${token}/${method}`, payload, signal);
+        if (!data.ok) throw new Error(data.description || `Telegram answered ${status}`);
+        return data.result;
+    }
     const res = await fetch(`${API}${token}/${method}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -264,7 +320,8 @@ const SEND_RETRY_DELAYS_MS = [1000, 4000];
 async function send(chatId, text) {
     for (let attempt = 0; ; attempt += 1) {
         try {
-            return await callApi('sendMessage', {
+            const sendStarted = Date.now();
+            const sent = await callApi('sendMessage', {
                 chat_id: chatId,
                 text,
                 disable_web_page_preview: true,
@@ -272,10 +329,13 @@ async function send(chatId, text) {
                 // ближайшее же сообщение
                 reply_markup: KEYBOARD,
             });
+            diag(`send ok attempt=${attempt} took=${Date.now() - sendStarted}ms`);
+            return sent;
         } catch (err) {
             // «Telegram answered …» и текст его описания — это ответ сервиса,
             // а не сбой связи: сеть отработала, повторять нечего
             const answered = /Telegram answered|chat not found|bot was blocked|Forbidden/i.test(err.message);
+            diag(`send err attempt=${attempt} msg=${err.message} cause=${err.cause?.code || err.cause?.message || '-'}`);
             if (answered || attempt >= SEND_RETRY_DELAYS_MS.length) throw err;
             await sleep(SEND_RETRY_DELAYS_MS[attempt]);
         }
@@ -284,16 +344,31 @@ async function send(chatId, text) {
 
 // Показать кнопки тем, кто их ещё не видел. Без await у зовущего: это не
 // должно ни задерживать подключение, ни ронять его
-async function showKeyboard() {
+//
+// Не ушло — пробуем позже сами: иначе человек увидел бы кнопки только с
+// ближайшим отчётом, а письмо про них — после следующего перезапуска. Так уже
+// было: сеть оборвала все три попытки send, хотя Telegram был исправен
+const KEYBOARD_RETRY_MS = 60000;
+const KEYBOARD_RETRIES = 5;
+let keyboardTimer = null;
+
+async function showKeyboard(attempt = 0) {
+    clearTimeout(keyboardTimer);
+    let failed = false;
     for (const chatId of users) {
         if ((readKeyboard.get(chatId)?.version ?? 0) >= KEYBOARD_VERSION) continue;
         try {
-            await send(chatId, `⌨️ Кнопки пульта: ${BUTTONS.join(' · ')}. Пока они ничего не делают.`);
+            await send(chatId, `⌨️ Кнопки пульта: ${BUTTONS.map((b) => b.text).join(' · ')}. Пока они ничего не делают.`);
             saveKeyboard.run(chatId, KEYBOARD_VERSION, new Date().toISOString());
         } catch (err) {
+            failed = true;
             sendError = err.message;
             console.error('Telegram keyboard:', err.message);
         }
+    }
+    if (failed && attempt < KEYBOARD_RETRIES) {
+        keyboardTimer = setTimeout(() => showKeyboard(attempt + 1), KEYBOARD_RETRY_MS);
+        keyboardTimer.unref(); // таймер не должен держать уходящий процесс
     }
 }
 
@@ -358,8 +433,9 @@ async function handleUpdate(update) {
 
     // нажатие кнопки приходит её текстом. Логики у кнопок пока нет, а без
     // перехвата слово «ASK» ушло бы агенту настоящим поручением
-    if (BUTTONS.includes(message.text.trim())) {
-        await send(chatId, `🔘 ${message.text.trim()} — кнопка пока ничего не делает.`).catch(() => {});
+    const button = pressedButton(message.text);
+    if (button) {
+        await send(chatId, `${button.text} — кнопка пока ничего не делает.`).catch(() => {});
         return;
     }
 
