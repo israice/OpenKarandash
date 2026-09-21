@@ -437,7 +437,11 @@ async function showKeyboard(attempt = 0) {
 
 // Зовётся из runTurn (server.js) без await: телеграм не должен ни задерживать
 // ход, ни ронять его своей ошибкой — поэтому внутри всё под try/catch
-async function notifyTurnFinished({ sessionId, title, text, errorText, steps }) {
+// с какой уверенности jev «ход ждёт человека» список в конце ответа считаем
+// вариантами вопроса; высоко — ошибка превращает отчёт в опрос
+const LOOSE_ASK_CONFIDENCE = 0.8;
+
+async function notifyTurnFinished({ sessionId, title, text, errorText, steps, awaitsHuman }) {
     if (!token || !users.length || (!text && !errorText)) return;
     // строку плана человек уже получил отдельным письмом в начале работы
     // (PLAN_PREAMBLE) — в итоговом письме она лишняя. Весь ответ из одной этой
@@ -452,7 +456,10 @@ async function notifyTurnFinished({ sessionId, title, text, errorText, steps }) 
         return;
     }
     // ответ кончается блоком [ASK] — вопрос уходит опросом, остальное письмом
-    const ask = pollsModule.parseAsk(text);
+    // блока нет, но jev уверен, что ход ждёт человека, и ответ кончается
+    // вопросом со списком — это тот же вопрос, просто агент забыл про блок
+    const ask = pollsModule.parseAsk(text)
+        || ((awaitsHuman ?? 0) >= LOOSE_ASK_CONFIDENCE ? pollsModule.parseLooseAsk(text) : null);
     if (ask) {
         if (ask.rest) await sendNotice({ sessionId, title, text: ask.rest });
         await polls.askPoll({ sessionId, ...ask, silenced: true }).catch((err) => {
@@ -527,6 +534,16 @@ function liveLastSession(chatId) {
 // моделью и строки [PLAN] не дать вовсе, а человеку с телефона нужен знак, что
 // его поняли верно, в первую же секунду (DOCS/decisions/064). Неуверенный или
 // недоступный jev — общее «принял»: гадать вслух хуже, чем промолчать о виде
+// Режим хода по виду поручения: на вопрос бот уже ответил «ничего не меняя» —
+// и ход идёт обсуждением, где править и запускать нельзя. Только при высокой
+// уверенности: принять поручение за вопрос значит не выполнить его. Всё
+// остальное — Action явно, иначе режим унаследовался бы от прошлого вопроса
+// (DOCS/decisions/067)
+const ASK_MODE_CONFIDENCE = 0.85;
+function modeFor(understood) {
+    return understood?.kind === 'explain' && (understood.kindConfidence ?? 0) >= ASK_MODE_CONFIDENCE ? 'Chat' : 'Action';
+}
+
 async function acknowledge(chatId, understood, sessionId) {
     const line = understood?.kindWords
         ? `🧭 Понял поручение как: ${understood.kindWords}. Приступаю.`
@@ -558,12 +575,13 @@ function pressButton(chatId, button) {
 }
 
 // Первое сообщение после END: поручение заводит новую сессию в пульте
-async function startNewSession(chatId, text, messageId) {
+async function startNewSession(chatId, text, messageId, mode) {
     const like = liveLastSession(chatId) || null;
     let created = null;
     try {
         await deps.startNew({
             text,
+            mode,
             likeSessionId: like,
             note: (line) => { send(chatId, line).then((sent) => { if (created) remember(chatId, sent.message_id, created); }).catch(() => {}); },
             // id приходит в начале хода: сразу снимаем «новую работу» и
@@ -649,14 +667,15 @@ async function handleUpdate(update) {
         // оно понято, человеку говорим так же
         const understood = await turnJudgment.classifyInbox(message.text).catch(() => null);
         await acknowledge(chatId, understood, null);
-        await startNewSession(chatId, message.text, message.message_id);
+        await startNewSession(chatId, message.text, message.message_id, modeFor(understood));
         return;
     }
     const sessionId = repliedSession || liveLastSession(chatId);
     // отвечать некуда — значит, это поручение на новую работу, как после END
     if (!sessionId) {
-        await acknowledge(chatId, await turnJudgment.classifyInbox(message.text).catch(() => null), null);
-        await startNewSession(chatId, message.text, message.message_id);
+        const understood = await turnJudgment.classifyInbox(message.text).catch(() => null);
+        await acknowledge(chatId, understood, null);
+        await startNewSession(chatId, message.text, message.message_id, modeFor(understood));
         return;
     }
 
@@ -673,7 +692,7 @@ async function handleUpdate(update) {
     // занятая работа поручение не примет — «приступаю» было бы неправдой
     if (!busySessions.has(sessionId) && !deps.isRunning(sessionId)) await acknowledge(chatId, understood, sessionId);
 
-    await runInSession(chatId, sessionId, message.text);
+    await runInSession(chatId, sessionId, message.text, { mode: modeFor(understood) });
 }
 
 // Сколько ответ на опрос ждёт, пока сессия освободится. Вопрос задают изнутри
@@ -684,7 +703,7 @@ const IDLE_CHECK_MS = 2000;
 
 // Слова человека уходят в сессию настоящим ходом. Общий путь и для обычного
 // сообщения, и для ответа на опрос (telegram-polls-server.js)
-async function runInSession(chatId, sessionId, text, { waitIdle = false } = {}) {
+async function runInSession(chatId, sessionId, text, { waitIdle = false, mode } = {}) {
     if (waitIdle) {
         const deadline = Date.now() + IDLE_WAIT_MS;
         while ((busySessions.has(sessionId) || deps.isRunning(sessionId)) && Date.now() < deadline) await sleep(IDLE_CHECK_MS);
@@ -710,6 +729,7 @@ async function runInSession(chatId, sessionId, text, { waitIdle = false } = {}) 
         await deps.ask({
             sessionId,
             text,
+            mode,
             note: (line) => { send(chatId, line).then((sent) => remember(chatId, sent.message_id, sessionId)).catch(() => {}); },
         });
     } catch (err) {

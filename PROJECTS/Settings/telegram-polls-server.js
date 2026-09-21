@@ -73,6 +73,27 @@ function parseAsk(answer) {
     return null;
 }
 
+// Вопрос с вариантами, заданный обычным текстом: агент забыл про блок [ASK].
+// Сам разбор слеп — список в конце ответа бывает и перечнем сделанного, —
+// поэтому зовут его только когда jev уверен, что ход ждёт человека
+// (awaits_human, DOCS/decisions/067). Берём строго хвост ответа: список
+// вариантов, над ним ближайшая строка с вопросительным знаком
+const LOOSE_OPTION_LINE = /^\s*(?:[-*•]|\d{1,2}[.)])\s+(.+?)\s*$/;
+function parseLooseAsk(answer) {
+    const lines = String(answer || '').replace(/\s+$/, '').split(/\r?\n/);
+    let start = lines.length;
+    while (start > 0 && LOOSE_OPTION_LINE.test(lines[start - 1])) start -= 1;
+    const options = lines.slice(start).map((line) => line.match(LOOSE_OPTION_LINE)[1].replace(/\*\*/g, ''));
+    // длинный пункт — это абзац отчёта, а не вариант ответа: такой список не трогаем
+    if (options.length < ASK_OPTIONS_MIN || options.length > ASK_OPTIONS_MAX || options.some((o) => o.length > OPTION_LIMIT)) return null;
+    let at = start - 1;
+    while (at >= 0 && !lines[at].trim()) at -= 1;
+    const question = at >= 0 ? lines[at].trim().replace(/\*\*/g, '') : '';
+    // «Выберите тему:» — тоже вопрос; отчётное «Что сделано:» сюда не дойдёт — его отсекает jev
+    if (!/[?:]$/.test(question) || question.length > QUESTION_LIMIT) return null;
+    return { question, options, multiple: false, rest: lines.slice(0, at).join('\n').trim() };
+}
+
 // приставка к поручению: откуда агенту знать про блок. Короткая — она едет с
 // каждым ходом
 const ASK_PREAMBLE = '[OpenKarandash — правило оформления ответа, это не поручение и делать по нему ничего не нужно] '
@@ -267,4 +288,4 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
     return { askPoll, swallowsNotice, handlePollAnswer, handleOptionAdded, handleReply, routes };
 }
 
-module.exports = { create, parseAsk, ASK_PREAMBLE };
+module.exports = { create, parseAsk, parseLooseAsk, ASK_PREAMBLE };

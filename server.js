@@ -1147,6 +1147,9 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode, plan },
                     // сломавшийся ход уходит своим письмом: причина по-человечески
                     // и шаги, которые агент успел сделать до обрыва
                     errorText: ctx.errorText || null,
+                    // уверенность jev, что ход ждёт человека: по ней мост решает, считать
+                    // ли список в конце ответа вариантами вопроса (опросом)
+                    awaitsHuman: judgment?.awaitsHuman ?? null,
                     steps: ctx.errorText ? listToolSteps.all(ctx.session, ctx.userPosition).map((row) => row.text) : null,
                 }).catch(() => {});
             }
@@ -2715,7 +2718,9 @@ async function askHermes({ prompt, sessionId, mode, model, effort, hints, plan }
         // переоформить вызов в той же сессии, ограниченное число раз — вторая,
         // внешняя линия защиты поверх коррекции внутри самого моста
         // (MAX_CORRECTIONS в claude-bridge/cli_backend.py)
-        const sentText = handoff + prompt;
+        // у Hermes инструменты режимом не отключить (их держит сам Hermes), поэтому
+        // обсуждение без правок здесь — только правило в тексте запроса
+        const sentText = handoff + (mode === 'Chat' ? CHAT_PREAMBLE : '') + prompt;
         let message = sentText;
         let texts = [];
         let hadRawCalls = false;
@@ -3786,7 +3791,9 @@ async function askWithFallback(name, params, onEvent) {
 // Исполнителя и параметры берём из самой сессии, поток событий никуда не пишем:
 // подключённые страницы всё равно получат его через broadcast внутри runTurn,
 // а человеку в Telegram уйдёт готовый ответ из notifyTurnFinished
-async function askOutsideBrowser({ sessionId, text, note }) {
+// mode — режим, выбранный мостом по виду поручения (вопрос — Chat, без правок;
+// DOCS/decisions/067); не задан — как в прошлом ходе этой сессии
+async function askOutsideBrowser({ sessionId, text, note, mode }) {
     if (!getSessionTitle.get(sessionId)) throw new Error('Session not found');
     if (stopping) throw new Error(RESTART_ERROR);
 
@@ -3799,7 +3806,7 @@ async function askOutsideBrowser({ sessionId, text, note }) {
     const hints = await turnJudgment.pickDecisionHints(text).catch(() => null);
     const { failure, started } = await askWithFallback(
         name,
-        { prompt: text, sessionId, model: last.model || undefined, effort: last.effort || undefined, mode: last.mode || undefined, hints, plan: true },
+        { prompt: text, sessionId, model: last.model || undefined, effort: last.effort || undefined, mode: mode || last.mode || undefined, hints, plan: true },
         (event) => { if (event.type === 'plan' && note) note(`📋 План: ${event.text}`); },
     );
     if (failure && !started) throw new Error(failure);
@@ -3846,7 +3853,7 @@ async function readyExecutor(sessionTarget, label, note) {
 // тот агент, которым он пользуется; прошлой нет — первый подключённый.
 // onSession сообщает id новой сессии сразу, не дожидаясь конца хода: мосту он
 // нужен, чтобы следующие сообщения шли уже в неё
-async function startOutsideBrowser({ text, likeSessionId, note, onSession }) {
+async function startOutsideBrowser({ text, likeSessionId, note, onSession, mode }) {
     if (stopping) throw new Error(RESTART_ERROR);
     const like = likeSessionId && getSessionTitle.get(likeSessionId) ? likeSessionId : null;
     const { name, replaced } = await readyExecutor(like ? getSessionMeta.get(like)?.target : null, 'new session', note);
@@ -3858,7 +3865,7 @@ async function startOutsideBrowser({ text, likeSessionId, note, onSession }) {
             prompt: text,
             model: (!replaced && last.model) || undefined,
             effort: (!replaced && last.effort) || undefined,
-            mode: last.mode || undefined,
+            mode: mode || last.mode || undefined,
             hints,
             plan: true,
         },
