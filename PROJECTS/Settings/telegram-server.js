@@ -45,6 +45,23 @@ const RELEASE_TIMEOUT_MS = 3000; // отпускание опроса на вы�
 const TEXT_LIMIT = 3500;        // у Telegram потолок 4096 на сообщение, остальное — заголовок
 const MESSAGE_MEMORY = 500;     // сколько наших сообщений помним для ответа reply
 
+// Кнопки под полем ввода (ReplyKeyboardMarkup), а не под сообщением: такая
+// клавиатура видна человеку всё время, а не только у последнего письма, и за
+// нажатие не нужно отчитываться answerCallbackQuery. Нажатие приходит обычным
+// текстом кнопки — поэтому handleUpdate перехватывает эти слова раньше, чем
+// они успеют стать поручением. Логики у кнопок пока нет
+const BUTTONS = ['ASK', 'ACTION', 'LOOP', 'END'];
+const KEYBOARD = {
+    keyboard: [BUTTONS.map((text) => ({ text }))],
+    resize_keyboard: true,  // без этого четыре кнопки занимают пол-экрана
+    is_persistent: true,    // не прячется после нажатия
+};
+// клавиатуру Telegram показывает только вместе с сообщением. Чтобы человек
+// увидел её сразу, а не с ближайшим отчётом, шлём одно письмо — и помним, кому
+// какой набор уже показан: перезапуск сервера не должен слать его заново.
+// Сменился набор кнопок — поднять номер
+const KEYBOARD_VERSION = 1;
+
 // вид ключа бота: «<цифры>:<буквенный хвост>». Проверяем до сети, чтобы очевидная
 // опечатка не превращалась в загадочный отказ Telegram
 const TOKEN_RE = /^\d{5,}:[A-Za-z0-9_-]{20,}$/;
@@ -121,6 +138,8 @@ let trimReplies = null;
 let forgetSession = null;
 let saveOffset = null;
 let readOffset = null;
+let saveKeyboard = null;
+let readKeyboard = null;
 
 function initDb(database) {
     database.exec(`
@@ -169,6 +188,10 @@ function initDb(database) {
     saveOffset = database.prepare('INSERT INTO telegram_offset (id, value, at) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET value = excluded.value, at = excluded.at');
     readOffset = database.prepare('SELECT value, at FROM telegram_offset WHERE id = 1');
     forgetSession = database.prepare('DELETE FROM telegram_replies WHERE session_id = ?');
+    // кому какой набор кнопок уже показан (см. KEYBOARD_VERSION)
+    database.exec('CREATE TABLE IF NOT EXISTS telegram_keyboard (chat_id TEXT PRIMARY KEY, version INTEGER NOT NULL, at TEXT NOT NULL);');
+    saveKeyboard = database.prepare('INSERT INTO telegram_keyboard (chat_id, version, at) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET version = excluded.version, at = excluded.at');
+    readKeyboard = database.prepare('SELECT version FROM telegram_keyboard WHERE chat_id = ?');
     trimReplies = database.prepare(`
         DELETE FROM telegram_replies WHERE id NOT IN (
             SELECT id FROM telegram_replies ORDER BY id DESC LIMIT ?
@@ -245,6 +268,9 @@ async function send(chatId, text) {
                 chat_id: chatId,
                 text,
                 disable_web_page_preview: true,
+                // с каждым письмом: убранную человеком клавиатуру вернёт
+                // ближайшее же сообщение
+                reply_markup: KEYBOARD,
             });
         } catch (err) {
             // «Telegram answered …» и текст его описания — это ответ сервиса,
@@ -252,6 +278,21 @@ async function send(chatId, text) {
             const answered = /Telegram answered|chat not found|bot was blocked|Forbidden/i.test(err.message);
             if (answered || attempt >= SEND_RETRY_DELAYS_MS.length) throw err;
             await sleep(SEND_RETRY_DELAYS_MS[attempt]);
+        }
+    }
+}
+
+// Показать кнопки тем, кто их ещё не видел. Без await у зовущего: это не
+// должно ни задерживать подключение, ни ронять его
+async function showKeyboard() {
+    for (const chatId of users) {
+        if ((readKeyboard.get(chatId)?.version ?? 0) >= KEYBOARD_VERSION) continue;
+        try {
+            await send(chatId, `⌨️ Кнопки пульта: ${BUTTONS.join(' · ')}. Пока они ничего не делают.`);
+            saveKeyboard.run(chatId, KEYBOARD_VERSION, new Date().toISOString());
+        } catch (err) {
+            sendError = err.message;
+            console.error('Telegram keyboard:', err.message);
         }
     }
 }
@@ -314,6 +355,13 @@ async function handleUpdate(update) {
     // чужим не отвечаем вовсе: бот виден всему миру, а по этому мосту можно
     // запускать агента в проекте — пускаем только перечисленные в .env id
     if (!users.includes(chatId)) return;
+
+    // нажатие кнопки приходит её текстом. Логики у кнопок пока нет, а без
+    // перехвата слово «ASK» ушло бы агенту настоящим поручением
+    if (BUTTONS.includes(message.text.trim())) {
+        await send(chatId, `🔘 ${message.text.trim()} — кнопка пока ничего не делает.`).catch(() => {});
+        return;
+    }
 
     const replyTo = message.reply_to_message?.message_id;
     const sessionId = (replyTo && sessionByReply.get(chatId, Number(replyTo))?.sessionId)
@@ -458,6 +506,7 @@ async function connect() {
     botName = me.username ? `@${me.username}` : me.first_name || 'bot';
     lastError = null;
     startPolling();
+    showKeyboard();
 }
 
 function init(dependencies) {
@@ -518,6 +567,8 @@ function createRoutes() {
 
             users = nextUsers;
             deps.setEnvValue(USERS_KEY, users.join(','));
+            // новому человеку в списке кнопки показываем сразу
+            if (token && botName) showKeyboard();
 
             // ключ прежний, а моста нет — getMe не прошёл при старте (не было
             // сети). Пробуем ещё раз прямо отсюда: иначе поднять мост можно было
