@@ -13,6 +13,7 @@ const hostDeps = require('./SYSTEM/core/host-deps.js');
 const branchPreview = require('./SYSTEM/core/branch-preview.js');
 const hermesTasks = require('./SYSTEM/core/hermes-tasks.js');
 const turnJudgment = require('./SYSTEM/core/turn-judgment.js');
+const agentCooldown = require('./SYSTEM/core/agent-cooldown.js');
 
 const ROOT = __dirname;
 
@@ -2949,6 +2950,31 @@ async function handoffPreamble(sessionId, prompt) {
     ].join('\n');
 }
 
+// ---------- память о недоступных исполнителях (кулдаун) ----------
+
+// Поломка ложится в базу (SYSTEM/core/agent-cooldown.js, DOCS/decisions/071),
+// и следующий выбор исполнителя знает «кто сегодня недоступен и до какого
+// времени», не повторяя ошибку. Уже по одному этому списку пульт не дёргает
+// исчерпанную модель и не включает платежи, когда известно, что им тоже плохо
+// память выключается тем же AGENT_FALLBACK=0, что и весь подхват: ноль значит
+// «работаем как попросили, без самодеятельности пульта»
+const cooldowns = agentCooldown.create({ db, enabled: () => !FALLBACK_OFF });
+
+// причина кулдауна словами, что видела строка о замене (учёт — в
+// телеграм-мосте, телефон читает его, а не код)
+function cooldownWords(reason) {
+    return telegramLetters.reasonText(reason);
+}
+
+// «до такого-то времени» из строки ISO — для строки о замене и письма-отказа
+function cooldownUntilText(until) {
+    try {
+        return new Date(until).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    } catch {
+        return String(until || '');
+    }
+}
+
 // ---------- сломался исполнитель — работу берёт следующий ----------
 
 // Ход оборвался ошибкой (поставщик модели, лимит, нет такой модели) — работу
@@ -2978,13 +3004,16 @@ function nextExecutor(errorText, state) {
     if (agentIsSpent(state.current, errorText)) dead.add(state.current);
     // сначала всё бесплатное: другая бесплатная модель того же агента, потом
     // другой бесплатный агент — и только потом платные (решение владельца
-    // 2026-09-21: платные подписки бережём, DOCS/decisions/066)
+    // 2026-09-21: платные подписки бережём, DOCS/decisions/066). Кого помнит
+    // база кулдауна (071), не пробуем — об ошибке знаем заранее, повторяться
+    // не в чем
     for (const name of FREE_AGENTS) {
         if (dead.has(name) || !AGENTS[name].connected()) continue;
-        const model = (freeModels.get(name)?.models || []).find((m) => !state.tried.has(`${name}|${m}`));
+        if (cooldowns.cooled(name, null)) continue;
+        const model = (freeModels.get(name)?.models || []).find((m) => !state.tried.has(`${name}|${m}`) && !cooldowns.cooled(name, m));
         if (model) return { name, model };
     }
-    const paid = Object.keys(AGENTS).find((key) => !FREE_AGENTS.includes(key) && !dead.has(key) && AGENTS[key].connected());
+    const paid = Object.keys(AGENTS).find((key) => !FREE_AGENTS.includes(key) && !dead.has(key) && AGENTS[key].connected() && !cooldowns.cooled(key, null));
     return paid ? { name: paid, model: null } : null;
 }
 
@@ -3044,8 +3073,57 @@ async function askWithFallback(name, params, onEvent) {
     // список бесплатных моделей нужен до первой ошибки: после неё решать уже
     // некогда. Первый раз стоит секунд, дальше берётся из памяти
     if (!FALLBACK_OFF) await refreshFreeModels().catch(() => {});
+
+    // общий хвост «работа переходит дальше» — и для поломки, и для кулдауна
+    // (DOCS/decisions/071). Возвращает true, если есть кому. Ход даже не
+    // начался (сессии нет) — следующий получает поручение как есть, оно же
+    // станет заголовком сессии; иначе — с пометкой, кто и почему уступил
+    function handOver(cause, cool) {
+        state.tried.add(`${state.current}|${request.model || ''}`);
+        if (sessionId) handoverWatch.set(sessionId, state);
+        const spare = nextExecutor(cause, state);
+        if (!spare) return false;
+        if (agentIsSpent(state.current, cool ? cool.reason : cause)) state.dead.add(state.current);
+        state.attempts += 1;
+        const was = request.model ? `${state.current} (${request.model})` : state.current;
+        const next = spare.model ? `${spare.name} (${spare.model}, бесплатно)` : `${spare.name} (платный)`;
+        const why = cool
+            ? `в кулдауне (${cooldownWords(cool.reason)} до ${cooldownUntilText(cool.until)})`
+            : `не справился: ${telegramLetters.humanReason(cause)}`;
+        telegramTell(`🔁 ${was} ${why}. Работу продолжает ${next}.`);
+        const short = cool
+            ? `временно недоступен (${cooldownWords(cool.reason)})`
+            : `оборвался с ошибкой: «${String(cause).slice(0, 300)}»`;
+        request = {
+            prompt: !everStarted ? params.prompt
+                : `[OpenKarandash] Предыдущий исполнитель (${was}) ${short}. `
+                + `Доведи до конца последнее поручение человека:\n\n${params.prompt}`,
+            sessionId: sessionId || undefined,
+            model: spare.model || undefined,
+            mode: params.mode,
+            hints: params.hints,
+            plan: params.plan,
+        };
+        state.current = spare.name;
+        return true;
+    }
+
     try {
         for (;;) {
+            // просили того, о ком уже известно, что он недоступен (дневной
+            // лимит, снятая модель) — не пробуем и не ждём знакомой ошибки:
+            // цепочка начинается со следующего свободного (071)
+            const cool = cooldowns.cooled(state.current, request.model || null);
+            if (cool) {
+                if (!handOver(`${state.current} cooling after ${cool.reason}`, cool)) {
+                    // дальше некого: браузеру это тоже событие, а не пустой конец
+                    // потока — иначе вкладка «закончила» работу, которой не было
+                    const message = `${state.current} ${cooldownWords(cool.reason)} до ${cooldownUntilText(cool.until)}`;
+                    onEvent({ type: 'error', error: message });
+                    return { failure: message, started: everStarted };
+                }
+                continue;
+            }
             state.tried.add(`${state.current}|${request.model || ''}`);
             if (sessionId) handoverWatch.set(sessionId, state);
             let failure = null;
@@ -3060,28 +3138,12 @@ async function askWithFallback(name, params, onEvent) {
             });
             if (!failure) return { failure: null, started: true };
             await turnJudgment.classifyFailure(failure).catch(() => null);
-            const spare = nextExecutor(failure, state);
-            if (!spare) return { failure, started: everStarted };
-            if (agentIsSpent(state.current, failure)) state.dead.add(state.current);
-            state.attempts += 1;
-            const was = request.model ? `${state.current} (${request.model})` : state.current;
-            const next = spare.model ? `${spare.name} (${spare.model}, бесплатно)` : `${spare.name} (платный)`;
-            telegramTell(`🔁 ${was} не справился: ${telegramLetters.humanReason(failure)}. Работу продолжает ${next}.`);
-            // effort у каждого CLI свой — следующему его не передаём; модель —
-            // только бесплатную из его же списка
-            request = {
-                // ход даже не начался — сессии нет, продолжать нечего: следующий
-                // получает поручение как есть (оно же станет заголовком сессии)
-                prompt: !everStarted ? params.prompt
-                    : `[OpenKarandash] Предыдущий исполнитель (${was}) оборвался с ошибкой: «${String(failure).slice(0, 300)}». `
-                    + `Доведи до конца последнее поручение человека:\n\n${params.prompt}`,
-                sessionId: sessionId || undefined,
-                model: spare.model || undefined,
-                mode: params.mode,
-                hints: params.hints,
-                plan: params.plan,
-            };
-            state.current = spare.name;
+            // поломку помним на будущее (071): агента, исчерпанного целиком
+            // (платного, с недопущенным ключом), кладём агентом, поломку одной
+            // бесплатной модели — по одной модели
+            const reason = turnJudgment.knownFailure(failure)?.reason;
+            cooldowns.record(state.current, agentIsSpent(state.current, failure) ? null : request.model, reason);
+            if (!handOver(failure, null)) return { failure, started: everStarted };
         }
     } finally {
         if (sessionId) handoverWatch.delete(sessionId);
@@ -3140,10 +3202,16 @@ async function readyExecutor(sessionTarget, label, note) {
     }
     // Свой CLI так и не поднялся — работу берёт любой подключённый: сессию
     // может продолжить кто угодно, контекст он получит пересказом
-    // (handoffPreamble). Человеку об этом говорим: замена может стоить денег
+    // (handoffPreamble). Человеку об этом говорим: замена может стоить денег.
+    // Тех, кто в кулдауне (071), пропускаем: знаем заранее, что они не в ладах
     if (adapter.connected()) return { name, replaced: false };
-    const spare = Object.keys(AGENTS).find((key) => AGENTS[key].connected());
-    if (!spare) throw new Error(`${name} is not connected and no other agent is — open Settings and connect one`);
+    const spare = Object.keys(AGENTS).find((key) => AGENTS[key].connected() && !cooldowns.cooled(key, null));
+    if (!spare) {
+        const any = Object.keys(AGENTS).some((key) => AGENTS[key].connected());
+        throw new Error(any
+            ? `${name} is not connected and the connected agents are cooling down — work paused until they recover`
+            : `${name} is not connected and no other agent is — open Settings and connect one`);
+    }
     if (note) note(`🔁 ${name} недоступен — работу ведёт ${spare}.`);
     name = spare;
     return { name, replaced: true };
@@ -3330,6 +3398,19 @@ async function handleApi(req, res, urlPath) {
             const { sessionId } = await readJson(req);
             // реестр запусков общий на все CLI (activeRuns), поэтому и остановка одна
             sendJson(res, { ok: true, stopped: stopActiveRun(sessionId || null) });
+            return;
+        }
+
+        // память о недоступных исполнителях (DOCS/decisions/071): посмотреть,
+        // кого и до какого времени пульт сейчас не берёт, и сбросить, когда
+        // лимит обновился раньше срока или пометка больше не нужна
+        if (urlPath === '/api/agent/cooldowns') {
+            sendJson(res, { ok: true, cooldowns: cooldowns.list() });
+            return;
+        }
+
+        if (urlPath === '/api/agent/cooldowns/clear') {
+            sendJson(res, { ok: true, cooldowns: cooldowns.clear() });
             return;
         }
 

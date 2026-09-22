@@ -47,6 +47,13 @@ function humanReason(errorText) {
     return found ? found[1] : 'агент сообщил об ошибке';
 }
 
+// слова причины без текста ошибки: суждение уже вынесено заранее, а строке
+// о замене по кулдауну (server.js, DOCS/decisions/071) текст ошибки терять
+// не из чего — его не было, ошибки ещё не случилось
+function reasonText(reason) {
+    return JUDGED_REASONS[reason] || 'исполнитель временно недоступен';
+}
+
 function clip(text, limit) {
     const value = String(text || '').trim();
     return value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
@@ -86,4 +93,4 @@ function undeliveredLetter(text, errorText) {
         + `Текст ошибки: ${clip(errorText, QUOTE_LIMIT)}`;
 }
 
-module.exports = { turnLetter, undeliveredLetter, humanReason };
+module.exports = { turnLetter, undeliveredLetter, humanReason, reasonText };
