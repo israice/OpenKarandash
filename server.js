@@ -853,10 +853,14 @@ async function detectInstalls() {
 // короткая подпись действия: «Read index.html», «Bash npm test»
 function toolLabel(part) {
     const input = part.input || {};
-    // от пути оставляем имя файла — в строке состояния важно «что», а не «где»
+    // от пути оставляем имя файла — в строке состояния важно «что», а не «где».
+    // Ключи читаем и Claude-стиля (file_path), и opencode-стиля (filePath/query):
+    // read/edit у opencode шлют filePath, websearch — query, и без этих ключей
+    // живой шаг остаётся голым тегом без содержимого
     const detail = part.name === 'Task' ? `${input.subagent_type || ''}: ${input.description || ''}`.trim()
         : input.file_path ? path.basename(input.file_path)
-        : input.command || input.pattern || input.url || '';
+        : input.filePath ? path.basename(input.filePath)
+        : input.command || input.pattern || input.url || input.query || '';
     return { type: 'tool', name: part.name, detail: String(detail).slice(0, 120) };
 }
 
@@ -1745,10 +1749,16 @@ async function askOpenCode({ prompt, model, sessionId, mode, hints, plan }, send
                 const state = part.state || {};
                 let position = toolPositions.get(part.callID);
                 if (position === undefined && ctx.session) {
-                    const detail = state.title || state.input?.command || state.input?.filePath || '';
-                    position = recordStep(ctx.session, `${toolName} ${detail}`.trim(), toolName, state.input, part.callID, null, null, part);
+                    // подпись та же, что уходит в живую ленту (toolLabel), а не своя
+                    // сборка: иначе строка в базе «read …» и живой шаг разъезжаются,
+                    // и после перечитывания лента показывает другой текст
+                    const step = toolLabel({ name: toolName, input: state.input || {} });
+                    // у opencode title приходит отдельно от input — запасная деталь
+                    // для шагов, чьи аргументы не знает toolLabel
+                    if (!step.detail && state.title) step.detail = String(state.title).slice(0, 120);
+                    position = recordStep(ctx.session, `${step.name} ${step.detail}`.trim(), toolName, state.input, part.callID, null, null, part);
                     toolPositions.set(part.callID, position);
-                    ctx.emit(toolLabel({ name: toolName, input: state.input || {} }));
+                    ctx.emit(step);
                 }
                 if (position !== undefined && ctx.session && (state.status === 'completed' || state.status === 'error')) {
                     const output = typeof state.output === 'string' ? state.output : JSON.stringify(state.output ?? '');
