@@ -11,7 +11,7 @@ import globals from 'globals';
 // SYSTEM/ — браузерный код (обычные скрипты и ES-модули разбираем одинаково,
 // sourceType: 'module' понимает и то и другое)
 const SERVER = ['server.js', '**/*-server.js', 'SYSTEM/core/**/*.js', 'SYSTEM/checks.js',
-    'PROJECTS/Graph/graph-*.js', 'PROJECTS/Graph/search.js', 'PROJECTS/Browser/chrome-bridge.js', '.claude/hooks/**/*.js',
+    'PROJECTS/Graph/graph-*.js', 'PROJECTS/Graph/search.js', 'PROJECTS/Browser/chrome-bridge.js', 'PROJECTS/Browser/sync-user-profile.js', '.claude/hooks/**/*.js',
     // скрипты навыка finish-task — обычный Node; сценарии live-verify сюда не входят:
     // это тела функций для страницы пульта (верхнеуровневые await/return), а не модули
     '.claude/skills/finish-task/*.js'];
