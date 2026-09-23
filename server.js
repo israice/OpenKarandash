@@ -3094,11 +3094,6 @@ async function askWithFallback(name, params, onEvent) {
         if (agentIsSpent(state.current, cool ? cool.reason : cause)) state.dead.add(state.current);
         state.attempts += 1;
         const was = request.model ? `${state.current} (${request.model})` : state.current;
-        const next = spare.model ? `${spare.name} (${spare.model}, бесплатно)` : `${spare.name} (платный)`;
-        const why = cool
-            ? `в кулдауне (${cooldownWords(cool.reason)} до ${cooldownUntilText(cool.until)})`
-            : `не справился: ${telegramLetters.humanReason(cause)}`;
-        telegramTell(`🔁 ${was} ${why}. Работу продолжает ${next}.`);
         const short = cool
             ? `временно недоступен (${cooldownWords(cool.reason)})`
             : `оборвался с ошибкой: «${String(cause).slice(0, 300)}»`;
@@ -3301,7 +3296,7 @@ const telegram = require('./PROJECTS/Settings/telegram-server.js');
 // stop и status нужны мосту затем, что не всякое сообщение из Telegram — это
 // поручение: «стоп» и «что там» раньше запускали настоящий ход (DOCS/decisions/054)
 const telegramLetters = require('./PROJECTS/Settings/telegram-letters-server.js');
-const { notifyTurnFinished, planPreamble, tell: telegramTell } = telegram.init({
+const { notifyTurnFinished, planPreamble } = telegram.init({
     setEnvValue,
     ask: askOutsideBrowser,
     startNew: startOutsideBrowser,
