@@ -1185,18 +1185,16 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode, plan },
 // запусков у каждого своя (~/.claude/projects/<путь>), и путь к проекту у Windows
 // и WSL разный. Своей записи нет — CLI начнёт свою сессию, а контекст получит
 // пересказом последних ходов (handoffPreamble)
-// hints — подобранные записки DOCS/decisions (SYSTEM/core/turn-judgment.js).
-// Они едут тем же каналом, что и пересказ истории: это не вопрос человека,
-// а служебная преамбула, поэтому в тексте строки сессии её быть не должно —
-// зато она попадает в «Sent to model» там, где коннектор его пишет
-async function resumeAndHandoff(sessionId, targetId, hints, plan, prompt) {
-    const resumeId = sessionId ? getCliSession.get(sessionId, targetId)?.id : null;
-    const history = sessionId && !resumeId ? await handoffPreamble(sessionId, prompt) : '';
-    // третья часть приставки — как задать человеку вопрос опросом Telegram
-    // (блок [ASK], DOCS/decisions/059); пусто, пока мост не настроен
-    // четвёртая — ход начат из Telegram: агент первой строкой говорит, как понял
-    // поручение, и пульт сразу пересылает её человеку (DOCS/decisions/063)
-    return { resumeId, handoff: askPreamble() + turnJudgment.hintPreamble(hints) + history + (plan ? planPreamble() : '') };
+    // hints — подобранные записки DOCS/decisions (SYSTEM/core/turn-judgment.js).
+    // Они едут тем же каналом, что и пересказ истории: это не вопрос человека,
+    // а служебная преамбула, поэтому в тексте строки сессии её быть не должно —
+    // зато она попадает в «Sent to model» там, где коннектор его пишет
+    async function resumeAndHandoff(sessionId, targetId, hints, plan, prompt) {
+        const resumeId = sessionId ? getCliSession.get(sessionId, targetId)?.id : null;
+        const history = sessionId && !resumeId ? await handoffPreamble(sessionId, prompt) : '';
+        // ход начат из Telegram: агент первой строкой говорит, как понял
+        // поручение, и пульт сразу пересылает её человеку (DOCS/decisions/063)
+        return { resumeId, handoff: turnJudgment.hintPreamble(hints) + history + (plan ? planPreamble() : '') };
 }
 
 // Chat — обсуждение без последствий. запрета Edit/Write мало: в прошлый раз правка
@@ -3303,7 +3301,7 @@ const telegram = require('./PROJECTS/Settings/telegram-server.js');
 // stop и status нужны мосту затем, что не всякое сообщение из Telegram — это
 // поручение: «стоп» и «что там» раньше запускали настоящий ход (DOCS/decisions/054)
 const telegramLetters = require('./PROJECTS/Settings/telegram-letters-server.js');
-const { notifyTurnFinished, askPreamble, planPreamble, tell: telegramTell } = telegram.init({
+const { notifyTurnFinished, planPreamble, tell: telegramTell } = telegram.init({
     setEnvValue,
     ask: askOutsideBrowser,
     startNew: startOutsideBrowser,

@@ -95,16 +95,6 @@ function parseLooseAsk(answer) {
     return { question, options, multiple: false, rest: lines.slice(0, at).join('\n').trim() };
 }
 
-// приставка к поручению: откуда агенту знать про блок. Короткая — она едет с
-// каждым ходом
-const ASK_PREAMBLE = '[OpenKarandash — правило оформления ответа, это не поручение и делать по нему ничего не нужно] '
-    + 'Если тебе нужно задать вопрос человеку или дать ему выбор — закончи свой ответ таким блоком — '
-    + 'пульт сам покажет его человеку опросом, а выбор придёт тебе следующим сообщением «Ответ на вопрос …»:\n'
-    + '[ASK] текст вопроса\n- первый вариант\n- второй вариант\n'
-    + `Вариантов ${ASK_OPTIONS_MIN}-${ASK_OPTIONS_MAX}, каждый до ${OPTION_LIMIT} знаков, вопрос до ${QUESTION_LIMIT}; «[ASK*]» вместо «[ASK]» — можно выбрать несколько. `
-    + 'Свой вариант человек допишет сам, «Другое» не добавляй. Любой вопрос человеку задавай ТОЛЬКО этим блоком — обычным текстом вопросов не задавай, даже открытых: предложи несколько вариантов, человек допишет свой прямо в опрос. '
-    + 'Поручение человека — ниже.\n\n';
-
 function create({ database, callApi, users, runInSession, sessionExists, remember, inlineKeyboardFor = () => undefined, moveInline = () => {}, isBottomInline = () => false, ownGraceMs = OWN_GRACE_MS }) {
     // Опрос живёт в базе, а не в памяти, по той же причине, что и связь
     // «сообщение → сессия»: человек отвечает через час, а сервер за это время
@@ -296,4 +286,4 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
     return { askPoll, swallowsNotice, handlePollAnswer, handleOptionAdded, handleReply, routes };
 }
 
-module.exports = { create, parseAsk, parseLooseAsk, ASK_PREAMBLE };
+module.exports = { create, parseAsk, parseLooseAsk };

@@ -876,7 +876,7 @@ function init(dependencies) {
             console.error('Telegram getMe:', err.message);
         });
     }
-    return { notifyTurnFinished, askPreamble, planPreamble, tell };
+    return { notifyTurnFinished, planPreamble, tell };
 }
 
 // короткая служебная строка всем людям из списка (сервер сменил исполнителя).
@@ -886,11 +886,6 @@ function tell(text) {
     for (const chatId of users) send(chatId, text).catch((err) => { sendError = err.message; });
 }
 
-// приставка про блок [ASK] нужна агенту, только когда опрос есть кому слать
-// Приставка к поручению, пришедшему из Telegram: человек с телефона не видит
-// работы агента, поэтому агент первой строкой говорит, как понял поручение, —
-// пульт ловит строку вживую и пересылает (runTurn.planFeed в server.js).
-// Написана как правило оформления: слабая модель принимала приставку за задание
 const PLAN_PREAMBLE = '[OpenKarandash — обязательное правило начала ответа] '
     + 'Человек пишет с телефона и не видит твоей работы. СНАЧАЛА, до первого вызова любого инструмента, выведи текстом одну строку: '
     + '«[PLAN] » и одна-две короткие фразы на языке человека — как ты понял поручение и что сейчас сделаешь. '
@@ -898,10 +893,6 @@ const PLAN_PREAMBLE = '[OpenKarandash — обязательное правил�
     + 'Поручение человека — ниже.\n\n';
 function planPreamble() {
     return PLAN_PREAMBLE;
-}
-
-function askPreamble() {
-    return token && users.length ? pollsModule.ASK_PREAMBLE : '';
 }
 
 // ---------- маршруты ----------
