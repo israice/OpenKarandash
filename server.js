@@ -1143,7 +1143,7 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode, plan },
             // законченным, решает правило в turn-judgment.js поверх суждения;
             // ошибка и ход, остановившийся с вопросом к человеку, уходят всегда.
             // Без await: почта не должна ни задерживать ход, ни ронять его
-            if (notify.send && !willHandOver(ctx.session, ctx.errorText)) {
+            if (notify.send && !(await willHandOver(ctx.session, ctx.errorText))) {
                 mail = notifyTurnFinished({
                     sessionId: ctx.session,
                     title: getSessionTitle.get(ctx.session)?.title || '',
@@ -3061,13 +3061,29 @@ async function refreshFreeModels() {
     }));
 }
 
-function willHandOver(sessionId, errorText) {
+// Список бесплатных моделей нужен только после поломки первого исполнителя, а
+// не до старта хода. Раньше await стоял перед стартом — каждый холодный ход
+// уходил в тишину до FREE_MODELS_WAIT_MS. Теперь греем в фоне, а ждём его в
+// одной точке, где и принимается решение о подхвате (handOver и willHandOver).
+// Задержка та же, но она не съедает старт успешных ходов: до первой поломки
+// (минуты работы) прогрев давно закончился
+let freeModelsPending = null;
+function warmFreeModels() {
+    if (FALLBACK_OFF || freeModelsPending) return;
+    freeModelsPending = refreshFreeModels()
+        .catch(() => {})
+        .finally(() => { freeModelsPending = null; });
+}
+
+async function willHandOver(sessionId, errorText) {
     // подхватывают только сломавшийся ход. Без этой строки успешный ход при
     // подключённом запасном агенте тоже считался «сейчас подхватят» — и письмо
     // о конце работы не уходило вовсе
     if (!errorText) return false;
     const state = sessionId && handoverWatch.get(sessionId);
-    return Boolean(state && nextExecutor(errorText, state));
+    if (!state) return false;
+    await freeModelsPending;
+    return Boolean(nextExecutor(errorText, state));
 }
 
 // { failure, started }: failure — ошибка последнего, кто пробовал (null — работа
@@ -3079,8 +3095,9 @@ async function askWithFallback(name, params, onEvent) {
     let sessionId = params.sessionId || null;
     let everStarted = false;
     // список бесплатных моделей нужен до первой ошибки: после неё решать уже
-    // некогда. Первый раз стоит секунд, дальше берётся из памяти
-    if (!FALLBACK_OFF) await refreshFreeModels().catch(() => {});
+    // некогда. Греем в фоне, чтобы холодный ход не уходил в тишину и не ждал
+    // запроса к CLI; сама точка ожидания — в handOver ниже
+    warmFreeModels();
 
     // общий хвост «работа переходит дальше» — и для поломки, и для кулдауна
     // (DOCS/decisions/071). Возвращает true, если есть кому. Ход даже не
@@ -3118,6 +3135,7 @@ async function askWithFallback(name, params, onEvent) {
             // цепочка начинается со следующего свободного (071)
             const cool = cooldowns.cooled(state.current, request.model || null);
             if (cool) {
+                await freeModelsPending;
                 if (!handOver(`${state.current} cooling after ${cool.reason}`, cool)) {
                     // дальше некого: браузеру это тоже событие, а не пустой конец
                     // потока — иначе вкладка «закончила» работу, которой не было
@@ -3146,6 +3164,7 @@ async function askWithFallback(name, params, onEvent) {
             // бесплатной модели — по одной модели
             const reason = turnJudgment.knownFailure(failure)?.reason;
             cooldowns.record(state.current, agentIsSpent(state.current, failure) ? null : request.model, reason);
+            await freeModelsPending;
             if (!handOver(failure, null)) return { failure, started: everStarted };
         }
     } finally {
