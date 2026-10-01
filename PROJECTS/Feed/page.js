@@ -258,8 +258,10 @@ export default function build(page, { panel, signal }) {
     }
 
     // icon — ключ из ICON_PATHS, определяет и глиф, и цвет чипа (через extraClass
-    // на самой карточке, см. CSS .session-feed__card--* .session-feed__card-icon)
-    function addCard(container, { icon, title, subtitle, extraClass }, fillBody) {
+    // на самой карточке, см. CSS .session-feed__card--* .session-feed__card-icon).
+    // model — плашка модели рядом с названием роли: та же разметка, что над
+    // ответом в Sessions и на ноде Flow (SYSTEM/model-tag.js, 039)
+    function addCard(container, { icon, title, subtitle, model, extraClass }, fillBody) {
         const card = document.createElement('div');
         card.className = `session-feed__card${extraClass ? ` ${extraClass}` : ''}`;
 
@@ -282,6 +284,9 @@ export default function build(page, { panel, signal }) {
         titleEl.className = 'session-feed__card-title';
         titleEl.textContent = title;
         titleWrap.appendChild(titleEl);
+
+        const modelTag = window.ModelTag?.tag(model);
+        if (modelTag) titleWrap.appendChild(modelTag);
 
         if (subtitle) {
             const subEl = document.createElement('span');
@@ -589,6 +594,9 @@ export default function build(page, { panel, signal }) {
             icon: kind,
             title: `${who}${isError ? ' · turn error' : ''}`,
             subtitle: `${truncate(message.text, 60)} · ${fmtTime(message.createdAt)}`,
+            // подпись моделью — по полю самой строки: ход мог вести другая
+            // модель, а выбранная в шапке сессии относится к следующему ходу
+            model: kind === 'assistant' ? message.model : null,
             extraClass: `session-feed__card--${kind}${isError ? ' session-feed__card--error' : ''}`,
         }, (body) => {
             // пометка суждения о ходе — первой строкой тела карточки: то же,

@@ -163,6 +163,17 @@ export function getActiveProviderId() {
     return defaultProviderId();
 }
 
+// модель, которой пойдёт следующий ход, — то же, что в шапке сессии: выбор
+// в ней настоящий (см. обработчик change в chat.js). Ею подписывается ответ в
+// ленте, пока он стримится (SYSTEM/model-tag.js); у строк, уже лежащих в базе,
+// подпись берётся из их собственного поля model
+export function getActiveModel() {
+    if (!chatState.chatSessionBar.hidden && chatState.chatSessionModelSelect.value) {
+        return chatState.chatSessionModelSelect.value;
+    }
+    return connections.get(getActiveProviderId())?.model || null;
+}
+
 export function renderSessionBarControls() {
     // строка выбора провайдера/модели/effort видна, как только подключён
     // хотя бы один провайдер, и до создания самой сессии — так пользователь

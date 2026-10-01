@@ -50,6 +50,8 @@
     <link rel="stylesheet" href="SYSTEM/toolbar-menu.css">
     <!-- пометка суждения о ходе: один стиль на Sessions, Feed и Flow -->
     <link rel="stylesheet" href="SYSTEM/judgment-badge.css">
+    <!-- тег модели над ответом: тоже один стиль на все три отображения -->
+    <link rel="stylesheet" href="SYSTEM/model-tag.css">
 </head>
 <body>
     <div class="topbar">
@@ -1006,6 +1008,8 @@
          book-tab.js → app.js → chat.js → остальные файлы сохраняется -->
     <!-- общий механизм: пометку суждения рисуют все три отображения ленты -->
     <script src="SYSTEM/judgment-badge.js" defer></script>
+    <!-- тег модели над ответом — тем же порядком, до всех потребителей -->
+    <script src="SYSTEM/model-tag.js" defer></script>
     <script src="SYSTEM/app.js" type="module"></script>
     <script src="PROJECTS/Chat/chat.js" type="module"></script>
     <script src="PROJECTS/Graph/file-editor.js" defer></script>

@@ -2794,6 +2794,16 @@
                     return formatJsonValue(meta, 0);
                 }
 
+                // плашка модели над заголовком ноды — тот же тег, что над ответом
+                // в Sessions и в заголовке карточки Feed (SYSTEM/model-tag.js,
+                // DOCS/decisions/039). Знание берётся у самой строки, а не из
+                // шапки сессии: ноды строятся по всей истории, где модели менялись
+                function applyNodeModel(n, m) {
+                    n.querySelector('.flow-node__titles > .model-tag')?.remove();
+                    const tag = window.ModelTag?.tag(m.role === 'assistant' ? m.model : null);
+                    if (tag) n.querySelector('.flow-node__titles')?.prepend(tag);
+                }
+
                 // пометка суждения о ходе — та же, что в Sessions и Feed
                 // (SYSTEM/judgment-badge.js, DOCS/decisions/039). Нода живого
                 // хода перестраивается раз в секунду, поэтому прежнюю пометку
@@ -3006,6 +3016,7 @@
                     // в теле — только превью: полный текст живёт в секции «what happened»
                     setNodeTexts(n, kind.title, truncate(m.text, 200));
                     setNodeKind(n, kind.kind, kind.emoji, m.toolError);
+                    applyNodeModel(n, m);
                     applyNodeFacts(n, m);
                     applyNodeJudgment(n, m);
                     setNodeScope(n, 'system');
