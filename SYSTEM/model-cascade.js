@@ -57,6 +57,23 @@ function fillLevel(select, values, emptyLabel, wanted, label = (value) => value)
     select.value = values.includes(previous) ? previous : (values[0] || '');
 }
 
+// Пункт «Add» нижней строкой раскрытого списка CLI. Пока это заглушка без
+// логики, поэтому option отключена: в раскрытом списке строка видна, выбрать
+// её нельзя, и значение каскада от неё не зависит (row.read и обработчики
+// change смотрят только на выбранный CLI). Когда у пункта появится действие,
+// отключение снимается, а обработчик вешается рядом с остальными в
+// modelCascadeRow. Значение-заглушка отдельная от id CLI, чтобы пункт не
+// совпал с настоящим провайдером, даже если кто-то назовёт его add
+const ADD_OPTION = { value: '::add', label: 'Add' };
+
+function appendAddOption(select) {
+    const option = document.createElement('option');
+    option.value = ADD_OPTION.value;
+    option.textContent = ADD_OPTION.label;
+    option.disabled = true;
+    select.append(option);
+}
+
 function providerById(id) {
     return PROVIDERS.find((p) => p.id === id) || { id, name: id, models: [], defaultModel: null };
 }
@@ -124,8 +141,9 @@ const modelsFor = (cliId) => {
 // Четыре селекта в ряд: CLI / Gateway / Provider / Model. cliIds — какие CLI
 // в них перечислять (витрина: все, карточка провайдера: только его, шапка
 // сессии: подключённые), cli — каким встать уровню CLI, model — что показать
-// сразу, onChange — куда попадает собранный выбор
-export function modelCascadeRow({ cliIds, cli, model, onChange }) {
+// сразу, onChange — куда попадает собранный выбор, addOption — дописать ли
+// вниз списка CLI пункт «Add» (шапка сессии; в Settings его нет)
+export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = false }) {
     const row = document.createElement('div');
     row.className = 'provider__model provider__model--cascade';
     const selects = {};
@@ -140,6 +158,13 @@ export function modelCascadeRow({ cliIds, cli, model, onChange }) {
         selects[key] = select;
     }
 
+    // список CLI перерисовывается на каждой смене уровня (fillLevel чистит
+    // option'ы), поэтому пункт «Add» дописывается заново вместе с ним
+    function fillCliLevel(values, wanted) {
+        fillLevel(selects.cli, values, '—', wanted, (id) => providerById(id).name);
+        if (addOption) appendAddOption(selects.cli);
+    }
+
     // собранный выбор в виде, который понимает CLI: в списке моделей подпись —
     // хвост после последнего слэша, а value там целиком («openrouter/stealth/
     // space-bunny-alpha»), поэтому строка собирается сама и склеивать уровни
@@ -150,7 +175,7 @@ export function modelCascadeRow({ cliIds, cli, model, onChange }) {
     // один проход по четырём уровням: у каждого своя строка, которую просил
     // человек (wanted), остальные целиком берутся из того, что уже выбрано
     function renderLevels({ cli: wantedCli, gateway, provider, model: wanted }) {
-        fillLevel(selects.cli, cliIds, '—', wantedCli, (id) => providerById(id).name);
+        fillCliLevel(cliIds, wantedCli);
         const models = modelsFor(selects.cli.value);
         // уровни той модели, которую просили показать, — тоже wanted: у
         // короткого имени без среднего уровня («opencode/claude-sonnet-5»)
@@ -245,6 +270,8 @@ export function renderSessionBarControls() {
         cliIds: ids,
         cli: barCliId,
         model: modelOf(barCliId),
+        // внизу списка CLI строка «Add» — заглушка, выбрать её нельзя
+        addOption: true,
         onChange: (cliId, model, sourceRow) => {
             // выбор уровня CLI в шапке — это и есть выбор, с которым пойдёт ход
             // (getActiveProviderId читает его отсюда), поэтому он же становится
