@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Edit(./**)"
-    ],
-    "defaultMode": "bypassPermissions"
-  }
-}
