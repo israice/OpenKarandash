@@ -1,6 +1,6 @@
 // Settings: полностью самодостаточный файл. Создаёт свою разметку (кнопку-шестерёнку
-// с выпадающим меню в шапке, окно настроек и окно выбора окружения Claude CLI) и ведёт
-// всю логику провайдеров: подключение, выбор модели/effort, экран для скриншотов Karandash,
+// с выпадающим меню в шапке, окно настроек и окно выбора окружения CLI) и ведёт
+// всю логику провайдеров: подключение, выбор модели, экран для скриншотов Karandash,
 // вкладку по умолчанию. Общее состояние (PROVIDERS, connections, сохранение в
 // localStorage, шапка активной сессии) остаётся в app.js — оно нужно ленте чата
 // напрямую, а этот файл лишь читает и меняет его через window.App.
@@ -10,12 +10,6 @@
 // первыми. Сам этот файл на своём верхнем уровне к window.App не обращается —
 // только внутри обработчиков, которые сработают уже после того, как app.js его определит.
 (function () {
-
-    // ключ OpenRouter для pi (только бесплатные модели по умолчанию) — держим
-    // на уровне модуля, а не в DOM-инпуте, потому что renderProviders() вызывается
-    // часто (при подключении/отключении любого провайдера) и каждый раз пересоздаёт
-    // разметку карточек заново
-    let piOpenRouterKey = '';
 
     // ---------- разметка: кнопка-шестерёнка и меню ----------
 
@@ -55,7 +49,7 @@
     const settingsButton = settingsRoot.querySelector('#settingsButton');
     const settingsMenu = settingsRoot.querySelector('#settingsMenu');
 
-    // ---------- разметка: окно выбора окружения Claude CLI ----------
+    // ---------- разметка: окно выбора окружения CLI ----------
 
     const pickerModal = document.createElement('div');
     pickerModal.className = 'modal modal--top';
@@ -65,7 +59,7 @@
         <div class="modal__backdrop" data-close-modal></div>
         <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
             <div class="modal__header">
-                <h2 class="modal__title" id="pickerTitle">Where should Claude CLI run?</h2>
+                <h2 class="modal__title" id="pickerTitle">Where should the CLI run?</h2>
             </div>
             <p class="modal__hint" id="pickerHint"></p>
             <ul class="picker" id="pickerList"></ul>
@@ -94,23 +88,10 @@
             <div class="modal__header">
                 <h2 class="modal__title" id="settingsModalTitle">Settings</h2>
             </div>
-            <div class="settings-mode-row">
-                <div class="segmented segmented--pair" id="settingsModeToggle" role="radiogroup" aria-label="Execution mode" data-active="CLI">
-                    <span class="segmented__thumb" aria-hidden="true"></span>
-                    <button type="button" class="segmented__option" role="radio" aria-checked="true" data-mode="CLI" tabindex="0">CLI</button>
-                    <button type="button" class="segmented__option segmented__option--soon" role="radio" aria-checked="false" data-mode="Omniroute" tabindex="-1" disabled title="Coming Soon">Omniroute</button>
-                </div>
-            </div>
             <div class="settings-tab-content" id="settingsTabProviders" role="tabpanel">
                 <p class="modal__hint">Connect an AI provider to pick a default model.</p>
-                <div class="provider" id="defaultProviderRow">
-                    <div class="provider__model">
-                        <span class="provider__model-label">Provider:</span>
-                        <select class="provider__select provider__select--source" id="defaultProviderSelect" aria-label="Provider"></select>
-                        <span class="provider__model-label">Model:</span>
-                        <select class="provider__select" id="defaultProviderModelSelect" aria-label="Default model"></select>
-                    </div>
-                </div>
+                <!-- витрина выбора модели: четыре уровня одним каскадом (createModelCascade) -->
+                <div class="provider" id="defaultProviderRow"></div>
                 <ul class="provider-list" id="providerList"></ul>
                 <div class="provider screenshot-screen" id="screenshotScreenRow" hidden>
                     <span class="provider__model-label">Screen for Karandash screenshots:</span>
@@ -177,11 +158,23 @@
     `;
     document.body.append(settingsModal);
 
+    // горячая перезагрузка этого скрипта: снимаем всё, что он нарисовал (кнопку в
+    // топбаре и обе модалки), иначе свежая копия добавит вторую такую же поверх
+    // первой. Дальше скрипт выполняется обычным порядком и рисует себя заново сам
+    window.App?.registerHotReload('PROJECTS/Settings/settings.js', () => {
+        settingsRoot.remove();
+        pickerModal.remove();
+        settingsModal.remove();
+    });
+
     const settingsTabs = settingsModal.querySelector('#settingsTabs');
     const settingsTabItems = Array.from(settingsTabs.querySelectorAll('.settings-tabs__item'));
     const providerList = settingsModal.querySelector('#providerList');
-    const defaultProviderSelect = settingsModal.querySelector('#defaultProviderSelect');
-    const defaultProviderModelSelect = settingsModal.querySelector('#defaultProviderModelSelect');
+    const defaultProviderRow = settingsModal.querySelector('#defaultProviderRow');
+    // узлы двух каскадов в текущей отрисовке: нужны, чтобы перерисовывать при
+    // выборе только соседний ряд, а не тот, где кликнули (см. bindModelChoice)
+    let showcaseRow = null;
+    let providerModelRow = null;
     const pickerList = pickerModal.querySelector('#pickerList');
     const pickerHint = pickerModal.querySelector('#pickerHint');
     const pickerTitle = pickerModal.querySelector('#pickerTitle');
@@ -190,48 +183,14 @@
     const screenshotScreenPreview = settingsModal.querySelector('#screenshotScreenPreview');
     const settingsModalTitle = settingsModal.querySelector('#settingsModalTitle');
     const settingsModalHeader = settingsModal.querySelector('.modal__header');
-    const settingsModeRow = settingsModal.querySelector('.settings-mode-row');
 
-    // заголовок «Settings» и переключатель режима (CLI/Omniroute) относятся
-    // только к вкладке Providers — на остальных табах (Router/Network/
-    // Sandglass) их скрываем; кнопка закрытия при этом остаётся на месте.
+    // заголовок «Settings» относится только к вкладке Providers — на остальных
+    // табах (Router/Network/Sandglass) его скрываем; кнопка закрытия при этом
+    // остаётся на месте.
     function setSettingsHeaderVisibility(isProviders) {
         settingsModalTitle.hidden = !isProviders;
-        settingsModeRow.hidden = !isProviders;
         settingsModalHeader.classList.toggle('modal__header--collapsed', !isProviders);
     }
-
-    // ---------- переключатель режима выполнения: CLI / Omniroute ----------
-    // Omniroute пока Coming Soon (как Loop в композере Chat) — переключатель
-    // стоит, но кликнуть по нему нельзя; CLI остаётся единственным рабочим
-    // режимом и текущим поведением проекта без изменений.
-
-    const settingsModeToggle = settingsModal.querySelector('#settingsModeToggle');
-    const settingsModeOptions = [...settingsModeToggle.querySelectorAll('.segmented__option')].filter((o) => !o.disabled);
-
-    function setSettingsMode(mode) {
-        settingsModeToggle.dataset.active = mode;
-        for (const option of settingsModeToggle.querySelectorAll('.segmented__option')) {
-            const active = option.dataset.mode === mode;
-            option.setAttribute('aria-checked', String(active));
-            option.tabIndex = active ? 0 : -1;
-        }
-    }
-
-    settingsModeToggle.addEventListener('click', (e) => {
-        const option = e.target.closest('.segmented__option');
-        if (option && !option.disabled) setSettingsMode(option.dataset.mode);
-    });
-
-    settingsModeToggle.addEventListener('keydown', (e) => {
-        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-        if (settingsModeOptions.length < 2) return;
-        e.preventDefault();
-        const current = settingsModeOptions.findIndex((o) => o.dataset.mode === settingsModeToggle.dataset.active);
-        const next = settingsModeOptions[(current + (e.key === 'ArrowRight' ? 1 : -1) + settingsModeOptions.length) % settingsModeOptions.length];
-        setSettingsMode(next.dataset.mode);
-        next.focus();
-    });
 
     async function api(path, body) {
         const res = await fetch(path, {
@@ -240,6 +199,25 @@
             body: JSON.stringify(body || {}),
         });
         return res.json();
+    }
+
+    // Эксклюзивная активация (043): включённый провайдер один — остальных гасим
+    // и на клиенте, и на сервере, активный переживает reload/рестарт сервера
+    async function activateOnly(id) {
+        App.activateExclusive(id);
+        App.saveActiveProvider(id);
+        App.saveProviderState(id);
+        const others = App.PROVIDERS.map((p) => p.id).filter((other) => other !== id);
+        for (const other of others) {
+            try { await api('/api/agent/disconnect', { agent: other }); } catch { /* сервер недоступен */ }
+        }
+    }
+
+    async function deactivateProvider(id) {
+        App.connections.delete(id);
+        App.saveProviderState(id);
+        if (App.loadActiveProvider() === id) App.saveActiveProvider(null);
+        try { await api('/api/agent/disconnect', { agent: id }); } catch { /* сервер недоступен */ }
     }
 
     // ---------- меню-шестерёнка ----------
@@ -284,48 +262,47 @@
         else console.log('Selected:', label);
     });
 
-    // ---------- витрина провайдер+модель, не зависит от подключения ----------
+    // ---------- каскад CLI → шлюз → поставщик → модель ----------
+    //
+    // Сам каскад — четыре выпадающих списка по имени модели у CLI — живёт в
+    // SYSTEM/providers.js вместе с сохранением выбора: та же строка стоит в
+    // шапке сессии, и оба места обязаны быть одним и тем же выбором, поэтому
+    // здесь мы только собираем строки из фабрики App.modelCascadeRow, а выбор
+    // пишем общим App.applyModelChoice.
 
-    // ponytail: показывает, какие провайдеры и модели вообще есть в системе — само
-    // переключение никуда не бьёт, до появления мультипровайдерного роутинга.
-    // Живёт вне #providerList и не завязана на connections, поэтому видна всегда,
-    // а не только после подключения Claude
-    function renderDefaultProviderModels() {
-        defaultProviderModelSelect.innerHTML = '';
-        const provider = App.PROVIDERS.find((p) => p.id === defaultProviderSelect.value);
-        if (!provider) return;
-        for (const model of provider.models) {
-            const option = document.createElement('option');
-            option.value = model;
-            option.textContent = model === provider.defaultModel ? `${model} (default)` : model;
-            option.selected = model === provider.defaultModel;
-            defaultProviderModelSelect.append(option);
-        }
+    // Выбор, сделанный в другом месте (например, в шапке сессии), приходит сюда
+    // объявлением — оба каскада окна перерисовываются под него. Ряд, из
+    // которого пришёл выбор, не трогаем: select уехал бы из-под курсора, не
+    // дорисовав список. Подписка заводится один раз и при первом открытии
+    // окна, когда window.App уже на месте: этот файл грузится раньше ядра.
+    let modelChoiceBound = false;
+
+    function bindModelChoice() {
+        if (modelChoiceBound) return;
+        modelChoiceBound = true;
+        App.onModelChoice(({ sourceRow }) => {
+            if (sourceRow !== showcaseRow) renderDefaultProviderRow();
+            if (sourceRow !== providerModelRow) renderProviders();
+        });
     }
 
+    // витрина вверху вкладки Providers: все CLI сразу, жива независимо от
+    // подключения — до Connect у OpenCode нет списка моделей, и каскад строится
+    // по дефолтной строке проекта (openrouter/stealth/space-bunny-alpha)
     function renderDefaultProviderRow() {
-        const current = defaultProviderSelect.value;
-        defaultProviderSelect.innerHTML = '';
-        for (const provider of App.PROVIDERS) {
-            const option = document.createElement('option');
-            option.value = provider.id;
-            option.textContent = provider.name;
-            option.selected = provider.id === (current || 'claude');
-            defaultProviderSelect.append(option);
-        }
-        renderDefaultProviderModels();
+        defaultProviderRow.innerHTML = '';
+        showcaseRow = App.modelCascadeRow({
+            cliIds: App.PROVIDERS.map((p) => p.id),
+            model: App.modelOf(App.getActiveProviderId()),
+            onChange: App.applyModelChoice,
+        });
+        defaultProviderRow.append(showcaseRow);
     }
-
-    defaultProviderSelect.addEventListener('change', renderDefaultProviderModels);
 
     // ---------- список провайдеров ----------
 
     function renderProviders() {
         providerList.innerHTML = '';
-        // строку «Модель: + effort» Claude показываем последней в списке, чтобы
-        // она стояла прямо над Screen for Karandash screenshots, а не терялась
-        // среди карточек остальных провайдеров
-        let claudeModelItem = null;
 
         // делим провайдеров на платные и бесплатные (флаг App.PROVIDERS[].paid),
         // внутри каждой секции порядок остаётся как в исходном массиве
@@ -343,12 +320,6 @@
             for (const provider of providers) {
                 const state = App.connections.get(provider.id);
 
-                // у pi до подключения Connect остаётся серой и некликабельной,
-                // пока не введён ключ OpenRouter (без него free router работать не сможет)
-                const isPiGated = provider.id === 'pi' && !state;
-                const piKeyFilled = Boolean(piOpenRouterKey.trim());
-                const connectAllowed = !isPiGated || piKeyFilled;
-
                 const item = document.createElement('li');
                 item.className = 'provider';
 
@@ -362,115 +333,38 @@
                     <div class="provider__actions">
                         ${state ? `<span class="provider__status">${state.note || 'Connected'}</span>` : ''}
                         <button type="button"
-                                class="provider__button ${state || !connectAllowed ? '' : 'provider__button--connect'}"
-                                data-provider="${provider.id}"
-                                ${isPiGated && !connectAllowed ? 'disabled' : ''}>
+                                class="provider__button ${state ? '' : 'provider__button--connect'}"
+                                data-provider="${provider.id}">
                             ${state ? 'Disconnect' : 'Connect'}
                         </button>
                     </div>
                 `;
                 item.append(row);
 
-                // поле ключа видно сразу под строкой pi, ещё до подключения —
-                // в отличие от Telegram, для него не нужна отдельная кнопка-раскрытие
-                if (isPiGated) {
-                    const keyRow = document.createElement('div');
-                    keyRow.className = 'provider__model provider__model--key';
-                    keyRow.innerHTML = `
-                        <input type="password" class="provider__input" id="piOpenRouterKeyInput"
-                               placeholder="OpenRouter API key (free models only)" autocomplete="off">
-                    `;
-                    const keyInput = keyRow.querySelector('#piOpenRouterKeyInput');
-                    keyInput.value = piOpenRouterKey;
-                    keyInput.addEventListener('input', () => {
-                        piOpenRouterKey = keyInput.value;
-                        const connectButton = row.querySelector('[data-provider="pi"]');
-                        const filled = Boolean(piOpenRouterKey.trim());
-                        connectButton.classList.toggle('provider__button--connect', filled);
-                        connectButton.disabled = !filled;
-                    });
-                    item.append(keyRow);
-                }
-
-                // выбор модели показываем только у подключённого провайдера
+                // выбор модели показываем только у подключённого провайдера: у
+                // неподключённого его и выбирать нечем (списка от CLI нет), а
+                // витрина наверху с теми же четырьмя уровнями жива всегда
                 if (state) {
-                    if (provider.id === 'claude') {
-                        const usageRow = document.createElement('div');
-                        usageRow.className = 'provider__usage';
-                        usageRow.innerHTML = App.renderUsageInline(state.usage);
-                        item.append(usageRow);
-                    }
-
-                    // у OpenCode до подключения списка моделей нет: пустой выпадающий
-                    // список выглядел бы поломкой, поэтому строку с моделью не рисуем
-                    if (!provider.models.length) {
-                        providerList.append(item);
-                        continue;
-                    }
-
-                    const modelRow = document.createElement('div');
-                    modelRow.className = 'provider__model';
-
-                    const label = document.createElement('span');
-                    label.className = 'provider__model-label';
-                    label.textContent = 'Model:';
-
-                    const select = document.createElement('select');
-                    select.className = 'provider__select';
-                    select.dataset.providerSelect = provider.id;
-                    select.setAttribute('aria-label', `Model for ${provider.name}`);
-
-                    for (const model of provider.models) {
-                        const option = document.createElement('option');
-                        option.value = model;
-                        option.textContent = model === provider.defaultModel
-                            ? `${model} (default)`
-                            : model;
-                        option.selected = model === state.model;
-                        select.append(option);
-                    }
-
-                    modelRow.append(label, select);
-
-                    // effort умеют Claude (--effort) и pi (--thinking); у кого его нет,
-                    // у того в PROVIDERS нет и поля efforts
-                    if (provider.efforts) {
-                        const effortSelect = document.createElement('select');
-                        effortSelect.className = 'provider__select provider__select--effort';
-                        effortSelect.dataset.providerEffortSelect = provider.id;
-                        effortSelect.setAttribute('aria-label', `Effort for ${provider.name}`);
-
-                        for (const effort of provider.efforts) {
-                            const option = document.createElement('option');
-                            option.value = effort;
-                            option.textContent = effort === provider.defaultEffort
-                                ? `${effort} (default)`
-                                : effort;
-                            option.selected = effort === (state.effort || provider.defaultEffort);
-                            effortSelect.append(option);
-                        }
-
-                        modelRow.append(effortSelect);
-                    }
-
                     const modelItem = document.createElement('li');
                     modelItem.className = 'provider';
-                    modelItem.append(modelRow);
+                    providerModelRow = App.modelCascadeRow({
+                        // модель в карточке берётся тем же modelOf, что и в
+                        // витрине и в шапке сессии: сохранённый выбор человека,
+                        // а состояние подключения — лишь запасной вариант, когда
+                        // выбора ещё нет
+                        cliIds: [provider.id],
+                        model: App.modelOf(provider.id),
+                        onChange: App.applyModelChoice,
+                    });
+                    modelItem.append(providerModelRow);
 
-                    if (provider.id === 'claude') {
-                        providerList.append(item);
-                        claudeModelItem = modelItem;
-                    } else {
-                        providerList.append(item, modelItem);
-                    }
+                    providerList.append(item, modelItem);
                     continue;
                 }
 
                 providerList.append(item);
             }
         }
-
-        if (claudeModelItem) providerList.append(claudeModelItem);
 
         App.renderObsConnection();
     }
@@ -484,51 +378,8 @@
         row.append(error);
     }
 
-    async function connectClaude(install) {
-        const result = await api('/api/agent/connect', { agent: 'claude', id: install.id });
-        if (!result.ok) {
-            showProviderError('claude', result.error);
-            return;
-        }
-
-        const provider = App.PROVIDERS.find((p) => p.id === 'claude');
-        App.connections.set('claude', {
-            installId: result.id,
-            label: result.label,
-            version: result.version,
-            model: App.connections.get('claude')?.model || provider.defaultModel,
-            effort: App.connections.get('claude')?.effort || provider.defaultEffort,
-            note: `${result.label} · CLI ${result.version}`,
-        });
-        App.saveClaudeState();
-        App.renderSessionBarControls();
-        renderProviders();
-    }
-
-    // у Codex подключение теперь тоже настоящее: тот же поток detect → connect,
-    // что у Claude — модели пока фиксированный список на клиенте (см. App.PROVIDERS)
-    async function connectCodex(install) {
-        const result = await api('/api/agent/connect', { agent: 'codex', id: install.id });
-        if (!result.ok) {
-            showProviderError('codex', result.error);
-            return;
-        }
-
-        const provider = App.PROVIDERS.find((p) => p.id === 'codex');
-        App.connections.set('codex', {
-            installId: result.id,
-            label: result.label,
-            version: result.version,
-            model: App.connections.get('codex')?.model || provider.defaultModel,
-            note: `${result.label} · CLI ${result.version}`,
-        });
-        App.saveProviderState('codex');
-        App.renderSessionBarControls();
-        renderProviders();
-    }
-
     // у OpenCode список моделей заранее не известен (нет хардкода) — сервер
-    // реально спрашивает `opencode models` при подключении и отдаёт список ответом
+    // реально спрашивает `opencode models --refresh` при подключении и отдаёт список ответом
     async function connectOpenCode(install) {
         const result = await api('/api/agent/connect', { agent: 'opencode', id: install.id });
         if (!result.ok) {
@@ -538,65 +389,38 @@
 
         const provider = App.PROVIDERS.find((p) => p.id === 'opencode');
         provider.models = result.models || [];
-        provider.defaultModel = provider.models[0];
+        // Порядок выбора модели при подключении. Первым идёт выбор человека из
+        // витрины или шапки сессии (App.saveModelChoice, переживает перезагрузку
+        // страницы) — если CLI такую модель знает, она и остаётся. Иначе дефолт
+        // проекта: Space Bunny Alpha через OpenRouter, как решил владелец. Модели
+        // приходят от CLI списком, поэтому ищем её по имени; если и её нет
+        // (CLI другого аккаунта) — падаем на бесплатную, как раньше: первой в
+        // списке обычно идёт платная, а человеку нужен free-вариант
+        const wanted = App.modelOf('opencode');
+        provider.defaultModel = provider.models.find((m) => m === wanted)
+            || provider.models.find((m) => m === App.DEFAULT_AGENT_MODEL)
+            || provider.models.find((m) => /-free$/i.test(m) || /:free$/i.test(m))
+            || provider.models.find((m) => m === 'opencode/big-pickle')
+            || provider.models[0]
+            || App.DEFAULT_AGENT_MODEL;
 
         App.connections.set('opencode', {
             installId: result.id,
             label: result.label,
             version: result.version,
-            model: App.connections.get('opencode')?.model || provider.defaultModel,
+            model: provider.defaultModel,
             note: `${result.label} · CLI ${result.version}`,
         });
-        App.saveProviderState('opencode');
+        await activateOnly('opencode');
         App.renderSessionBarControls();
-        renderProviders();
-    }
-
-    // у pi список моделей тоже приходит с сервера: он зависит от того, куда
-    // залогинен сам CLI (`pi --list-models`), и без логина приходит пустым —
-    // тогда карточка остаётся без строки выбора модели, как у OpenCode
-    async function connectPi(install) {
-        // подключение зовётся без await из обработчика клика, поэтому свою
-        // ошибку ловим здесь: иначе упавший запрос не оставил бы на карточке
-        // вообще никакого следа — ни «Disconnect», ни сообщения
-        let result;
-        try {
-            result = await api('/api/agent/connect', { agent: 'pi', id: install.id, openRouterKey: piOpenRouterKey.trim() });
-        } catch (err) {
-            showProviderError('pi', `Server unavailable: ${err.message}`);
-            return;
-        }
-        if (!result.ok) {
-            showProviderError('pi', result.error);
-            return;
-        }
-
-        const provider = App.PROVIDERS.find((p) => p.id === 'pi');
-        provider.models = result.models || [];
-        // подпись поля обещает бесплатные модели, а первой в списке от CLI
-        // обычно идёт платная — дефолтом берём именно бесплатную, если она есть
-        // (`openrouter/free` — сборный роутер бесплатных моделей, иначе любая с суффиксом `:free`)
-        provider.defaultModel = provider.models.find((m) => m === 'openrouter/openrouter/free')
-            || provider.models.find((m) => m.endsWith(':free'))
-            || provider.models[0];
-
-        App.connections.set('pi', {
-            installId: result.id,
-            label: result.label,
-            version: result.version,
-            model: App.connections.get('pi')?.model || provider.defaultModel,
-            effort: App.connections.get('pi')?.effort || provider.defaultEffort,
-            note: `${result.label} · CLI ${result.version}`,
-        });
-        App.saveProviderState('pi');
-        App.renderSessionBarControls();
+        // оба каскада сразу: у витрины после Connect появился настоящий список
+        // моделей от CLI, а не одна дефолтная строка
+        renderDefaultProviderRow();
         renderProviders();
     }
 
     // выбор между несколькими найденными установками CLI: тот же список, что и
-    // у showNotFound, только со строками вместо пустоты. Функция была потеряна при
-    // правках, а четыре вызова на неё остались — окно настроек падало с ReferenceError
-    // ровно там, где CLI нашёлся и в Windows, и в WSL
+    // у showNotFound, только со строками вместо пустоты
     function pickInstall(installs, onPick, providerLabel = 'CLI') {
         pickerTitle.textContent = `Where should ${providerLabel} run?`;
         pickerHint.textContent = 'CLI found in multiple environments — choose which one to use.';
@@ -625,9 +449,9 @@
         App.openModal(pickerModal);
     }
 
-    function showNotFound(providerLabel = 'Claude CLI') {
+    function showNotFound(providerLabel = 'CLI') {
         pickerTitle.textContent = `Where should ${providerLabel} run?`;
-        pickerHint.textContent = `${providerLabel} not found in Windows or WSL. Install it or set the path via the corresponding environment variable when starting the server.`;
+        pickerHint.textContent = `${providerLabel} not found on this machine. Install it, or set the path in the environment variable for that provider when starting the server.`;
         pickerList.innerHTML = '';
         App.openModal(pickerModal);
     }
@@ -639,60 +463,11 @@
         const id = btn.dataset.provider;
 
         if (App.connections.has(id)) {
-            App.connections.delete(id);
-            if (id === 'claude') {
-                App.setChatSessionId(null);
-                App.saveClaudeState();
-            } else if (id === 'codex' || id === 'opencode' || id === 'pi') {
-                App.setChatSessionId(null);
-                App.saveProviderState(id);
-            }
+            await deactivateProvider(id);
+            App.setSessionId(null);
+            App.saveProviderState(id);
+            App.renderSessionBarControls();
             renderProviders();
-            return;
-        }
-
-        // у Claude подключение настоящее: ищем CLI в обоих окружениях
-        if (id === 'claude') {
-            btn.disabled = true;
-            btn.textContent = 'Looking for Claude...';
-
-            let installs = [];
-            try {
-                ({ installs = [] } = await api('/api/agent/detect', { agent: 'claude' }));
-            } catch (err) {
-                renderProviders();
-                showProviderError(id, `Server unavailable: ${err.message}`);
-                return;
-            }
-
-            renderProviders();
-
-            if (installs.length === 0) showNotFound('Claude CLI');
-            else if (installs.length === 1) connectClaude(installs[0]);
-            else pickInstall(installs, connectClaude, 'Claude CLI');
-            return;
-        }
-
-        // у Codex подключение тоже настоящее: тот же поток detect → connect,
-        // что у Claude — сперва ищем CLI в обоих окружениях
-        if (id === 'codex') {
-            btn.disabled = true;
-            btn.textContent = 'Looking for Codex...';
-
-            let installs = [];
-            try {
-                ({ installs = [] } = await api('/api/agent/detect', { agent: 'codex' }));
-            } catch (err) {
-                renderProviders();
-                showProviderError(id, `Server unavailable: ${err.message}`);
-                return;
-            }
-
-            renderProviders();
-
-            if (installs.length === 0) showNotFound('Codex CLI');
-            else if (installs.length === 1) connectCodex(installs[0]);
-            else pickInstall(installs, connectCodex, 'Codex CLI');
             return;
         }
 
@@ -719,56 +494,10 @@
             return;
         }
 
-        // у pi поток тот же, что у OpenCode: detect -> connect, список моделей
-        // приходит в ответе connect
-        if (id === 'pi') {
-            btn.disabled = true;
-            btn.textContent = 'Looking for pi...';
-
-            let installs = [];
-            try {
-                ({ installs = [] } = await api('/api/agent/detect', { agent: 'pi' }));
-            } catch (err) {
-                renderProviders();
-                showProviderError(id, `Server unavailable: ${err.message}`);
-                return;
-            }
-
-            renderProviders();
-
-            if (installs.length === 0) showNotFound('pi CLI');
-            else if (installs.length === 1) connectPi(installs[0]);
-            else pickInstall(installs, connectPi, 'pi CLI');
-            return;
-        }
-
-        // остальные провайдеры пока переключаются без реального подключения
-        const provider = App.PROVIDERS.find((p) => p.id === id);
-        App.connections.set(id, { model: provider.defaultModel });
-        renderProviders();
     });
 
-    providerList.addEventListener('change', (e) => {
-        const select = e.target.closest('[data-provider-select]');
-        if (select) {
-            App.connections.get(select.dataset.providerSelect).model = select.value;
-            if (select.dataset.providerSelect === 'claude') {
-                App.saveClaudeState();
-                App.renderSessionBarControls();
-            } else if (['codex', 'opencode', 'pi'].includes(select.dataset.providerSelect)) {
-                App.saveProviderState(select.dataset.providerSelect);
-                App.renderSessionBarControls();
-            }
-            return;
-        }
-
-        const effortSelect = e.target.closest('[data-provider-effort-select]');
-        if (!effortSelect) return;
-        const effortProviderId = effortSelect.dataset.providerEffortSelect;
-        App.connections.get(effortProviderId).effort = effortSelect.value;
-        App.saveProviderState(effortProviderId);
-        App.renderSessionBarControls();
-    });
+    // Смена модели в карточке приходит из самого каскада (modelCascadeRow →
+    // applyModelChoice) — своего слушателя на providerList больше не нужно.
 
     // ---------- экран для скриншотов Karandash ----------
 
@@ -1015,8 +744,41 @@
 
     // ---------- открытие окна настроек ----------
 
-    function openSettings() {
+    // свежий список моделей подтягиваем при каждом открытии окна — иначе
+    // новые free-модели из `opencode models --refresh` видны только после
+    // Disconnect/Connect вручную, а каскад выбора модели выглядит frozen
+    async function refreshConnectedModels() {
+        const state = App.connections.get(App.DEFAULT_AGENT);
+        if (!state?.installId) return;
+        try {
+            const result = await api('/api/agent/connect', { agent: App.DEFAULT_AGENT, id: state.installId });
+            if (!result?.ok || !Array.isArray(result.models) || !result.models.length) return;
+            const provider = App.PROVIDERS.find((p) => p.id === App.DEFAULT_AGENT);
+            provider.models = result.models;
+            // выбор человека (App.modelOf) главнее свежего списка: пока он в этом
+            // списке, обновление моделей его не двигает. Иначе падает на дефолт
+            // проекта, и этот откат тоже запоминается — иначе витрина, каскад
+            // в карточке и строка выбора в шапке сессии разошлись бы на
+            // следующем же открытии окна
+            const wanted = App.modelOf(App.DEFAULT_AGENT);
+            if (!result.models.includes(wanted)) {
+                provider.defaultModel = result.models.find((m) => m === App.DEFAULT_AGENT_MODEL)
+                    || result.models.find((m) => /-free$/i.test(m) || /:free$/i.test(m))
+                    || result.models.find((m) => m === 'opencode/big-pickle' || m === 'openrouter/openrouter/free')
+                    || result.models[0];
+                App.saveModelChoice(App.DEFAULT_AGENT, provider.defaultModel);
+            }
+            if (!result.models.includes(state.model)) state.model = provider.defaultModel || result.models[0];
+        } catch {
+            // сервер недоступен — показываем закэшированный список как есть
+        }
+    }
+
+    async function openSettings() {
         closeMenu();
+        // подписка на чужой выбор модели — с первого открытия окна (здесь
+        // window.App уже на месте, в отличие от верхнего уровня файла)
+        bindModelChoice();
         // окно всегда открывается на вкладке Providers, даже если в прошлый
         // раз закрыли на другой — соответствует текущему содержимому по умолчанию
         settingsTabItems.forEach((btn) => {
@@ -1032,14 +794,15 @@
         api('/api/telegram/state').then(renderTelegram);
         startTelegramRefresh();
         App.openModal(settingsModal);
+        // свежие модели дотягиваем уже поверх открытого окна: connect стоит
+        // секунд (opencode опрашивает models.dev), держать закрытое окно ради
+        // этого — заставлять человека ждать
+        await refreshConnectedModels();
+        if (!settingsModal.hidden) {
+            renderDefaultProviderRow();
+            renderProviders();
+            App.renderSessionBarControls();
+        }
     }
-
-    // что берёт app.js: обновление usage дергается из потока ответа Claude
-    window.Settings = {
-        refreshUsage(info) {
-            const usageRow = providerList.querySelector('.provider__usage');
-            if (usageRow) usageRow.innerHTML = App.renderUsageInline(info);
-        },
-    };
 
 })();

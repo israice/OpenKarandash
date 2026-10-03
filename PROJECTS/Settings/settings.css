@@ -1,6 +1,6 @@
 /* Настройки: кнопка-шестерёнка, её меню, окно настроек (список провайдеров,
-   лимиты подписки, экран для скриншотов Karandash, вкладка по умолчанию) и окно
-   выбора окружения Claude CLI. Разметку для всего этого создаёт settings.js,
+   экран для скриншотов Karandash, вкладка по умолчанию) и окно выбора окружения
+   CLI. Разметку для всего этого создаёт settings.js,
    стили общих модальных окон (.modal, .modal__*) остаются в index.html —
    ими пользуются и версии, и файловый редактор. */
 
@@ -62,43 +62,6 @@
     background: #2c2f36;
 }
 
-/* ---------- инлайн-строка usage провайдера (над выбором модели) ---------- */
-
-.provider__usage {
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 1px solid #26292f;
-    font-size: 0.82rem;
-}
-
-.provider__usage-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 2px 0;
-}
-
-.provider__usage-row:not(:first-child) {
-    border-top: 1px solid #2e3138;
-    margin-top: 4px;
-    padding-top: 6px;
-}
-
-.provider__usage-label { color: #8b909a; }
-
-.provider__usage-value { font-weight: 600; color: #e9e9ec; }
-
-.provider__usage-reset {
-    padding-bottom: 2px;
-    font-size: 0.72rem;
-    color: #6a6f78;
-}
-
-.provider__usage-empty {
-    padding: 4px 0;
-    color: #8b909a;
-}
-
 /* окно настроек не центрируется по вертикали — иначе смена вкладки на менее
    высокую (Router/Network/Sandglass) утягивает весь диалог вниз вслед за
    центровкой; верх диалога всегда стоит сразу под топбаром */
@@ -106,24 +69,9 @@
     align-items: flex-start;
 }
 
-/* ---------- строка переключателя режима выполнения (CLI / Omniroute) ---------- */
-
-.settings-mode-row {
-    margin: 0 0 14px;
-}
-
-/* .segmented/.segmented__thumb/.segmented__option — общие классы из chat.css
-   (переключатель Chat/Action/Loop композера). Там расчёт ширины «пилюли» под
-   три опции; здесь их только две — CLI и Omniroute (последняя пока Coming
-   Soon, как Loop), поэтому ширина считается отдельно */
-.segmented--pair .segmented__thumb {
-    width: calc((100% - 8px) / 2);
-}
-
-/* заголовок «Settings» и переключатель режима видны только на вкладке
-   Providers (скрываются из settings.js через hidden); когда заголовок
-   скрыт, кнопка закрытия остаётся прижатой к правому краю, а не уезжает
-   влево вслед за пропавшим текстом */
+/* заголовок «Settings» виден только на вкладке Providers (скрывается из
+   settings.js через hidden); когда заголовок скрыт, кнопка закрытия остаётся
+   прижатой к правому краю, а не уезжает влево вслед за пропавшим текстом */
 .modal__header--collapsed { justify-content: flex-end; }
 
 /* ---------- панель табов окна настроек ---------- */
@@ -272,52 +220,10 @@
 
 .provider__button--connect:hover { background: #33598a; }
 
-/* блок модели — отдельная карточка под провайдером после подключения */
-.provider__model {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px 10px;
-}
-
-.provider__model-label {
-    font-size: 0.78rem;
-    color: #8b909a;
-    white-space: nowrap;
-}
-
-.provider__select {
-    flex: 1;
-    min-width: 0;
-    padding: 4px 10px;
-    border: 1px solid transparent;
-    border-radius: 999px;
-    background: #22252b;
-    font: inherit;
-    font-size: 0.78rem;
-    color: #9a9ea6;
-    text-align: center;
-    text-align-last: center;
-    cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-}
-
-.provider__select:hover {
-    background: #2a2d34;
-    color: #f2f2f4;
-}
-
-.provider__select:focus-visible {
-    outline: none;
-    border-color: #6ea8fe;
-    color: #f2f2f4;
-}
-
-.provider__select--effort,
-.provider__select--source {
-    flex: 0 0 auto;
-    width: auto;
-}
+/* ряд выбора модели — карточка под провайдером после подключения; сам ряд
+   (блок модели, подписи уровней и селекты каскада) живёт в общей части
+   страницы SYSTEM/styles/model-cascade.css: та же строка стоит ещё и в
+   шапке сессии (PROJECTS/Sessions) */
 
 /* текстовые поля рядом с .provider__select: тот же ряд, но без вида селекта —
    курсор и выравнивание текста должны быть как у обычного поля ввода */
@@ -343,6 +249,7 @@
     border-color: #6ea8fe;
 }
 
+/* ряд выбора модели под карточкой: отступ от её соседей */
 .provider__model + .provider__model {
     margin-top: 10px;
 }
@@ -350,28 +257,6 @@
 /* блок модели/ключа под строкой провайдера: отступ от шапки карточки */
 .provider__row + .provider__model {
     margin-top: 12px;
-}
-
-/* поле ключа (pi/OpenRouter): во всю ширину карточки, с рамкой и
-   нормальным внутренним отступом — узкая «таблетка» выглядела прижатой */
-.provider__model--key {
-    padding-top: 12px;
-    border-top: 1px solid #23262c;
-}
-
-.provider__model--key .provider__input {
-    padding: 9px 12px;
-    border: 1px solid #2e3138;
-    border-radius: 8px;
-    background: #1b1d22;
-    font-size: 0.82rem;
-}
-
-.provider__model--key .provider__input:hover { background: #20232a; }
-
-.provider__model--key .provider__input:focus-visible {
-    border-color: #6ea8fe;
-    box-shadow: 0 0 0 3px rgba(110, 168, 254, 0.15);
 }
 
 /* ---------- подключение Telegram ---------- */
@@ -486,7 +371,7 @@
     border: 1px solid #333;
 }
 
-/* ---------- выбор окружения Claude CLI ---------- */
+/* ---------- выбор окружения CLI ---------- */
 
 .picker {
     display: flex;

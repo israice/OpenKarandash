@@ -14,12 +14,17 @@
     <link rel="stylesheet" href="SYSTEM/styles/base.css">
     <link rel="stylesheet" href="SYSTEM/styles/views.css">
     <link rel="stylesheet" href="SYSTEM/styles/modal.css">
-    <link rel="stylesheet" href="SYSTEM/styles/chat.css">
+    <!-- Словарь сообщений ленты общий на три отображения (Sessions, Feed,
+         Flow), поэтому лежит здесь, а не в папке вкладки. -->
     <link rel="stylesheet" href="SYSTEM/styles/messages.css">
+    <!-- Переключатель режима отправки общий с попапом Karandash. -->
+    <link rel="stylesheet" href="SYSTEM/styles/mode-switch.css">
     <link rel="stylesheet" href="SYSTEM/styles/task-card.css">
-    <link rel="stylesheet" href="SYSTEM/styles/sessions.css">
     <!-- Кнопка Karandash живёт целиком в PROJECTS/Karandash: и стили, и скрипт. -->
     <link rel="stylesheet" href="PROJECTS/Karandash/karandash.css">
+    <!-- Вкладка Sessions живёт целиком в PROJECTS/Sessions: разметку строит
+         sessions-view.js, стили лежат рядом. -->
+    <link rel="stylesheet" href="PROJECTS/Sessions/sessions.css">
     <!-- Редактор файла живёт целиком в PROJECTS/Graph: стили, скрипт и серверная половина. -->
     <link rel="stylesheet" href="PROJECTS/Graph/file-editor.css">
     <link rel="stylesheet" href="PROJECTS/Graph/vendor/easymde/easymde.min.css">
@@ -40,6 +45,12 @@
     </script>
     <!-- Вкладка Kanban живёт целиком в PROJECTS/Kanban: и стили, и скрипт. -->
     <link rel="stylesheet" href="PROJECTS/Kanban/kanban.css">
+
+    <!-- Каскад выбора модели: строка из четырёх уровней стоит и в настройках,
+         и в шапке сессии — поэтому стили у неё общие, а не в одной из папок.
+         Стоят на месте прежних правил каскада из settings.css, чтобы порядок
+         <link> не изменился. -->
+    <link rel="stylesheet" href="SYSTEM/styles/model-cascade.css">
 
     <!-- Настройки живут целиком в PROJECTS/Settings: и стили, и скрипт. -->
     <link rel="stylesheet" href="PROJECTS/Settings/settings.css">
@@ -181,7 +192,7 @@
             </section>
         </div>
 
-        <div class="chat__list" id="homeTaskList">
+        <div class="chat-list" id="homeTaskList">
             <div class="task-card">
                 <div class="task-card__body">
                     <div class="task-card__from">
@@ -334,9 +345,9 @@
                         </div>
                         <div class="flow-node__body">Receives tasks and distributes them across the board columns.</div>
                         <div class="flow-node__footer flow-node__footer--controls">
-                            <select class="chat__session-select flow-node__control" id="flowNodeSecretaryProvider" aria-label="Provider"></select>
-                            <select class="chat__session-select flow-node__control" id="flowNodeSecretaryModel" aria-label="Model"></select>
-                            <select class="chat__session-select flow-node__control" id="flowNodeSecretaryEffort" aria-label="Effort"></select>
+                            <select class="flow-node__control" id="flowNodeSecretaryProvider" aria-label="Provider"></select>
+                            <select class="flow-node__control" id="flowNodeSecretaryModel" aria-label="Model"></select>
+                            <select class="flow-node__control" id="flowNodeSecretaryEffort" aria-label="Effort"></select>
                         </div>
                         <button type="button" class="flow-node__add-bottom" title="Add a node (or drag onto another node to connect)">+</button>
                         <button type="button" class="flow-node__add-right" title="Add a node (or drag onto another node to connect)">+</button>
@@ -409,9 +420,9 @@
                                      нод: классы общие, поэтому заполняет их та же
                                      populateNodeAgentSelects в flow.js -->
                                 <div class="flow-node__footer flow-node__footer--controls">
-                                    <select class="chat__session-select flow-node__control flow-node__provider" aria-label="Provider"></select>
-                                    <select class="chat__session-select flow-node__control flow-node__model" aria-label="Model"></select>
-                                    <select class="chat__session-select flow-node__control flow-node__effort" aria-label="Effort"></select>
+                                    <select class="flow-node__control flow-node__provider" aria-label="Provider"></select>
+                                    <select class="flow-node__control flow-node__model" aria-label="Model"></select>
+                                    <select class="flow-node__control flow-node__effort" aria-label="Effort"></select>
                                 </div>
                             </div>
                             <!-- правая колонка в режиме MCP: список серверов, которыми
@@ -529,7 +540,7 @@
                     </template>
                     <!-- личная стартовая нода бэкенд-разработчика: тот же двухколоночный
                          каркас, что у QA (шаблон/меню/панели), но всё содержимое своё —
-                         профиль здесь настоящий каталог Hermes, а не pi (DOCS/decisions/033).
+                         профиль здесь настоящий каталог профиля, а не pi.
                          Панели с иконкой 📄 ведут в PROJECTS/Flow/profiles/Backend developer/
                          config.yaml или SOUL.md — один физический файл на несколько панелей,
                          в отличие от QA, где у каждой панели свой файл -->
@@ -588,9 +599,9 @@
                                 </div>
                                 <div class="flow-node__body">The starting point of the Backend flow: everything the backend developer builds grows from this node.</div>
                                 <div class="flow-node__footer flow-node__footer--controls">
-                                    <select class="chat__session-select flow-node__control flow-node__provider" aria-label="Provider"></select>
-                                    <select class="chat__session-select flow-node__control flow-node__model" aria-label="Model"></select>
-                                    <select class="chat__session-select flow-node__control flow-node__effort" aria-label="Effort"></select>
+                                    <select class="flow-node__control flow-node__provider" aria-label="Provider"></select>
+                                    <select class="flow-node__control flow-node__model" aria-label="Model"></select>
+                                    <select class="flow-node__control flow-node__effort" aria-label="Effort"></select>
                                 </div>
                             </div>
                             <div class="flow-node__panel flow-node__panel--mcp" hidden>
@@ -635,7 +646,7 @@
                                     <span>Permissions</span>
                                     <button type="button" class="flow-node__panel-file" data-file="PROJECTS/Flow/profiles/Backend developer/config.yaml" title="Open config.yaml" aria-label="Open config.yaml">📄</button>
                                 </div>
-                                <div class="flow-node__panel-hint">What am I allowed to do: Hermes's approval mode, timeouts and what requires confirmation before it runs.</div>
+                                <div class="flow-node__panel-hint">What am I allowed to do: approval mode, timeouts and what requires confirmation before it runs.</div>
                                 <div class="flow-node__permissions-list"></div>
                             </div>
                             <div class="flow-node__panel flow-node__panel--model" hidden>
@@ -732,9 +743,9 @@
                                 </div>
                                 <div class="flow-node__body"></div>
                                 <div class="flow-node__footer flow-node__footer--controls">
-                                    <select class="chat__session-select flow-node__control flow-node__provider" aria-label="Provider"></select>
-                                    <select class="chat__session-select flow-node__control flow-node__model" aria-label="Model"></select>
-                                    <select class="chat__session-select flow-node__control flow-node__effort" aria-label="Effort"></select>
+                                    <select class="flow-node__control flow-node__provider" aria-label="Provider"></select>
+                                    <select class="flow-node__control flow-node__model" aria-label="Model"></select>
+                                    <select class="flow-node__control flow-node__effort" aria-label="Effort"></select>
                                 </div>
                             </div>
                             <div class="flow-node__panel flow-node__panel--mcp" hidden>
@@ -779,7 +790,7 @@
                                     <span>Permissions</span>
                                     <button type="button" class="flow-node__panel-file" title="Open profile file" aria-label="Open profile file">📄</button>
                                 </div>
-                                <div class="flow-node__panel-hint">What am I allowed to do: Hermes's approval mode, timeouts and what requires confirmation before it runs.</div>
+                                <div class="flow-node__panel-hint">What am I allowed to do: approval mode, timeouts and what requires confirmation before it runs.</div>
                                 <div class="flow-node__permissions-list"></div>
                             </div>
                             <div class="flow-node__panel flow-node__panel--model" hidden>
@@ -818,7 +829,7 @@
                     <template id="flowNodeTemplate">
                         <div class="flow-node">
                             <div class="flow-node__footer flow-node__footer--controls">
-                                <select class="chat__session-select flow-node__control flow-node__type" aria-label="Node type" style="color:#5aa9ff">
+                                <select class="flow-node__control flow-node__type" aria-label="Node type" style="color:#5aa9ff">
                                     <option value="question" style="color:#5aa9ff">Quastion</option>
                                     <option value="action" style="color:#4caf50">Action</option>
                                     <option value="ask_human" style="color:#ff9800">Ask Human</option>
@@ -838,9 +849,9 @@
                                 </span>
                             </div>
                             <div class="flow-node__footer flow-node__footer--controls">
-                                <select class="chat__session-select flow-node__control flow-node__provider" aria-label="Provider"></select>
-                                <select class="chat__session-select flow-node__control flow-node__model" aria-label="Model"></select>
-                                <select class="chat__session-select flow-node__control flow-node__effort" aria-label="Effort"></select>
+                                <select class="flow-node__control flow-node__provider" aria-label="Provider"></select>
+                                <select class="flow-node__control flow-node__model" aria-label="Model"></select>
+                                <select class="flow-node__control flow-node__effort" aria-label="Effort"></select>
                             </div>
                             <div class="flow-node__header flow-node__header--stacked">
                                 <span class="flow-node__title-line">
@@ -886,66 +897,14 @@
     <!-- Вкладка Book разметки в этом файле не имеет: и панель со списком
          разделов, и панель README справа строит PROJECTS/Book/book-tab.js. -->
 
-    <div class="view view--chat" id="chatView" hidden>
-        <nav class="side-nav chat__sessions" id="sessionsPanel" aria-label="Sessions">
-            <h2 class="side-nav__title side-nav__title--nav">
-                <span>Sessions</span>
-            </h2>
-            <button type="button" class="session-new" id="sessionNew">+ New</button>
-            <!-- разметку строит сервер (PROJECTS/Chat/chat-sessions.eta), htmx
-                 подменяет #sessionList по hx-swap-oob; hx-swap="none" на самом
-                 инициаторе, чтобы этот скрытый div не подменился вместо списка -->
-            <div hidden
-                 hx-get="/api/fragment/chat-sessions"
-                 hx-trigger="load, every 5s, sessions-changed from:body"
-                 hx-swap="none"></div>
-            <ul class="session-list" id="sessionList"></ul>
-            <button type="button" class="session-reset" id="sessionReset">Reset All</button>
-            <div class="session-resize" id="sessionResize" aria-hidden="true"></div>
-        </nav>
-
-        <div class="chat__main">
-            <div class="chat__session-bar" id="chatSessionBar" hidden>
-                <div class="chat__session-controls">
-                    <select class="chat__session-select flow-node__control" id="chatSessionProviderSelect" aria-label="Provider for this session"></select>
-                    <select class="chat__session-select flow-node__control" id="chatSessionModelSelect" aria-label="Model for this session"></select>
-                    <select class="chat__session-select flow-node__control" id="chatSessionEffortSelect" aria-label="Effort for this session"></select>
-                </div>
-            </div>
-            <div class="chat__messages" id="chatMessages">
-                <p class="chat__empty" id="chatEmpty"></p>
-                <div class="chat__list" id="chatList"></div>
-            </div>
-
-            <div class="chat__file-editor" id="chatFileEditor" hidden>
-                <div class="chat__file-editor-header">
-                    <h2 class="chat__file-editor-title" id="chatFileEditorTitle"></h2>
-                    <p class="file-modal__meta" id="chatFileEditorMeta"></p>
-                </div>
-                <div class="file-modal__links" id="chatFileEditorLinks"></div>
-                <textarea class="file-modal__text" id="chatFileEditorText" spellcheck="false" aria-label="File contents"></textarea>
-                <div class="file-modal__footer">
-                    <span class="file-modal__status" id="chatFileEditorStatus"></span>
-                    <button type="button" class="file-modal__save" id="chatFileEditorSave">Save</button>
-                </div>
-            </div>
-
-            <div class="chat__gauges" id="chatGauges">
-                <span class="chat__gauge" id="chatGaugeContext">Context: —</span>
-            </div>
-
-            <form class="chat__composer" id="chatComposer">
-                <textarea class="chat__input" id="chatInput" rows="1" placeholder="Write a message..." aria-label="Message"></textarea>
-                <div class="segmented" id="chatMode" role="radiogroup" aria-label="Send mode">
-                    <span class="segmented__thumb" aria-hidden="true"></span>
-                    <button type="button" class="segmented__option" role="radio" aria-checked="false" data-mode="Chat" tabindex="-1">Chat</button>
-                    <button type="button" class="segmented__option" role="radio" aria-checked="true" data-mode="Action" tabindex="0">Action</button>
-                    <button type="button" class="segmented__option segmented__option--soon" role="radio" aria-checked="false" data-mode="Loop" tabindex="-1" disabled title="Coming Soon">Loop</button>
-                </div>
-                <button type="submit" class="chat__send">Send</button>
-            </form>
-        </div>
-    </div>
+    <!-- Вкладка Sessions разметки в этом файле не имеет: и панель со списком
+         сессий, и лента с композером строит PROJECTS/Sessions/sessions-view.js,
+         стили лежат рядом (sessions.css). Здесь только якорь вставки: разделы
+         стоят подряд в body, и вставляться надо на своё место, а не в конец.
+         Якорь один на всех и лежит в разметке страницы, а не внутри чужого
+         файла: вкладку переименовали — и молчащий выход здесь уже ронял всё
+         переключение вкладок, а не только нас. -->
+    <div id="chatAnchor" hidden></div>
 
     <div class="shot-lightbox" id="shotLightbox" hidden>
         <img id="shotLightboxImg" src="" alt="">
@@ -995,37 +954,41 @@
     <!-- htmx: серверные фрагменты подменяют куски страницы без своего JS.
          Файл ставится через npm (package.json), поэтому путь ведёт в node_modules -->
     <script src="node_modules/htmx.org/dist/htmx.min.js" defer></script>
-    <script src="PROJECTS/Settings/settings.js" defer></script>
+    <script src="PROJECTS/Settings/settings.js" data-hot-src="PROJECTS/Settings/settings.js" defer></script>
     <!-- 3D-рендер песочных часов вкладки Sandglass: ES-модуль (import three), поэтому type="module" -->
-    <script src="PROJECTS/Settings/settings-sandglass.js" type="module"></script>
+    <script src="PROJECTS/Settings/settings-sandglass.js" data-hot-src="PROJECTS/Settings/settings-sandglass.js" type="module"></script>
+    <!-- Разметку вкладки Sessions строит sessions-view.js — раньше app.js: тот на
+         старте ищет #chatView для App.VIEWS. Разметка разделов, чей скрипт сам
+         её вставляет (Book, Telegram, Sessions), обязана прийти раньше ядра. -->
+    <script src="PROJECTS/Sessions/sessions-view.js" data-hot-src="PROJECTS/Sessions/sessions-view.js" defer></script>
     <!-- book-tab.js раньше app.js: тот на старте ищет #bookView в DOM -->
-    <script src="PROJECTS/Book/book-tab.js" defer></script>
+    <script src="PROJECTS/Book/book-tab.js" data-hot-src="PROJECTS/Book/book-tab.js" defer></script>
     <!-- telegram.js раньше app.js: тот на старте ищет #telegramView в DOM -->
-    <script src="PROJECTS/Telegram/telegram.js" defer></script>
-    <!-- ядро и вкладка Chat — модули (DOCS/decisions/022): app.js импортирует
-         SYSTEM/providers.js, chat.js — свои ./chat-*.js. Модульные скрипты без
-         async выполняются в порядке документа наравне с defer, поэтому цепочка
-         book-tab.js → app.js → chat.js → остальные файлы сохраняется -->
+    <script src="PROJECTS/Telegram/telegram.js" data-hot-src="PROJECTS/Telegram/telegram.js" defer></script>
+    <!-- ядро и вкладка Sessions — модули (DOCS/decisions/022): app.js импортирует
+         SYSTEM/providers.js, sessions.js — свои ./sessions-*.js. Модульные скрипты
+         без async выполняются в порядке документа наравне с defer, поэтому цепочка
+         sessions-view.js → app.js → sessions.js → остальные файлы сохраняется -->
     <!-- общий механизм: пометку суждения рисуют все три отображения ленты -->
-    <script src="SYSTEM/judgment-badge.js" defer></script>
+    <script src="SYSTEM/judgment-badge.js" data-hot-src="SYSTEM/judgment-badge.js" defer></script>
     <!-- тег модели над ответом — тем же порядком, до всех потребителей -->
-    <script src="SYSTEM/model-tag.js" defer></script>
-    <script src="SYSTEM/app.js" type="module"></script>
-    <script src="PROJECTS/Chat/chat.js" type="module"></script>
-    <script src="PROJECTS/Graph/file-editor.js" defer></script>
-    <script src="PROJECTS/Graph/vendor/easymde/easymde.min.js" defer></script>
-    <script src="PROJECTS/Graph/md-editors.js" defer></script>
-    <script src="PROJECTS/Flow/flow.js" defer></script>
+    <script src="SYSTEM/model-tag.js" data-hot-src="SYSTEM/model-tag.js" defer></script>
+    <script src="SYSTEM/app.js" data-hot-src="SYSTEM/app.js" type="module"></script>
+    <script src="PROJECTS/Sessions/sessions.js" data-hot-src="PROJECTS/Sessions/sessions.js" type="module"></script>
+    <script src="PROJECTS/Graph/file-editor.js" data-hot-src="PROJECTS/Graph/file-editor.js" defer></script>
+    <script src="PROJECTS/Graph/vendor/easymde/easymde.min.js" data-hot-src="PROJECTS/Graph/vendor/easymde/easymde.min.js" defer></script>
+    <script src="PROJECTS/Graph/md-editors.js" data-hot-src="PROJECTS/Graph/md-editors.js" defer></script>
+    <script src="PROJECTS/Flow/flow.js" data-hot-src="PROJECTS/Flow/flow.js" defer></script>
     <!-- 3D-персонаж в ноде QA: ES-модуль (import three), поэтому type="module" -->
-    <script src="PROJECTS/Flow/flow-minion.js" type="module"></script>
-    <script src="PROJECTS/Flow/flow-session-sync.js" defer></script>
-    <script src="PROJECTS/Kanban/kanban.js" defer></script>
-    <script src="PROJECTS/Karandash/karandash.js" defer></script>
-    <script src="SYSTEM/tabs.js" defer></script>
-    <script src="SYSTEM/new-button.js" defer></script>
-    <script src="SYSTEM/toolbar-reorder.js" defer></script>
-    <script src="SYSTEM/toolbar-menu.js" defer></script>
-    <script src="SYSTEM/sidebar-resize.js" defer></script>
-    <script src="SYSTEM/home-tasks.js" defer></script>
+    <script src="PROJECTS/Flow/flow-minion.js" data-hot-src="PROJECTS/Flow/flow-minion.js" type="module"></script>
+    <script src="PROJECTS/Flow/flow-session-sync.js" data-hot-src="PROJECTS/Flow/flow-session-sync.js" defer></script>
+    <script src="PROJECTS/Kanban/kanban.js" data-hot-src="PROJECTS/Kanban/kanban.js" defer></script>
+    <script src="PROJECTS/Karandash/karandash.js" data-hot-src="PROJECTS/Karandash/karandash.js" defer></script>
+    <script src="SYSTEM/tabs.js" data-hot-src="SYSTEM/tabs.js" defer></script>
+    <script src="SYSTEM/new-button.js" data-hot-src="SYSTEM/new-button.js" defer></script>
+    <script src="SYSTEM/toolbar-reorder.js" data-hot-src="SYSTEM/toolbar-reorder.js" defer></script>
+    <script src="SYSTEM/toolbar-menu.js" data-hot-src="SYSTEM/toolbar-menu.js" defer></script>
+    <script src="SYSTEM/sidebar-resize.js" data-hot-src="SYSTEM/sidebar-resize.js" defer></script>
+    <script src="SYSTEM/home-tasks.js" data-hot-src="SYSTEM/home-tasks.js" defer></script>
 </body>
 </html>

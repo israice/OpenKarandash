@@ -70,8 +70,9 @@ Stop-Process -Id <pid> -Force
 
 | Файл | Что в нём | Что публикует |
 |---|---|---|
-| `SYSTEM/app.js` | ядро: `api()`, модалка, лайтбокс, `App.VIEWS`, восстановление подключения CLI, `escapeHtml`. Подключён как `<script type="module">`, импортирует `./providers.js` (`DOCS/decisions/022`) | `window.App` |
-| `SYSTEM/providers.js` | состояние провайдеров и подключений (`PROVIDERS`, `connections`, сохранение в `localStorage`), лимиты и usage, шапка сессии с моделью и effort, датчик контекста. Импортируется из `app.js` и `PROJECTS/Chat/chat*.js`, своего `window.*` не публикует | ES-экспорты |
+| `SYSTEM/app.js` | ядро: `api()`, модалка, лайтбокс, `App.VIEWS`, восстановление подключения CLI, `escapeHtml`. Подключён как `<script type="module">`, импортирует `./providers.js` и `./model-cascade.js` (`DOCS/decisions/022`) | `window.App` |
+| `SYSTEM/providers.js` | состояние провайдеров и подключений (`PROVIDERS`, `connections`, сохранение в `localStorage`), лимиты и usage, датчик контекста. Импортируется из `app.js` и `PROJECTS/Chat/chat*.js`, своего `window.*` не публикует | ES-экспорты |
+| `SYSTEM/model-cascade.js` | выбор агента и модели одним каскадом из четырёх уровней (CLI / Gateway / Provider / Model) и строка этого каскада в шапке сессии. Строка стоит в трёх местах — витрина и карточка в Settings, шапка в Sessions, — и пишет выбор одним `applyModelChoice`; смена в любом из них приходит остальным объявлением `onModelChoice`, а сохранённый выбор переживает перезагрузку. Правила — `SYSTEM/styles/model-cascade.css` | ES-экспорты |
 | `PROJECTS/Chat/chat.js` | вход вкладки Chat: режимы отправки, композер, инициализация панели/ленты/потока. Подключён как `<script type="module">` сразу после `app.js`, импортирует ядро из него (обратный импорт дал бы цикл) и сам дописывает свои функции в `window.App` | дополняет `window.App` |
 | `PROJECTS/Chat/chat-state.js` | общее изменяемое состояние вкладки Chat одним объектом (`export const state`), ничего не импортирует | `state` |
 | `PROJECTS/Chat/chat-sessions.js` | панель сессий: список, выбор и удаление, черновики, индикатор «выполняется», занятость композера | ES-экспорты |

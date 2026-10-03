@@ -4,13 +4,14 @@
 // остальные файлы (tabs.js, Flow, Kanban, Karandash, Settings, страницы кнопки
 // «+») берут общее ядро. Подключён как <script type="module">: модульные
 // скрипты без async выполняются в порядке документа вместе с defer, поэтому
-// цепочка book-tab.js → app.js → PROJECTS/Sessions/chat.js → остальные сохраняется.
+// цепочка sessions-view.js → app.js → PROJECTS/Sessions/sessions.js → остальные
+// сохраняется.
 //
 // Провайдеры (состояние подключения, лимиты, шапка сессии) — SYSTEM/providers.js,
-// в window.App они попадают отсюда. Вкладка Chat — PROJECTS/Chat/chat.js: она
+// в window.App они попадают отсюда. Вкладка Sessions — PROJECTS/Sessions/sessions.js: она
 // грузится своим тегом сразу после этого файла, импортирует ядро отсюда
 // (обратный импорт дал бы цикл) и сама дописывает в window.App свои функции
-// (setChatSessionId, openSession, startCommentSession, …) — набор имён
+// (setSessionId, openSession, startCommentSession, …) — набор имён
 // window.App тот же, что был до разъезда.
 //
 // Само окно настроек и вся его разметка — в PROJECTS/Settings/settings.js, он
@@ -18,9 +19,15 @@
 // сразу находить #settingsModal/#pickerModal в DOM.
 import {
     PROVIDERS, connections, saveProviderState, saveActiveProvider, loadActiveProvider,
-    activateExclusive, renderSessionBarControls, DEFAULT_AGENT, DEFAULT_AGENT_MODEL,
-    getActiveProviderId, getActiveModel,
+    activateExclusive, DEFAULT_AGENT, DEFAULT_AGENT_MODEL,
 } from './providers.js';
+// Каскад выбора модели и строка выбора в шапке сессии — из model-cascade.js:
+// витрина в настройках, карточка провайдера и шапка сессии берут одну и ту же
+// строку и пишут выбор одним и тем же способом
+import {
+    renderSessionBarControls, getActiveProviderId, getActiveModel,
+    modelCascadeRow, applyModelChoice, modelOf, saveModelChoice, onModelChoice,
+} from './model-cascade.js';
 
 // общий помощник для POST-запросов к серверу — им пользуются и остальные
 // файлы через window.App.api, каждый второй экран так или иначе ходит на сервер
@@ -105,7 +112,7 @@ export function confirmModal(message, opts = {}) {
     });
 }
 
-// лайтбокс лежит в index.html вне #chatView — им пользуются и task-card__shot,
+// лайтбокс лежит в index.html вне вкладок — им пользуются и task-card__shot,
 // и screenshotScreenPreview (Karandash), и миниатюры сессий. Узлы заполняет init()
 let shotLightbox = null;
 let shotLightboxImg = null;
@@ -213,13 +220,11 @@ function init() {
         telegram: document.getElementById('telegramView'),
     };
 
-    // ширина нативного скроллбара нужна, чтобы composer/session-bar совпадали по ширине
-    // с .chat__messages, где место под скроллбар зарезервировано через scrollbar-gutter
-    const sbProbe = document.createElement('div');
-    sbProbe.style.cssText = 'position:absolute;top:-9999px;width:100px;height:100px;overflow:scroll;';
-    document.body.appendChild(sbProbe);
-    document.documentElement.style.setProperty('--sbw', (sbProbe.offsetWidth - sbProbe.clientWidth) + 'px');
-    sbProbe.remove();
+    // Ширину нативного скроллбара мерять не нужно: лента скроллится сама
+    // (scrollbar-width: none), а композер и шапка центрируются по своей
+    // ширине. Раньше здесь мерилась ширина скроллбара и вычиталась из
+    // композера — на Windows, где скроллбар накладывается, это уводило
+    // композер на 15px влево от ленты (--sbw).
 
     // ---------- горячая перезагрузка скриптов ----------
     // Правка клиентского скрипта приходит событием `script:<путь>`. Раздел, который
@@ -267,9 +272,9 @@ function init() {
     }
 
     // что берут вынесенные файлы: вкладки (tabs.js), Flow, Kanban, Karandash, Settings.
-    // Остальные имена (setChatSessionId, renderObsConnection, chatMessages,
-    // deselectSession, startCommentSession, openSession, getChatSessionId)
-    // дописывает PROJECTS/Sessions/chat.js — он грузится следующим тегом
+    // Остальные имена (setSessionId, renderObsConnection, chatMessages,
+    // deselectSession, startCommentSession, openSession, getSessionId)
+    // дописывает PROJECTS/Sessions/sessions.js — он грузится следующим тегом
     window.App = {
         BOARD_COLUMNS,
         VIEWS,
@@ -285,6 +290,11 @@ PROVIDERS,
         renderSessionBarControls,
         getActiveProviderId,
         getActiveModel,
+        modelCascadeRow,
+        applyModelChoice,
+        modelOf,
+        saveModelChoice,
+        onModelChoice,
         openModal,
         confirmModal,
         closeModal,

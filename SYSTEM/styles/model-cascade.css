@@ -1,0 +1,64 @@
+/* Каскад выбора модели — четыре выпадающих списка в ряд (CLI / Gateway /
+   Provider / Model). Строка стоит в трёх местах: витрина и карточка провайдера
+   в окне настроек (PROJECTS/Settings) и строка выбора в шапке сессии
+   (PROJECTS/Sessions), поэтому и стили здесь, в общей части страницы: правила
+   одни на все три места, а сам каскад и его сохранение живут в
+   SYSTEM/providers.js. */
+
+/* блок модели — ряд, который переносится целиком, а не ломается посередине */
+.provider__model {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+}
+
+/* на узком окне уровни переносятся по одному */
+.provider__model--cascade {
+    gap: 6px 10px;
+}
+
+.provider__model--cascade .provider__select--source {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.provider__model-label {
+    font-size: 0.78rem;
+    color: #8b909a;
+    white-space: nowrap;
+}
+
+.provider__select {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 10px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: #22252b;
+    font: inherit;
+    font-size: 0.78rem;
+    color: #9a9ea6;
+    text-align: center;
+    text-align-last: center;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.provider__select:hover {
+    background: #2a2d34;
+    color: #f2f2f4;
+}
+
+.provider__select:focus-visible {
+    outline: none;
+    border-color: #6ea8fe;
+    color: #f2f2f4;
+}
+
+/* уровень каскада: ширина по содержимому, а не во всю свободную строку —
+   четыре уровня идут плотно друг к другу */
+.provider__select--source {
+    flex: 0 0 auto;
+    width: auto;
+}

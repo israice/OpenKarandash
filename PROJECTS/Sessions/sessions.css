@@ -1,0 +1,407 @@
+/* Вкладка Sessions: панель списка сессий слева, лента и композер справа.
+   Разметку строит sessions-view.js, этот файл — её единственное место
+   жительства: правка подменяется точечно, без перезагрузки страницы.
+
+   Правило одно на всю раскладку: вкладка — это .view--sessions (flex на всю
+   высоту окна), панель и основная колонка делят её пополам через flex, а
+   лента забирает всю оставшуюся высоту и прокручивается внутри себя. Всё,
+   что не влезает по этой схеме, — лишнее. */
+
+/* ---------- раскладка ---------- */
+
+.view--sessions {
+    display: flex;
+    height: 100vh;
+}
+
+.chat-main {
+    --chat-content-width: 720px;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    /* правый отступ учитывает значок версии (position: fixed, .app-version
+       в base.css), иначе композер заканчивался бы под ним */
+    padding: calc(var(--topbar-height) + 4px) 90px 16px 16px;
+}
+
+/* ---------- панель списка сессий ---------- */
+
+.sessions-panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 320px;
+    flex: none;
+    padding: calc(var(--topbar-height) + 4px) 12px 16px;
+    border-right: 1px solid #2e3138;
+    background: #16181c;
+    /* панель не прокручивается вся: прокручивается список внутри неё, а
+       заголовок и кнопки остаются на месте */
+    overflow: hidden;
+}
+
+.sessions-panel__title {
+    margin: 0 0 8px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-align: center;
+    color: #7c818b;
+}
+
+.sessions-panel__new,
+.sessions-panel__reset {
+    padding: 8px 12px;
+    border-radius: 7px;
+    background: #22252b;
+    font: inherit;
+    font-size: 0.82rem;
+    text-align: center;
+    cursor: pointer;
+}
+
+.sessions-panel__new {
+    margin-bottom: 10px;
+    border: 1px solid #2e3138;
+    color: #e9e9ec;
+}
+
+.sessions-panel__new:hover { background: #2a2e35; }
+
+.sessions-panel__reset {
+    margin-top: 10px;
+    border: 1px solid #4a2c2c;
+    color: #e08787;
+}
+
+.sessions-panel__reset:hover { background: #2e2223; }
+
+.sessions-panel__new:focus-visible,
+.sessions-panel__reset:focus-visible,
+.session-item:focus-visible,
+.session-copy:focus-visible,
+.session-delete:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: 2px;
+}
+
+/* ручка ширины панели: зажать и тянуть (SYSTEM/sidebar-resize.js) */
+.panel-resize {
+    position: absolute;
+    top: 0;
+    right: -4px;
+    bottom: 0;
+    width: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 5;
+    cursor: col-resize;
+}
+
+.panel-resize::before {
+    content: '';
+    width: 3px;
+    height: 32px;
+    border-radius: 2px;
+    background: #3a3d45;
+}
+
+.panel-resize:hover::before,
+.panel-resize--active::before { background: #6ea8fe; }
+
+/* ---------- список сессий ---------- */
+
+.session-list {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+    scrollbar-width: none;
+}
+
+.session-list::-webkit-scrollbar { display: none; }
+
+.session-empty {
+    padding: 8px 10px;
+    font-size: 0.78rem;
+    color: #6a6f78;
+}
+
+.session-row { position: relative; }
+
+.session-item {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 7px;
+    background: none;
+    font: inherit;
+    color: #c3c7ce;
+    text-align: left;
+    cursor: pointer;
+}
+
+.session-item:hover { background: #22252b; }
+
+.session-item[aria-current="true"] {
+    background: #2b4d78;
+    color: #f2f2f4;
+}
+
+.session-item__thumb {
+    flex: none;
+    /* 96px в 210px-панели оставляли заголовку ~72px — там не помещалось и
+       двух полных строк текста, слова переносились раньше края. 40px даёт
+       заголовку ~130px, этого хватает на две полные строки */
+    width: 40px;
+    border-radius: 5px;
+    background: #2a2d34;
+    overflow: hidden;
+}
+
+.session-item__thumb-img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    cursor: zoom-in;
+}
+
+.session-item__body {
+    flex: 1;
+    min-width: 0;
+}
+
+.session-item__title {
+    /* display: block + max-height вместо -webkit-line-clamp: у Blink внутри
+       line-clamp перенос строк считается по заниженной ширине независимо от
+       реальной ширины бокса, и текст обрывается задолго до правого края.
+       Блочный элемент переносится по всей доступной ширине, лишнее обрезает
+       overflow — без бага переноса, но и без автоматического «…».
+       display: block обязателен: на inline-элементе max-height не действует */
+    display: block;
+    width: 100%;
+    max-height: 2.8em; /* 2 строки * line-height 1.4 */
+    padding-right: 18px; /* место под копирование id и мусорку */
+    overflow: hidden;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    /* без переноса длинные слова без пробелов (пути, id) целиком уходят на
+       следующую строку — первая обрывается раньше края, до конца не доходит */
+    overflow-wrap: anywhere;
+}
+
+.session-item__meta {
+    margin-top: 3px;
+    font-size: 0.7rem;
+    color: #7c818b;
+}
+
+.session-item[aria-current="true"] .session-item__meta { color: #b9cbe2; }
+
+.session-item--placeholder .session-item__title { font-style: italic; }
+
+/* оранжевый круг: ход этой сессии идёт прямо сейчас */
+.session-item--running::after {
+    content: '';
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #f5a623;
+    animation: session-item-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes session-item-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
+}
+
+/* копирование id и мусорка: видны при наведении и с клавиатуры. Прячем
+   прозрачностью, а не display — иначе кнопки выпадают из tab-порядка */
+.session-copy,
+.session-delete {
+    position: absolute;
+    top: 5px;
+    display: flex;
+    padding: 3px;
+    border: 0;
+    border-radius: 5px;
+    background: none;
+    color: #8b9099;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease, background 0.15s, color 0.15s;
+}
+
+.session-copy { top: 27px; right: 5px; }
+.session-delete { right: 5px; }
+
+.session-row:hover .session-copy,
+.session-copy:focus-visible,
+.session-row:hover .session-delete,
+.session-delete:focus-visible { opacity: 1; }
+
+.session-copy:hover { background: #262930; color: #f2f2f4; }
+.session-delete:hover { background: #4a2c2c; color: #f2b8b8; }
+
+.session-copy--copied { background: #1f3a2a; color: #6fe08c; opacity: 1; }
+
+/* число активных сессий на кнопке вкладки — видно, даже когда панель свёрнута */
+#chatButton { position: relative; }
+
+.icon-button__badge {
+    display: none;
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 7px;
+    background: #f5a623;
+    color: #1a1a1a;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 14px;
+    text-align: center;
+}
+
+#chatButton.icon-button--running .icon-button__badge { display: block; }
+
+/* ---------- шапка сессии: агент и модель ---------- */
+
+/* Контейнер строки выбора. Наполняет его SYSTEM/providers.js — тем же
+   каскадом из четырёх уровней, что и в окне настроек (его стили —
+   SYSTEM/styles/model-cascade.css), поэтому здесь только раскладка */
+.chat-session-bar {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    max-width: var(--chat-content-width);
+    margin: 0 auto 8px;
+}
+
+.chat-session-bar[hidden] { display: none; }
+
+/* длинные имена моделей не выталкивают каскад за пределы ленты */
+.chat-session-bar > .provider__model--cascade { flex: 1 1 auto; min-width: 0; }
+
+/* ---------- лента ---------- */
+
+.chat-messages {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    scrollbar-width: none;
+}
+
+.chat-messages[hidden] { display: none; }
+
+.chat-messages::-webkit-scrollbar { display: none; }
+
+/* ---------- датчик контекста ---------- */
+
+.chat-gauges {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    max-width: var(--chat-content-width);
+    margin: 0 auto 8px;
+    padding: 0 4px;
+}
+
+.chat-gauge {
+    font-size: 0.75rem;
+    color: #6a6f78;
+}
+
+/* ---------- композер ---------- */
+
+.chat-composer {
+    --composer-control-height: 38px;
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    width: 100%;
+    max-width: var(--chat-content-width);
+    margin: 0 auto;
+    padding: 10px;
+    border: 1px solid #2e3138;
+    border-radius: 12px;
+    background: #1a1c21;
+}
+
+/* переключатель режима общий с попапом Karandash (SYSTEM/styles/mode-switch.css),
+   поэтому высоту ему задаём здесь: в композере он встаёт в один ряд с полем и
+   кнопкой Send и обязан быть с ними одной высоты */
+.chat-composer .mode-switch {
+    --mode-switch-height: var(--composer-control-height);
+}
+
+.chat-composer[hidden] { display: none; }
+
+.chat-input {
+    flex: 1;
+    /* пол = высота соседних контролов, иначе однострочное поле проседает при
+       flex-end */
+    min-height: var(--composer-control-height);
+    max-height: 160px;
+    padding: 8px 10px;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 0.88rem;
+    line-height: 22px;
+    color: #e9e9ec;
+    resize: none;
+    overflow-y: hidden;
+}
+
+.chat-input::placeholder { color: #6a6f78; }
+.chat-input:focus { outline: none; }
+
+.chat-send {
+    height: var(--composer-control-height);
+    padding: 0 16px;
+    border: 1px solid #3b6ea8;
+    border-radius: 8px;
+    background: #2b4d78;
+    font: inherit;
+    font-size: 0.82rem;
+    color: #f2f2f4;
+    cursor: pointer;
+}
+
+.chat-send:hover { background: #33598a; }
+
+.chat-send:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: 2px;
+}
+
+/* Stop вместо Send, пока идёт ход открытой сессии */
+.chat-send--stop {
+    border-color: #e5484d;
+    background: #e5484d;
+}
+
+.chat-send--stop:hover { background: #d43b40; }
