@@ -16,7 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
 const vault = require('./graph-vault.js');
-const { rebuildSearchIndex, searchProjectRanked } = require('./graph-search.js');
+const { rebuildSearchIndex, compactSearchIndex, searchProjectRanked } = require('./graph-search.js');
 const { MAX_EDIT_BYTES, readProjectFile, writeProjectFile } = require('./graph-files.js');
 
 const { DATA_DIR, VAULT_DIR, VAULT, MAP_DIR, SESSION_DIR, state } = vault;
@@ -34,6 +34,11 @@ function init(options) {
 // Живёт во входе, а не в graph-vault.js: это единственное место, где карта
 // (graph-vault.js) и индекс (graph-search.js) собираются вместе, — иначе
 // модули require'или бы друг друга по кругу
+// базу индекса жмём один раз за жизнь процесса, при первом запуске: пересборка
+// после каждой правки идёт через таймер, и блокировать event loop надолго там
+// нельзя (DOCS/decisions/079)
+let compacted = false;
+
 function prepareVault() {
     try {
         fs.mkdirSync(VAULT, { recursive: true });
@@ -45,6 +50,10 @@ function prepareVault() {
         console.error(`Failed to build the project map in the vault: ${error.message}`);
     }
     rebuildSearchIndex(); // индекс строим и при частичной карте: поиск лучше устаревшего ничего
+    if (!compacted) {
+        compacted = true;
+        compactSearchIndex(); // мёртвые страницы FTS5 копятся месяцами — место возвращает VACUUM
+    }
     state.deps.onMapReady(); // карта пересобралась — страница заберёт её заново
 }
 

@@ -19,15 +19,22 @@ const rootArg = process.argv.indexOf('--root');
 const ROOT = rootArg > 0 && process.argv[rootArg + 1] ? path.resolve(process.argv[rootArg + 1]) : TOOLS;
 // норма «один файл — одна тема» (DOCS/decisions/022): 150–300 строк, за 400 — делить
 const MAX_LINES = 400;
-// чужой код и рабочие копии агентов: их размер и их ошибки не наши
-const SKIP = new Set(['node_modules', 'DATA', '.git', 'hermes', 'hermes-home', '.worktrees', '.claude', '.beads', '.kilo']);
+// чужой код (node_modules, вендор) и то, что сервер собирает сам (DATA): их размер
+// и их ошибки не наши
+const SKIP = new Set(['node_modules', 'DATA', '.git']);
 
 let failed = false;
 
 function run(title, file, args) {
     process.stdout.write(`${title}... `);
     try {
-        execFileSync(file, args, { cwd: ROOT, stdio: 'pipe', shell: process.platform === 'win32' });
+        // На Windows путь к node может лежать в папке с пробелом («C:\Program
+        // Files\nodejs\node.exe»), и cmd без кавычек режет его на два слова —
+        // проверка падала с «'C:\Program' is not recognized», молча ничего не
+        // проверяя. В оболочке путь всегда в кавычках
+        const shell = process.platform === 'win32';
+        const quote = (value) => (shell ? `"${value}"` : value);
+        execFileSync(quote(file), args.map(quote), { cwd: ROOT, stdio: 'pipe', shell });
         console.log('чисто');
     } catch (error) {
         failed = true;
