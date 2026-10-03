@@ -1,2 +1,85 @@
 /* Стили этой страницы. <link> на файл ставит SYSTEM/new-button.js по имени
    папки, поэтому правка подменяется на лету, без перезагрузки интерфейса. */
+/* секция «New projects»: заголовок с тулбаром и простой список названий.
+   Тулбар и кнопка — те же классы, что у кнопок в SYSTEM/index.html
+   (.toolbar.btn-group > .icon-button.btn-group__btn), поэтому вид и размер
+   совпадают с остальным интерфейсом, а своих правил на кнопку здесь нет */
+.providers {
+    display: block;
+    /* .topbar — position: fixed на --topbar-height, поэтому страница обязана
+       сама отступить под неё (как .view--home в base.css и страница Feed в
+       PROJECTS/Feed/page.css), иначе заголовок и список уезжают под панель */
+    min-height: 100vh;
+    overflow-y: auto;
+    padding: calc(var(--topbar-height) + 24px) 24px 24px;
+}
+
+.providers__section {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.providers__head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.providers__title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #f2f2f4;
+}
+
+.providers__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 3;
+    column-gap: 24px;
+}
+
+/* строка списка: название слева, кнопка подключения справа. Название прижато
+   влево (текст в колонке по умолчанию тянется по ширине колонки), кнопку
+   прижимает вправо justify-content: space-between */
+.providers__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 2px 0;
+    font-size: 13px;
+    text-align: left;
+    break-inside: avoid;
+}
+
+.providers__name {
+    overflow: hidden;
+    color: #a9adb6;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* кнопка подключения — та же .icon-button, что и в тулбаре (цвет, наведение,
+   фокус оттуда), а размер свой: в строке списка 34px занимают слишком много
+   высоты, а строка идёт с шагом в 22px */
+.providers__connect {
+    flex: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+}
+
+.providers__connect svg {
+    width: 15px;
+    height: 15px;
+}
+
+.providers__meta {
+    margin: 0;
+    font-size: 12px;
+    color: #7f8490;
+}

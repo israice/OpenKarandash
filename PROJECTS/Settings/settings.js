@@ -354,6 +354,11 @@
                         // выбора ещё нет
                         cliIds: [provider.id],
                         model: App.modelOf(provider.id),
+                        // в карточке одного провайдера весь список агентов с
+                        // OpenRouter лишний: уровень CLI здесь и так состоит
+                        // из одного пункта (витрина и шапка сессии — там список
+                        // есть, см. SYSTEM/model-cascade.js)
+                        stubOptions: false,
                         onChange: App.applyModelChoice,
                     });
                     modelItem.append(providerModelRow);

@@ -14,6 +14,7 @@ import {
     PROVIDERS, connections, saveProviderState, saveActiveProvider, defaultProviderId, DEFAULT_AGENT_MODEL,
 } from './providers.js';
 import { state as sessionsState } from '../PROJECTS/Sessions/sessions-state.js';
+import { cliAgentNames, isStubCli, onCliAgents } from './cli-agents.js';
 
 // ---------- каскад выбора модели: CLI → шлюз → поставщик → модель ----------
 
@@ -141,16 +142,30 @@ function levelValues(models, gateway, provider, take) {
 // нет (провайдер не подключён) — одна строка текущей модели, иначе витрина
 // была бы тремя прочерками вместо выбранного значения
 const modelsFor = (cliId) => {
+    // Пункт списка без своего коннектора (см. cliValues в modelCascadeRow):
+    // моделей у него нет, и выдумывать ему чужую строку нельзя — уровни
+    // остаются прочерками
+    if (isStubChoice(cliId)) return [];
     const models = providerById(cliId).models;
     return models.length ? models : [modelOf(cliId)].filter(Boolean);
 };
+
+// Пункт списка OpenRouter без своего коннектора. Настоящий CLI всегда остаётся
+// настоящим, даже если его название совпало с чужим из списка: список не имеет
+// права выкинуть из каскада того, за кем мы умеем ходить
+const isStubChoice = (id) => !!id && !PROVIDERS.some((p) => p.id === id) && isStubCli(id);
 
 // Четыре селекта в ряд: CLI / Gateway / Provider / Model. cliIds — какие CLI
 // в них перечислять (витрина: все, карточка провайдера: только его, шапка
 // сессии: подключённые), cli — каким встать уровню CLI, model — что показать
 // сразу, onChange — куда попадает собранный выбор, addOption — дописать ли
-// вниз списков CLI и Gateway пункт «Add» (шапка сессии; в Settings его нет)
-export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = false }) {
+// вниз списков CLI и Gateway пункт «Add» (шапка сессии; в Settings его нет),
+// stubOptions — дописать ли вниз списка CLI весь список агентов с OpenRouter
+// (SYSTEM/cli-agents.js, тот же, что на странице «New projects»). Этот список
+// нужен везде, где строка перечисляет всех: витрина и шапка сессии; в карточке
+// одного провайдера он лишний, там перечислять нечего кроме него самого, и
+// строку та заводят без stubOptions
+export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = false, stubOptions = true }) {
     const row = document.createElement('div');
     row.className = 'provider__model provider__model--cascade';
     const selects = {};
@@ -164,6 +179,20 @@ export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = fals
         row.append(label, select);
         selects[key] = select;
     }
+
+    // Значения уровня CLI: настоящие CLI, какие этой строке полагается
+    // перечислять, и под ними весь список с OpenRouter — тем же, что на
+    // странице «New projects». Своего коннектора у этих пунктов пока нет: за
+    // пунктом не стоит ни моделей, ни подключения, поэтому он не доходит до
+    // каскада (модель у него пустая, emit молчит) и ход по нему не пойдёт —
+    // getActiveProviderId такие значения отбрасывает. По умолчанию выбран
+    // первый настоящий CLI, то есть OpenCode
+    const cliValues = () => (stubOptions ? [...new Set([...cliIds, ...cliAgentNames()])] : [...cliIds]);
+    // Пункт без коннектора — по этой строке, и никакая модель ему не показывается
+    const isStub = (id) => isStubChoice(id) && !cliIds.includes(id);
+    // Модель, которую уровни показывают для выбранного CLI: у пункта без
+    // коннектора её нет вовсе
+    const wantedModel = (cliId) => (isStub(cliId) ? '' : modelOf(cliId));
 
     // Уровень с пунктом «Add» внизу: сам уровень наполняется общим fillLevel,
     // а пункт дописывается заново при каждой перерисовке (fillLevel чистит
@@ -202,7 +231,7 @@ export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = fals
     // один проход по четырём уровням: у каждого своя строка, которую просил
     // человек (wanted), остальные целиком берутся из того, что уже выбрано
     function renderLevels({ cli: wantedCli, gateway, provider, model: wanted }) {
-        fillLevelWithAdd(selects.cli, cliIds, '—', wantedCli, (id) => providerById(id).name);
+        fillLevelWithAdd(selects.cli, cliValues(), '—', wantedCli, (id) => (isStubChoice(id) ? id : providerById(id).name));
         const models = modelsFor(selects.cli.value);
         // уровни той модели, которую просили показать, — тоже wanted: у
         // короткого имени без среднего уровня («opencode/claude-sonnet-5»)
@@ -229,13 +258,13 @@ export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = fals
 
     selects.cli.addEventListener('change', () => {
         if (ignoreAdd(selects.cli)) return;
-        renderLevels({ cli: selects.cli.value, model: modelOf(selects.cli.value) });
+        renderLevels({ cli: selects.cli.value, model: wantedModel(selects.cli.value) });
         emit();
     });
     for (const key of ['gateway', 'provider']) {
         selects[key].addEventListener('change', () => {
             if (ignoreAdd(selects[key])) return;
-            renderLevels({ [key]: selects[key].value, model: modelOf(selects.cli.value) });
+            renderLevels({ [key]: selects[key].value, model: wantedModel(selects.cli.value) });
             emit();
         });
     }
@@ -324,10 +353,23 @@ onModelChoice(({ sourceRow }) => {
     renderSessionBarControls();
 });
 
+// Список агентов с OpenRouter обновился (проверка на сайте) — строки, где он
+// перечислен, перерисовываются под новый. Объявляем тем же порядком, что и смену
+// модели (sourceRow пустой — значит, перерисовать все ряды, включая те, что в
+// Settings, и они об этом объявлении знают)
+onCliAgents(() => {
+    for (const listener of [...modelChoiceListeners]) listener({ cliId: null, model: null, sourceRow: null });
+});
+
 // отдаёт провайдера, с которым сейчас реально ведётся диалог: тот, что выбран
 // в строке шапки сессии, а до её появления — провайдер по умолчанию
 export function getActiveProviderId() {
-    if (barRow && !sessionsState.sessionBar.hidden) return barRow.read().cli;
+    if (barRow && !sessionsState.sessionBar.hidden) {
+        const cli = barRow.read().cli;
+        // пункт списка без коннектора (см. cliValues в modelCascadeRow) ходом
+        // не пойдёт, поэтому диалог остаётся за последним настоящим
+        if (cli && !isStubChoice(cli)) return cli;
+    }
     return defaultProviderId();
 }
 
