@@ -57,13 +57,20 @@ function fillLevel(select, values, emptyLabel, wanted, label = (value) => value)
     select.value = values.includes(previous) ? previous : (values[0] || '');
 }
 
-// Пункт «Add» нижней строкой раскрытого списка CLI. Пока это заглушка без
-// логики, поэтому option отключена: в раскрытом списке строка видна, выбрать
-// её нельзя, и значение каскада от неё не зависит (row.read и обработчики
-// change смотрят только на выбранный CLI). Когда у пункта появится действие,
-// отключение снимается, а обработчик вешается рядом с остальными в
-// modelCascadeRow. Значение-заглушка отдельная от id CLI, чтобы пункт не
-// совпал с настоящим провайдером, даже если кто-то назовёт его add
+// Шлюзы, которых в меню Gateway нет: список шлюзов приходит из моделей CLI и
+// там есть openai, а владелец его из меню убрал. Строка просто не
+// показывается — модели openai/… в списке CLI остаются, а если выбран был
+// именно этот шлюз, уровень встаёт на первый из оставшихся (fillLevel сам).
+const HIDDEN_GATEWAYS = new Set(['openai']);
+
+// Пункт «Add» нижней строкой раскрытого списка CLI и Gateway. Пока это
+// заглушка без логики, поэтому option отключена: в раскрытом списке строка
+// видна, выбрать её нельзя, и значение каскада от неё не зависит (row.read и
+// обработчики change смотрят только на выбранный CLI). Когда у пункта появится
+// действие, отключение снимается, а обработчик вешается рядом с остальными в
+// modelCascadeRow. Значение-заглушка отдельное от значений уровней, чтобы
+// пункт не совпал с настоящим шлюзом или агентом, даже если кто-то назовёт его
+// add
 const ADD_OPTION = { value: '::add', label: 'Add' };
 
 function appendAddOption(select) {
@@ -142,7 +149,7 @@ const modelsFor = (cliId) => {
 // в них перечислять (витрина: все, карточка провайдера: только его, шапка
 // сессии: подключённые), cli — каким встать уровню CLI, model — что показать
 // сразу, onChange — куда попадает собранный выбор, addOption — дописать ли
-// вниз списка CLI пункт «Add» (шапка сессии; в Settings его нет)
+// вниз списков CLI и Gateway пункт «Add» (шапка сессии; в Settings его нет)
 export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = false }) {
     const row = document.createElement('div');
     row.className = 'provider__model provider__model--cascade';
@@ -158,11 +165,31 @@ export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = fals
         selects[key] = select;
     }
 
-    // список CLI перерисовывается на каждой смене уровня (fillLevel чистит
-    // option'ы), поэтому пункт «Add» дописывается заново вместе с ним
-    function fillCliLevel(values, wanted) {
-        fillLevel(selects.cli, values, '—', wanted, (id) => providerById(id).name);
-        if (addOption) appendAddOption(selects.cli);
+    // Уровень с пунктом «Add» внизу: сам уровень наполняется общим fillLevel,
+    // а пункт дописывается заново при каждой перерисовке (fillLevel чистит
+    // option'ы). Сейчас это два верхних уровня — CLI и Gateway, где появляется
+    // новое; Provider и Model остаются чистыми. Заодно запоминаем последнее
+    // настоящее значение уровня — им уровень возвращается, если значение
+    // подменили (см. ignoreAdd)
+    const realValue = new Map();
+    function fillLevelWithAdd(select, values, emptyLabel, wanted, label) {
+        fillLevel(select, values, emptyLabel, wanted, label);
+        realValue.set(select, select.value);
+        if (addOption) appendAddOption(select);
+    }
+
+    // Значение заглушки не доходит до каскада: уровень молча возвращается на
+    // прежнее настоящее значение. Отключённый пункт выбрать нельзя, но
+    // подменить значение селекта можно (будущий обработник пункта, чужой код,
+    // autofill браузера) — и без этой проверки уровень уехал бы вниз, а за ним
+    // перерисовались бы поставщик и модель, то есть выбор человека сменился бы
+    // сам собой. Возвращает true, когда значение было заглушкой.
+    function ignoreAdd(select) {
+        if (select.value !== ADD_OPTION.value) return false;
+        const back = realValue.get(select);
+        const usable = [...select.options].some((o) => o.value === back && !o.disabled);
+        if (usable) select.value = back;
+        return true;
     }
 
     // собранный выбор в виде, который понимает CLI: в списке моделей подпись —
@@ -175,14 +202,16 @@ export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = fals
     // один проход по четырём уровням: у каждого своя строка, которую просил
     // человек (wanted), остальные целиком берутся из того, что уже выбрано
     function renderLevels({ cli: wantedCli, gateway, provider, model: wanted }) {
-        fillCliLevel(cliIds, wantedCli);
+        fillLevelWithAdd(selects.cli, cliIds, '—', wantedCli, (id) => providerById(id).name);
         const models = modelsFor(selects.cli.value);
         // уровни той модели, которую просили показать, — тоже wanted: у
         // короткого имени без среднего уровня («opencode/claude-sonnet-5»)
         // шлюз другой, и без этого строка не нашлась бы в списке и встала
         // бы первая по чужому шлюзу
         const asked = modelLevels(wanted);
-        fillLevel(selects.gateway, levelValues(models, null, null, (l) => l.gateway), '—', gateway ?? asked.gateway);
+        const gateways = levelValues(models, null, null, (l) => l.gateway)
+            .filter((value) => !HIDDEN_GATEWAYS.has(value));
+        fillLevelWithAdd(selects.gateway, gateways, '—', gateway ?? asked.gateway);
         fillLevel(selects.provider, levelValues(models, selects.gateway.value, null, (l) => l.provider), '—', provider ?? asked.provider);
         const inPath = models.filter((m) => {
             const levels = modelLevels(m);
@@ -199,11 +228,13 @@ export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = fals
     }
 
     selects.cli.addEventListener('change', () => {
+        if (ignoreAdd(selects.cli)) return;
         renderLevels({ cli: selects.cli.value, model: modelOf(selects.cli.value) });
         emit();
     });
     for (const key of ['gateway', 'provider']) {
         selects[key].addEventListener('change', () => {
+            if (ignoreAdd(selects[key])) return;
             renderLevels({ [key]: selects[key].value, model: modelOf(selects.cli.value) });
             emit();
         });
@@ -270,7 +301,7 @@ export function renderSessionBarControls() {
         cliIds: ids,
         cli: barCliId,
         model: modelOf(barCliId),
-        // внизу списка CLI строка «Add» — заглушка, выбрать её нельзя
+        // вниз списков CLI и Gateway — строка «Add», заглушка без действия
         addOption: true,
         onChange: (cliId, model, sourceRow) => {
             // выбор уровня CLI в шапке — это и есть выбор, с которым пойдёт ход
