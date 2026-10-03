@@ -445,6 +445,23 @@ const { DATA_DIR } = graph; // 'DATA': папку заводит модуль г
 // страницу по кругу — правка → пересборка → правка
 const SKIP = new Set([...scan.SKIP_NAMES, DATA_DIR]);
 
+// Папки, правки в которых не трогают страницу и не гоняют пересборку карты.
+// Penpot живёт в контейнере: работа с макетом идёт через MCP и пишет файлы рядом
+// с канвасом (TOOLS/penpot-mcp/design, deploy/penpot) помимо самой страницы
+// PROJECTS/Penpot. Раньше любая из этих правок проходила как обычное изменение:
+// событие `reload` гасило страницу целиком, а следом запускалась пересборка vault.
+// Здесь важно, что список относительных путей, а не имён папок: в SKIP_NAMES
+// попадать нельзя, оттуда список общий с картой проекта (SYSTEM/core/scan.js),
+// и страница Penpot тогда исчезла бы из списка проектов.
+const RELOAD_SKIP = ['PROJECTS/Penpot', 'TOOLS/penpot-mcp', 'deploy/penpot']
+    .map((rel) => path.join(ROOT, ...rel.split('/')));
+
+// папка целиком пропускается, а не файлы по расширению: правка страницы идёт
+// через MCP-команды, и то, что зовёт их, лежит рядом с ними
+function isReloadSkipped(full) {
+    return RELOAD_SKIP.some((dir) => full === dir || full.startsWith(dir + path.sep));
+}
+
 function snapshot(dir, acc = new Map()) {
     let entries;
     try {
@@ -458,6 +475,7 @@ function snapshot(dir, acc = new Map()) {
 
         const full = path.join(dir, entry.name);
         if (full === __filename) continue; // за server.js следит надзорный процесс
+        if (isReloadSkipped(full)) continue;
 
         if (entry.isDirectory()) {
             snapshot(full, acc);
