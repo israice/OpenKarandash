@@ -4,7 +4,7 @@
 // остальные файлы (tabs.js, Flow, Kanban, Karandash, Settings, страницы кнопки
 // «+») берут общее ядро. Подключён как <script type="module">: модульные
 // скрипты без async выполняются в порядке документа вместе с defer, поэтому
-// цепочка book-tab.js → app.js → PROJECTS/Chat/chat.js → остальные сохраняется.
+// цепочка book-tab.js → app.js → PROJECTS/Sessions/chat.js → остальные сохраняется.
 //
 // Провайдеры (состояние подключения, лимиты, шапка сессии) — SYSTEM/providers.js,
 // в window.App они попадают отсюда. Вкладка Chat — PROJECTS/Chat/chat.js: она
@@ -17,7 +17,9 @@
 // грузится первым (см. порядок <script> в index.html), поэтому в init() можно
 // сразу находить #settingsModal/#pickerModal в DOM.
 import {
-    PROVIDERS, connections, saveClaudeState, saveProviderState, renderSessionBarControls, renderUsageInline,
+    PROVIDERS, connections, saveProviderState, saveActiveProvider, loadActiveProvider,
+    activateExclusive, renderSessionBarControls, DEFAULT_AGENT, DEFAULT_AGENT_MODEL,
+    getActiveProviderId, getActiveModel,
 } from './providers.js';
 
 // общий помощник для POST-запросов к серверу — им пользуются и остальные
@@ -125,15 +127,33 @@ const BOARD_COLUMNS = ['New', 'In Progress', 'In Review', 'Validator', 'Done'];
 
 // сервер держит выбранное окружение в памяти и теряет его при перезапуске,
 // поэтому страница умеет восстановить подключение по сохранённому id —
-// общая функция на оба провайдера, только с разным API-префиксом
+// функция общая на всех провайдеров.
+// Ответ connect для OpenCode/pi везёт свежий список моделей — кладём его в
+// PROVIDERS сразу, иначе после reload select «Model for …» остаётся пустым
+// (provider.models сброшен в [], см. providers.js) и строка модели не рисуется
 const reconnecting = {};
 
-export function restoreServerConnection(providerId = 'claude') {
+export function restoreServerConnection(providerId = DEFAULT_AGENT) {
     const state = connections.get(providerId);
     if (!state) return Promise.resolve(false);
     if (!reconnecting[providerId]) {
         reconnecting[providerId] = api('/api/agent/connect', { agent: providerId, id: state.installId })
-            .then((r) => r.ok)
+            .then((r) => {
+                if (!r?.ok) return false;
+                if (Array.isArray(r.models) && r.models.length) {
+                    const provider = PROVIDERS.find((p) => p.id === providerId);
+                    if (provider) {
+                        provider.models = r.models;
+                        if (!provider.defaultModel || !r.models.includes(state.model)) {
+                            provider.defaultModel = provider.defaultModel && r.models.includes(provider.defaultModel)
+                                ? provider.defaultModel
+                                : r.models[0];
+                        }
+                    }
+                    if (state.model && !r.models.includes(state.model)) state.model = r.models[0];
+                }
+                return true;
+            })
             .catch(() => false)
             .finally(() => { reconnecting[providerId] = null; });
     }
@@ -201,24 +221,76 @@ function init() {
     document.documentElement.style.setProperty('--sbw', (sbProbe.offsetWidth - sbProbe.clientWidth) + 'px');
     sbProbe.remove();
 
+    // ---------- горячая перезагрузка скриптов ----------
+    // Правка клиентского скрипта приходит событием `script:<путь>`. Раздел, который
+    // умеет перерисовать себя на месте, регистрирует здесь крючок под свой файл:
+    // крючок снимает то, что скрипт нарисовал в прошлый раз, а дальше свежая копия
+    // скрипта выполняется обычным порядком и рисует себя заново сама.
+    // Крючка нет — раздел за собой не умеет убираться, и клиент откатывается к
+    // полной перезагрузке страницы: это честнее, чем оставить два экземпляра
+    // раздела один поверх другого.
+    // Регистрация идёт по точному пути файла, поэтому правило общее для всех
+    // разделов, а знает о себе каждый только свой файл
+    const hotReloads = new Map();
+
+    async function reloadScript(file) {
+        const cleanup = hotReloads.get(file);
+        if (!cleanup) return false;
+        const old = document.querySelector(`script[data-hot-src="${file}"]`);
+        if (!old) return false;
+        try {
+            cleanup(); // старый экземпляр убираем до загрузки нового, чтобы не наложились
+        } catch (err) {
+            console.error(`hot reload ${file}:`, err);
+            return false;
+        }
+        const fresh = document.createElement('script');
+        // те же атрибуты, что у исходного тега: обычный скрипт или ES-модуль
+        for (const name of ['type', 'defer']) {
+            if (old.hasAttribute(name)) fresh.setAttribute(name, old.getAttribute(name) || '');
+        }
+        fresh.dataset.hotSrc = file;
+        fresh.src = `${file}?v=${Date.now()}`;
+        const done = new Promise((resolve, reject) => {
+            fresh.addEventListener('load', () => resolve());
+            fresh.addEventListener('error', () => reject(new Error(`${file} не загрузился`)));
+        });
+        old.after(fresh);
+        try {
+            await done;
+            return true;
+        } catch (err) {
+            console.error(`hot reload ${file}:`, err);
+            fresh.remove(); // сломанная копия в странице только мешает
+            return false;
+        }
+    }
+
     // что берут вынесенные файлы: вкладки (tabs.js), Flow, Kanban, Karandash, Settings.
     // Остальные имена (setChatSessionId, renderObsConnection, chatMessages,
     // deselectSession, startCommentSession, openSession, getChatSessionId)
-    // дописывает PROJECTS/Chat/chat.js — он грузится следующим тегом
+    // дописывает PROJECTS/Sessions/chat.js — он грузится следующим тегом
     window.App = {
         BOARD_COLUMNS,
         VIEWS,
-        PROVIDERS,
+PROVIDERS,
+        DEFAULT_AGENT,
+        DEFAULT_AGENT_MODEL,
         api,
         connections,
-        saveClaudeState,
         saveProviderState,
+        saveActiveProvider,
+        loadActiveProvider,
+        activateExclusive,
         renderSessionBarControls,
-        renderUsageInline,
+        getActiveProviderId,
+        getActiveModel,
         openModal,
         confirmModal,
         closeModal,
         escapeHtml,
+        registerHotReload: (file, rerender) => hotReloads.set(file, rerender),
+        reloadScript,
     };
 }
 

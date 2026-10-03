@@ -55,6 +55,28 @@
     const commentCancel = popover.querySelector('#commentCancel');
     const commentSave = popover.querySelector('#commentSave');
 
+    // Подсказка кнопки — не «Karandash», а тот провайдер и та модель, с
+    // которыми уйдёт следующий ход (window.App.getActiveProviderId /
+    // getActiveModel — тот же порядок, что и у отправки хода). Само имя кнопки
+    // не меняем: id, aria-label и класс остаются «Karandash», по ним её
+    // находят и режим комментариев, и агент, когда про неё говорят.
+    // Пересчитываем при каждом наведении и фокусе, а не по событию смены
+    // провайдера: подсказка нужна ровно тогда, когда на неё смотрят, и так
+    // она всегда верна — сменил человек провайдера в шапке или подключил
+    // нового, ничего ждать не надо.
+    function refreshTitle() {
+        const app = window.App;
+        if (!app) return;
+        const providerId = app.getActiveProviderId?.();
+        const model = app.getActiveModel?.();
+        const text = [providerId, model].filter(Boolean).join(' / ') || 'Karandash';
+        karandashButton.title = text;
+    }
+
+    karandashButton.addEventListener('mouseenter', refreshTitle);
+    karandashButton.addEventListener('focus', refreshTitle);
+    refreshTitle();
+
     // режим отправки комментария: те же Chat/Action/Loop, что и в композере вкладки
     // Chat (SYSTEM/styles/chat.css, .segmented) — переиспользуем те же классы,
     // чтобы не заводить отдельный компонент под тот же переключатель
@@ -104,7 +126,7 @@
         defaultView: 'Home',
         flowView: 'Flow',
         kanbanView: 'Kanban',
-        chatView: 'Sessions',
+        sessionsView: 'Sessions',
     };
 
     // ориентиры на пути к элементу — тулбары, боковые панели, модалки:
@@ -189,7 +211,7 @@
     //
     // Общая поддержка кадров своего origin — на случай, если где-то на странице
     // снова появится <iframe> (сейчас на всей странице их нет: вкладка Kanban
-    // больше не встраивает beads-web отдельным кадром, DOCS/decisions/030). Пока
+    // больше не встраивает доску отдельным кадром, DOCS/decisions/032). Пока
     // кадра нет, весь код ниже простаивает и не влияет на обычные элементы.
     //
     // Сам кадр при этом прозрачен для указателя (karandash.css) — иначе он забирает
@@ -498,5 +520,14 @@
 
     karandashButton.addEventListener('click', () => {
         karandashMode ? exitKarandash() : enterKarandash();
+    });
+
+    // горячая перезагрузка этого скрипта: снимаем всё, что он нарисовал, иначе
+    // свежая копия добавит вторую кнопку и вторую рамку поверх первой
+    window.App?.registerHotReload('PROJECTS/Karandash/karandash.js', () => {
+        if (karandashMode) exitKarandash();
+        toolbar.remove();
+        frame.remove();
+        popover.remove();
     });
 })();
