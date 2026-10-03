@@ -26,7 +26,7 @@
         }
 
         function onUp() {
-            handle.classList.remove('session-resize--active');
+            handle.classList.remove('panel-resize--active');
             document.body.style.cursor = '';
             window.removeEventListener('pointermove', onMove);
             window.removeEventListener('pointerup', onUp);
@@ -36,7 +36,7 @@
         handle.addEventListener('pointerdown', (e) => {
             startX = e.clientX;
             startWidth = panel.getBoundingClientRect().width;
-            handle.classList.add('session-resize--active');
+            handle.classList.add('panel-resize--active');
             document.body.style.cursor = 'col-resize';
             window.addEventListener('pointermove', onMove);
             window.addEventListener('pointerup', onUp);

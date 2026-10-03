@@ -36,11 +36,11 @@
     popover.innerHTML = `
         <div class="comment-popover__target" id="commentTarget"></div>
         <textarea class="comment-popover__field" id="commentField" placeholder="Comment on element..."></textarea>
-        <div class="segmented" id="commentMode" role="radiogroup" aria-label="Send mode" data-active="Action">
-            <span class="segmented__thumb" aria-hidden="true"></span>
-            <button type="button" class="segmented__option" role="radio" aria-checked="false" data-mode="Chat" tabindex="-1">Chat</button>
-            <button type="button" class="segmented__option" role="radio" aria-checked="true" data-mode="Action" tabindex="0">Action</button>
-            <button type="button" class="segmented__option segmented__option--soon" role="radio" aria-checked="false" data-mode="Loop" tabindex="-1" disabled title="Coming Soon">Loop</button>
+        <div class="mode-switch" id="commentMode" role="radiogroup" aria-label="Send mode" data-active="Action">
+            <span class="mode-switch__thumb" aria-hidden="true"></span>
+            <button type="button" class="mode-switch__option" role="radio" aria-checked="false" data-mode="Chat" tabindex="-1">Chat</button>
+            <button type="button" class="mode-switch__option" role="radio" aria-checked="true" data-mode="Action" tabindex="0">Action</button>
+            <button type="button" class="mode-switch__option mode-switch__option--soon" role="radio" aria-checked="false" data-mode="Loop" tabindex="-1" disabled title="Coming Soon">Loop</button>
         </div>
         <div class="comment-popover__actions">
             <button type="button" class="comment-popover__button" id="commentCancel">Cancel</button>
@@ -77,11 +77,12 @@
     karandashButton.addEventListener('focus', refreshTitle);
     refreshTitle();
 
-    // режим отправки комментария: те же Chat/Action/Loop, что и в композере вкладки
-    // Chat (SYSTEM/styles/chat.css, .segmented) — переиспользуем те же классы,
-    // чтобы не заводить отдельный компонент под тот же переключатель
+    // режим отправки комментария: те же Chat/Action/Loop, что и в композере
+    // вкладки Sessions. Переключатель один на оба места — стиль общий
+    // (SYSTEM/styles/mode-switch.css, .mode-switch), свой компонент в каждом
+    // разошёлся бы при первой же правке
     const commentMode = popover.querySelector('#commentMode');
-    const commentModeOptions = [...commentMode.querySelectorAll('.segmented__option')].filter((o) => !o.disabled);
+    const commentModeOptions = [...commentMode.querySelectorAll('.mode-switch__option')].filter((o) => !o.disabled);
 
     function setCommentMode(mode) {
         commentMode.dataset.active = mode;
@@ -93,7 +94,7 @@
     }
 
     commentMode.addEventListener('click', (e) => {
-        const option = e.target.closest('.segmented__option');
+        const option = e.target.closest('.mode-switch__option');
         if (option) setCommentMode(option.dataset.mode);
     });
 

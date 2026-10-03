@@ -193,7 +193,7 @@
 
     // список сессий обновился где-то на странице (Chat опрашивает сервер раз
     // в 8с и шлёт это же событие сразу после своих действий — см. loadSessions
-    // в PROJECTS/Chat/chat-sessions.js). Раньше Flow это событие не слушал вовсе:
+    // в PROJECTS/Sessions/sessions-panel.js). Раньше Flow это событие не слушал вовсе:
     // список слева и канвас не узнавали о новой сессии, пока её не открывали
     // тут вручную через mousedown на select
     document.body.addEventListener('sessions-changed', async () => {

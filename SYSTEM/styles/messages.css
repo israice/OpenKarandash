@@ -1,32 +1,38 @@
-/* Сообщения чата: реплики, разметка ответа, шаги инструментов.
+/* Словарь сообщений ленты: колонка строк, реплики, разметка ответа, шаги
+   инструментов, блок Details.
 
-   Вынесено из <style> в SYSTEM/index.html: у стилей компонента одно место
-   жительства, и правка .css подменяется точечно, без перезагрузки страницы. */
+   Один файл на три отображения (Sessions, Feed, Flow) — те же строки базы
+   показывают все три, и вид у них должен быть один (DOCS/decisions/039).
+   Классы переименованы из chat__* в chat-* при переезде PROJECTS/Chat →
+   PROJECTS/Sessions: двойное подчёркивание шло от принятой в проекте схемы
+   BEM, которой следуют остальные разделы (session-item__title,
+   flow-node__control), а здесь оно осталось от старого имени вкладки и
+   читалось как опечатка. Смысл классов не изменился. */
 
-/* ---------- сообщения чата ---------- */
+/* ---------- колонка строк ---------- */
 
-.chat__list {
+.chat-list {
     display: flex;
     flex-direction: column;
     gap: 10px;
     width: 100%;
-    max-width: var(--chat-content-width);
+    max-width: var(--chat-content-width, 100%);
     margin: auto auto 0;
     padding: 8px 0 16px;
 }
 
-/* на Home ширина равна остальным блокам страницы (.dashboard/.observation), а не чату */
-#homeTaskList {
-    max-width: 1080px;
-}
+/* на Home ширина равна остальным блокам страницы, а не ленте */
+#homeTaskList { max-width: 1080px; }
 
-.chat__empty {
+.chat-empty {
     margin: auto;
     font-size: 0.85rem;
     color: #6a6f78;
 }
 
-.chat__message {
+/* ---------- реплики ---------- */
+
+.chat-message {
     max-width: 80%;
     padding: 10px 14px;
     border-radius: 12px;
@@ -36,57 +42,42 @@
     overflow-wrap: anywhere;
 }
 
-.chat__message--user {
+.chat-message--user {
     align-self: flex-end;
     background: #2b4d78;
     color: #f2f2f4;
 }
 
-.chat__message--assistant {
+.chat-message--assistant {
     align-self: flex-start;
     border: 1px solid #2e3138;
     background: #1a1c21;
 }
 
-/* ответ ассистента рендерится как HTML (см. renderMarkdown), поэтому
-   переносы строк расставляют сами блочные элементы, а не CSS pre-wrap */
-.chat__message--assistant p,
-.chat__message--assistant ul,
-.chat__message--assistant ol {
-    margin: 0 0 8px;
-}
+/* ответ ассистента рендерится как HTML (renderMarkdown в sessions-feed.js),
+   поэтому переносы строк расставляют сами блочные элементы, а не CSS pre-wrap */
+.chat-message--assistant p,
+.chat-message--assistant ul,
+.chat-message--assistant ol { margin: 0 0 8px; }
 
-.chat__message--assistant p:last-child,
-.chat__message--assistant ul:last-child,
-.chat__message--assistant ol:last-child {
-    margin-bottom: 0;
-}
+.chat-message--assistant p:last-child,
+.chat-message--assistant ul:last-child,
+.chat-message--assistant ol:last-child { margin-bottom: 0; }
 
-.chat__message--assistant ul,
-.chat__message--assistant ol {
-    padding-left: 1.3em;
-}
+.chat-message--assistant ul,
+.chat-message--assistant ol { padding-left: 1.3em; }
 
-.chat__message--assistant li {
-    margin: 2px 0;
-}
+.chat-message--assistant li { margin: 2px 0; }
 
-.chat__message--assistant h1,
-.chat__message--assistant h2,
-.chat__message--assistant h3,
-.chat__message--assistant h4,
-.chat__message--assistant h5,
-.chat__message--assistant h6 {
+.chat-message--assistant :is(h1, h2, h3, h4, h5, h6) {
     margin: 10px 0 6px;
     font-size: 1em;
     font-weight: 600;
 }
 
-.chat__message--assistant :first-child {
-    margin-top: 0;
-}
+.chat-message--assistant :first-child { margin-top: 0; }
 
-.chat__message--assistant pre {
+.chat-message--assistant pre {
     margin: 6px 0;
     padding: 10px 12px;
     border-radius: 8px;
@@ -95,44 +86,75 @@
     white-space: pre;
 }
 
-.chat__message--assistant code {
+.chat-message--assistant code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.85em;
 }
 
-.chat__message--assistant :not(pre) > code {
+.chat-message--assistant :not(pre) > code {
     padding: 1px 5px;
     border-radius: 4px;
     background: #26292f;
 }
 
-.chat__message--assistant a {
-    color: #6ea8fe;
-}
+.chat-message--assistant a { color: #6ea8fe; }
 
-.chat__message--error {
+.chat-message--error {
     align-self: flex-start;
     border: 1px solid #4a2427;
     background: #241a1b;
     color: #f0c8ca;
 }
 
-.chat__message--pending { color: #8b909a; }
+.chat-message--pending { color: #8b909a; }
 
-.chat__typing {
+/* текст, который модель ещё набирает (событие delta потока) — сырой, без
+   markdown, переносы как пришли */
+.chat-message--draft {
+    white-space: pre-wrap;
+    opacity: 0.75;
+}
+
+/* ---------- строка ожидания ---------- */
+
+.chat-typing {
     display: inline-flex;
     gap: 3px;
 }
 
+.chat-typing span {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: chat-typing-blink 1.4s infinite ease-in-out both;
+}
+
+.chat-typing span:nth-child(2) { animation-delay: 0.2s; }
+.chat-typing span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes chat-typing-blink {
+    0%, 80%, 100% { opacity: 0.25; }
+    40% { opacity: 1; }
+}
+
+/* сколько уже длится пауза до следующего шага: без этой подписи живая работа
+   с долгими паузами (до минуты на большой переписке) неотличима от оборванной */
+.chat-pending-note {
+    margin-left: 8px;
+    font-size: 12px;
+    opacity: 0.75;
+}
+
 /* ход, оборвавшийся без ответа: видно прямо, и продолжение — одно нажатие */
-.chat__message--interrupted {
+.chat-message--interrupted {
     display: flex;
     align-items: center;
     gap: 10px;
     color: #b98b4a;
 }
 
-.chat__continue {
+.chat-continue {
     padding: 3px 10px;
     border: 1px solid currentColor;
     border-radius: 6px;
@@ -143,122 +165,65 @@
     cursor: pointer;
 }
 
-.chat__continue:hover { background: rgba(185, 139, 74, 0.12); }
+.chat-continue:hover { background: rgba(185, 139, 74, 0.12); }
 
-/* сколько уже длится пауза до следующего шага: без этой подписи живая работа
-   с долгими паузами (у Hermes на большой переписке — до минуты) неотличима
-   от оборванной */
-.chat__pending-note {
-    margin-left: 8px;
-    font-size: 12px;
-    opacity: 0.75;
-}
+/* ---------- шаги инструментов ---------- */
 
-.chat__typing span {
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: currentColor;
-    animation: chat__typing-blink 1.4s infinite ease-in-out both;
-}
-
-.chat__typing span:nth-child(2) { animation-delay: 0.2s; }
-.chat__typing span:nth-child(3) { animation-delay: 0.4s; }
-
-@keyframes chat__typing-blink {
-    0%, 80%, 100% { opacity: 0.25; }
-    40% { opacity: 1; }
-}
-
-/* шаги-инструментов сворачиваются гармошкой (chat-feed.js addStep/setStepOpen):
-   заголовок (тег + короткая сводка) виден всегда одной строкой, тело
-   (полные Input/Output из toolInput/toolResult) скрыто, пока блок не открыт.
-   Открыт может быть только один за раз — все новые шаги появляются свёрнутыми,
-   открывает их только клик. У шагов без тела (живой поток до перечитывания
-   истории — в нём нет сырых args/result) клика нет, курсор обычный */
-.chat__message--tool {
+/* сворачиваются гармошкой (sessions-feed.js, addStep/setStepOpen): заголовок
+   (тег + короткая сводка) виден всегда одной строкой, тело (полные
+   Input/Output из toolInput/toolResult) скрыто, пока блок не открыт. Открыт
+   может быть только один за раз — открывает их только клик. У шагов без тела
+   (живой поток до перечитывания истории — в нём нет сырых args/result) клика
+   нет, курсор обычный */
+.chat-message--tool {
     align-self: flex-start;
+    max-width: 100%;
+    padding: 6px 14px;
     border: 1px solid #2e3138;
     background: transparent;
     color: #6a6f78;
     font-size: 0.8rem;
-    padding: 6px 14px;
-    max-width: 100%;
 }
 
-.chat__message--tool:not(.chat__message--tool-plain) {
-    cursor: pointer;
-}
+.chat-message--tool:not(.chat-message--tool-plain) { cursor: pointer; }
 
-.chat__message--tool:not(.chat__message--tool-plain):hover {
-    border-color: #454a54;
-}
+.chat-message--tool:not(.chat-message--tool-plain):hover { border-color: #454a54; }
 
-.chat__tool-head {
+.chat-tool-head {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
 }
 
-.chat__tool-body {
+.chat-tool-body {
     display: none;
     margin-top: 8px;
     padding-top: 8px;
     border-top: 1px solid #2e3138;
 }
 
-.chat__message--tool.is-open .chat__tool-body {
-    display: block;
-}
+.chat-message--tool.is-open .chat-tool-body { display: block; }
 
-.chat__tool-section + .chat__tool-section {
-    margin-top: 8px;
-}
-
-.chat__tool-section-label {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    opacity: 0.6;
-    margin-bottom: 4px;
-}
-
-.chat__tool-section-pre {
-    margin: 0;
-    font-family: inherit;
-    font-size: 0.8rem;
-    color: #b7bcc4;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 320px;
-    overflow: auto;
-}
-
-.chat__tool-section-pre--error {
-    color: #e07a7a;
-}
-
-/* тег имени инструмента (read_file, search_files, skill_view, Bash, …) —
-   цвет считает toolTagHue в chat-feed.js по хэшу имени, здесь только форма */
-.chat__tool-tag {
+/* тег имени инструмента (read_file, search_files, Bash, …) — цвет считает
+   toolTagHue в sessions-feed.js по хэшу имени, здесь только форма */
+.chat-tool-tag {
     display: inline-block;
-    border-radius: 4px;
     padding: 1px 6px;
+    border-radius: 4px;
     font-weight: 600;
     font-size: 0.78em;
 }
 
-/* рассуждение модели (event.type === 'thinking') — визуально рядом с шагами
-   инструментов, но курсивом, чтобы читалось как «модель размышляет», а не
-   как выполненное действие */
-.chat__message--thinking {
+/* рассуждение модели — визуально рядом со шагами инструментов, но курсивом,
+   чтобы читалось как «модель размышляет», а не как выполненное действие */
+.chat-message--thinking {
     align-self: flex-start;
+    max-width: 100%;
     border: 1px solid #2e3138;
     background: transparent;
     color: #6a6f78;
     font-size: 0.8rem;
     font-style: italic;
-    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     display: -webkit-box;
@@ -266,15 +231,32 @@
     -webkit-box-orient: vertical;
 }
 
-/* черновик: текст, который модель ещё набирает (событие delta в
-   PROJECTS/Chat/chat-stream.js) — сырой, без markdown, переносы как пришли */
-.chat__message--draft {
-    white-space: pre-wrap;
-    opacity: 0.75;
+/* ---------- тело шага: секции с данными ---------- */
+
+.chat-tool-section + .chat-tool-section { margin-top: 8px; }
+
+.chat-tool-section-label {
+    margin-bottom: 4px;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.6;
 }
 
-/* картинки результата в теле шага (addImagesSection в PROJECTS/Chat/chat-details.js) */
-.chat__tool-images {
+.chat-tool-section-pre {
+    margin: 0;
+    max-height: 320px;
+    overflow: auto;
+    font-family: inherit;
+    font-size: 0.8rem;
+    color: #b7bcc4;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.chat-tool-section-pre--error { color: #e07a7a; }
+
+.chat-tool-images {
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -282,17 +264,20 @@
     overflow: auto;
 }
 
-.chat__tool-images img {
+.chat-tool-images img {
     max-width: 100%;
-    border-radius: 4px;
     border: 1px solid #2e3138;
+    border-radius: 4px;
 }
 
-/* всё остальное о реплике и размышлении — модель, расход, поля Event Schema,
-   сырое событие (addRowDetails в chat-details.js). Свёрнуто и приглушено:
-   нужно для разбора, а не для чтения переписки. Встаёт на ту же сторону,
-   что и строка, к которой относится */
-.chat__details {
+/* ---------- блок Details под репликой ---------- */
+
+/* Всё, что сервер знает о строке, кроме самого текста: модель, расход, поля
+   Event Schema, сырое событие. Свёрнуто и приглушено — нужно для разбора, а не
+   для чтения переписки. Встаёт на ту же сторону, что и строка, к которой
+   относится. На Feed и Flow то же самое собирает своя страница, набор полей
+   один (DOCS/decisions/039) */
+.chat-details {
     align-self: flex-start;
     max-width: 80%;
     margin-top: -4px;
@@ -300,20 +285,16 @@
     color: #6a6f78;
 }
 
-.chat__details--user {
-    align-self: flex-end;
-}
+.chat-details--user { align-self: flex-end; }
 
-.chat__details-summary {
+.chat-details-summary {
     cursor: pointer;
     opacity: 0.7;
 }
 
-.chat__details-summary:hover {
-    opacity: 1;
-}
+.chat-details-summary:hover { opacity: 1; }
 
-.chat__details-body {
+.chat-details-body {
     margin-top: 6px;
     padding: 8px 10px;
     border: 1px solid #2e3138;

@@ -1,0 +1,54 @@
+// Строка сессии из базы → лента.
+//
+// Правило одно для всех ролей, которые пишет сервер (listMessages в
+// server.js), — те же строки рисуют Feed и Flow, и ни одна роль не должна
+// пропасть или выдать себя за ответ модели:
+// - user — реплика человека; assistant — ответ (с ошибкой хода — строкой ошибки);
+// - всё, что сделано внутри вызова помощника (parentToolUseId), — шаг с «↳»,
+//   а не реплика основной модели;
+// - thinking — размышление; tool/system/hook/unknown/top_level — строка шага,
+//   тег — имя инструмента или источник события.
+//
+// Отдельный файл, а не часть потока: показ истории и показ живого ответа —
+// разные вещи. Поток (sessions-stream.js) события хода рисует сам, а отсюда
+// берёт только эту функцию для перечитывания ленты после хода.
+import { addStep, addThinking, addMessage, buildDetails } from './sessions-feed.js';
+
+export function renderStored(row) {
+    const nested = row.parentToolUseId ? '↳ ' : '';
+    const text = row.text || '';
+
+    if (row.role === 'user') {
+        buildDetails(row, 'user', addMessage(text, 'user'));
+    } else if (row.role === 'assistant') {
+        if (nested) {
+            addStep(`${nested}subagent ${text}`, undefined, row);
+        } else {
+            // подпись моделью — по полю самой строки: ход мог вести другая
+            // модель, а в шапке сессии выбрана уже следующая
+            const kind = row.stopReason === 'error' ? 'error' : 'assistant';
+            buildDetails(row, 'assistant', addMessage(text, kind, row.model));
+        }
+    } else if (row.role === 'thinking') {
+        buildDetails(row, 'thinking', addThinking(`${nested}${text}`));
+    } else if (row.role === 'tool') {
+        addStep(text, undefined, row);
+    } else {
+        // system (пометки хода recordNotice, системные события CLI), hook,
+        // unknown, top_level — toolInput/toolResult бывают и здесь (хуки пишут
+        // вывод той же парой колонок)
+        const tag = row.toolName || row.role;
+        addStep(`${nested}${tag} ${text === tag ? '' : text}`.trim(), undefined, row);
+    }
+}
+
+// Ход считается недоведённым, когда последнее слово осталось не за агентом: на
+// шаге инструмента (работу оборвали) или на вопросе человека (ответа не было)
+export function isTurnUnfinished(messages) {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const role = messages[i].role;
+        if (role === 'assistant' || role === 'error') return false;
+        if (role === 'user' || role === 'tool') return true;
+    }
+    return false;
+}

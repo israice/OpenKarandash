@@ -136,9 +136,6 @@ const META_SPECS = [
     ['target', 'CLI (target)'],
     ['contextPercent', 'Context used', fmtPercent],
     ['contextWindow', 'Context window (tokens)', fmtNum],
-    // строки, которые заместила пересборка хода по истории Hermes. Сами они
-    // сохранены (DOCS/decisions/040) — здесь видно, что замена вообще была
-    ['replacedCount', 'Replaced by rebuild', fmtNum],
 ];
 const META_EXCLUDE = ['ok', 'messages', 'sessionInfo', 'rateLimit', 'usage', 'thumb'];
 const INFO_SPECS = [
@@ -232,16 +229,16 @@ export default function build(page, { panel, signal }) {
     const countLabel = filters.querySelector('#sessionFeedCount');
 
     const messages = document.createElement('div');
-    messages.className = 'chat__messages';
+    messages.className = 'chat-messages';
     messages.style.cssText = 'flex:1;min-height:0;';
     page.appendChild(messages);
 
     const empty = document.createElement('p');
-    empty.className = 'chat__empty';
+    empty.className = 'chat-empty';
     messages.appendChild(empty);
 
     const list = document.createElement('div');
-    list.className = 'chat__list session-feed__cards';
+    list.className = 'chat-list session-feed__cards';
     messages.appendChild(list);
 
     let sessions = [];
@@ -580,7 +577,7 @@ export default function build(page, { panel, signal }) {
             }, (body) => {
                 kv(body, true);
                 addBlock(body, 'Raw event (toolInput)', prettyJson(message.toolInput));
-                // откуда строка: id сообщения Hermes, дочерняя сессия помощника и т.п.
+                // откуда строка: id сообщения в CLI, дочерняя сессия помощника и т.п.
                 if (message.extraMeta) addBlock(body, 'Extra metadata (extra_meta)', prettyJson(message.extraMeta));
             });
             return;

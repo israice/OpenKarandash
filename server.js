@@ -931,7 +931,7 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode, plan },
     const runId = nextRunId++;
     // startedAt — момент начала именно этого хода: по нему панель Sessions
     // тикает «живую» длительность активной сессии (см. activeRunStartedAt
-    // и /api/fragment/chat-sessions), пока finishExchange не зафиксирует
+    // и /api/fragment/session-list), пока finishExchange не зафиксирует
     // итоговый duration_ms в базе
     const run = { sessionId: sessionId || null, child: null, done: null, target, startedAt: Date.now() };
     let resolveDone;
@@ -1026,7 +1026,7 @@ async function runTurn({ target, prompt, sessionId, model, effort, mode, plan },
     // завела (там 'sessions-changed' шлёт сам app.js), — у остальных открытых
     // вкладок только через опрос раз в 5с. Тот же канал, что и у live reload
     if (clients.size) {
-        notifyClients('fragment:chat-sessions');
+        notifyClients('fragment:session-list');
         notifyClients('fragment:home-observation');
     }
 
@@ -2604,7 +2604,7 @@ const featureRoutes = {
     ...graph.createRoutes(),
     ...require('./PROJECTS/Flow/flow-server.js').createRoutes({ db }),
     ...require('./PROJECTS/Sessions/pages-server.js').createRoutes({ db, root: ROOT }),
-    ...require('./PROJECTS/Sessions/chat-server.js').createRoutes({
+    ...require('./PROJECTS/Sessions/sessions-server.js').createRoutes({
         sessions: sessionSummaries,
         usage: (id) => sumSessionUsage.get(id),
         activeStartedAt: activeRunStartedAt,

@@ -37,10 +37,10 @@
                     btn.setAttribute('aria-pressed', String(btn.dataset.view === name));
                 }
                 if (flowZoomPanel) flowZoomPanel.hidden = name !== 'flow';
-                // пока chatView скрыт, scrollHeight не считается — лента грузится
+                // пока вкладка Sessions скрыта, scrollHeight не считается — лента грузится
                 // ещё до открытия вкладки, поэтому довернуть скролл вниз при показе
                 if (name === 'chat') App.chatMessages.scrollTop = App.chatMessages.scrollHeight;
-                // как и с chatView: пока telegramView скрыт, scrollHeight не считается —
+                // как и с Sessions: пока telegramView скрыт, scrollHeight не считается —
                 // опрос ленты (load, every 5s) мог довинтить скролл ещё при hidden=true,
                 // когда scrollHeight/clientHeight были 0. Довинчиваем вручную при показе
                 if (name === 'telegram') {

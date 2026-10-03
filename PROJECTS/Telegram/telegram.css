@@ -27,9 +27,11 @@
 .telegram__messages {
     flex: 1;
     overflow-y: auto;
-    scrollbar-gutter: stable;
     display: flex;
     flex-direction: column;
+    /* скроллбар скрыт, поэтому место под него резервировать нечего: с
+       scrollbar-gutter лента и композер расходились по ширине на всю ширину
+       полосы (--sbw, которого больше нет) */
     scrollbar-width: none;
 }
 
@@ -61,7 +63,7 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    width: calc(100% - var(--sbw, 0px));
+    width: 100%;
     max-width: var(--telegram-content-width);
     margin: 0 auto;
 }
@@ -109,7 +111,7 @@
     display: flex;
     align-items: flex-end;
     gap: 10px;
-    width: calc(100% - var(--sbw, 0px));
+    width: 100%;
     max-width: var(--telegram-content-width);
     margin: 12px auto 0;
     padding: 10px;

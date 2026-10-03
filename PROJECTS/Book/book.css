@@ -11,6 +11,26 @@
     margin-top: 8px;
 }
 
+/* Ручка ширины панели. Свои правила, а не общие с ручкой Sessions
+   (.panel-resize в PROJECTS/Sessions/sessions.css): там ручка задаёт всю
+   раскладку внутри панели с overflow: hidden, здесь — только ползунок на
+   .side-nav, который сам по себе прокручивается. Класс .panel-resize общий
+   (его вешает SYSTEM/sidebar-resize.js), правила — свои */
+#bookResize {
+    cursor: col-resize;
+}
+
+#bookResize::before {
+    content: '';
+    width: 3px;
+    height: 32px;
+    border-radius: 2px;
+    background: #3a3d45;
+}
+
+#bookResize:hover::before,
+#bookResize.panel-resize--active::before { background: #6ea8fe; }
+
 .view--book .view__content {
     flex-direction: column;
     align-items: stretch;
@@ -24,10 +44,112 @@
     color: #7c818b;
 }
 
-.view--book .chat__file-editor-header {
+.view--book .chat-file-editor-header {
     padding: 12px 24px 0;
 }
 
 .view--book .file-modal__links {
     padding: 0 24px;
+}
+
+/* Список панели: прокручивается сам, кнопки в нём не сжимаются. Своё правило
+   рядом с карточками, а не переиспользование .session-list из
+   PROJECTS/Sessions/sessions.css: то правило описывает список сессий с оранжевым
+   кругом и подсветкой выбранной строки, а здесь нужен только каркас колонки */
+#bookList {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+    scrollbar-width: none;
+}
+
+#bookList::-webkit-scrollbar { display: none; }
+
+/* ---------- карточки разделов в списке ---------- */
+
+/* Карточки разделов в панели слева. Раньше эти правила жили в общем
+   SYSTEM/styles/sessions.css рядом со списком сессий — но рисует их только
+   Book, и лежать им здесь же: правило у компонента одно место жительства */
+
+.project-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-content: start;
+}
+
+.project-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #2a2e35;
+    border-radius: 12px;
+    background: #1c1f24;
+    font: inherit;
+    color: #c3c7ce;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, transform 0.15s;
+}
+
+.project-card:hover {
+    background: #22252b;
+    border-color: #3a3f48;
+    color: #f2f2f4;
+    transform: translateY(-1px);
+}
+
+.project-card:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: 2px;
+}
+
+.project-card--selected {
+    background: #22252b;
+    border-color: #6ea8fe;
+}
+
+.project-card__icon {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: #2a2e35;
+    color: #6ea8fe;
+}
+
+.project-card__body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.project-card__label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: inherit;
+}
+
+.project-card__desc {
+    font-size: 0.72rem;
+    color: #9a9fa8;
+    line-height: 1.35;
+}
+
+.project-card__meta {
+    font-size: 0.66rem;
+    color: #6b7078;
+    line-height: 1.4;
 }

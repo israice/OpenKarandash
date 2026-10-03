@@ -1,0 +1,79 @@
+/* Переключатель режима отправки: Chat / Action / Loop. Обе опции видны, активная
+   помечена под «пилюлей», которая уезжает к выбранной.
+
+   Один файл на два места: композер вкладки Sessions (PROJECTS/Sessions/
+   sessions-view.js) и попап комментария Karandash. Это один и тот же
+   переключатель с тем же набором режимов, поэтому и вид у него один: свой
+   компонент в каждом месте разошёлся бы при первой же правке. */
+
+.mode-switch {
+    --mode-switch-height: 38px;
+    position: relative;
+    height: var(--mode-switch-height);
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid #2e3138;
+    border-radius: 9px;
+    background: #16181c;
+}
+
+.mode-switch__thumb {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    /* ширина под три опции (Chat/Action/Loop): вычитаем паддинги (3px*2) и
+       зазоры (2px*2) */
+    width: calc((100% - 10px) / 3);
+    height: calc(100% - 6px);
+    border-radius: 6px;
+    background: #2b4d78;
+    transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), background 0.22s;
+}
+
+/* пилюля уезжает ко второй опции */
+.mode-switch[data-active="Action"] .mode-switch__thumb {
+    transform: translateX(calc(100% + 2px));
+    background: #7a5b2a;
+}
+
+.mode-switch__option {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    font: inherit;
+    font-size: 0.8rem;
+    color: #8b909a;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color 0.18s;
+}
+
+.mode-switch__option[aria-checked="true"] { color: #f2f2f4; }
+
+.mode-switch__option:hover:not([aria-checked="true"]) { color: #c3c7ce; }
+
+.mode-switch__option:focus-visible {
+    outline: 2px solid #6ea8fe;
+    outline-offset: 2px;
+}
+
+/* Loop — заглушка без логики, пока недоступна */
+.mode-switch__option--soon {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.mode-switch__option--soon:hover { color: #8b909a; }
+
+@media (prefers-reduced-motion: reduce) {
+    .mode-switch__thumb { transition: none; }
+}

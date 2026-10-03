@@ -3,34 +3,28 @@
    убрали, редактор остался (DOCS/decisions/023). Разметку панели Book красит
    PROJECTS/Book/book.css поверх этих же классов. */
 
-/* панель редактирования файла справа в чате: карточка проекта открывает её вместо окна,
-   так же как выбор сессии заменяет содержимое чата */
-.chat__file-editor {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    width: calc(100% - var(--sbw, 0px));
-}
-
-.chat__file-editor[hidden] {
+/* Панель редактирования файла: раскладку ей задаёт хозяин (Sessions — в
+   sessions.css, Book — в book.css), здесь только содержимое и markdown-режим.
+   Идентификаторы узлов (#chatFileEditor*, #bookFileEditor*) остались прежними:
+   их ищет сам редактор (file-editor.js) по разметке обеих вкладок. */
+.chat-file-editor[hidden] {
     display: none;
 }
 
-.chat__file-editor-header {
+.chat-file-editor-header {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: 12px;
 }
 
-.chat__file-editor-title {
+.chat-file-editor-title {
     margin: 0;
     font-size: 1rem;
     word-break: break-all;
 }
 
-.chat__file-editor-header .file-modal__meta {
+.chat-file-editor-header .file-modal__meta {
     margin: 0 0 6px;
     flex-shrink: 0;
     white-space: nowrap;
@@ -99,69 +93,69 @@
     color: #a9adb6;
 }
 
-.chat__file-editor .EasyMDEContainer {
+.chat-file-editor .EasyMDEContainer {
     display: flex;
     flex-direction: column;
     flex: 1;
     min-height: 0;
 }
 
-.chat__file-editor .EasyMDEContainer .CodeMirror {
+.chat-file-editor .EasyMDEContainer .CodeMirror {
     flex: 1;
 }
 
 /* тёмная тема EasyMDE — по умолчанию редактор белый, подгоняем под тёмный интерфейс */
-.chat__file-editor .EasyMDEContainer .CodeMirror {
+.chat-file-editor .EasyMDEContainer .CodeMirror {
     background: #131417;
     color: #d8dce4;
     border: 1px solid #2e3138;
 }
 
-.chat__file-editor .EasyMDEContainer .CodeMirror-cursor { border-left-color: #d8dce4; }
-.chat__file-editor .EasyMDEContainer .CodeMirror-selected { background: #2e3138; }
-.chat__file-editor .EasyMDEContainer .CodeMirror-gutters { background: #131417; border-right-color: #2e3138; }
-.chat__file-editor .EasyMDEContainer .CodeMirror-linenumber { color: #6b6f78; }
+.chat-file-editor .EasyMDEContainer .CodeMirror-cursor { border-left-color: #d8dce4; }
+.chat-file-editor .EasyMDEContainer .CodeMirror-selected { background: #2e3138; }
+.chat-file-editor .EasyMDEContainer .CodeMirror-gutters { background: #131417; border-right-color: #2e3138; }
+.chat-file-editor .EasyMDEContainer .CodeMirror-linenumber { color: #6b6f78; }
 
-.chat__file-editor .EasyMDEContainer .cm-s-easymde .cm-header { color: #6ea8fe; }
-.chat__file-editor .EasyMDEContainer .cm-s-easymde .cm-link,
-.chat__file-editor .EasyMDEContainer .cm-s-easymde .cm-url { color: #6ea8fe; }
-.chat__file-editor .EasyMDEContainer .cm-s-easymde .cm-comment { color: #a9adb6; }
-.chat__file-editor .EasyMDEContainer .cm-s-easymde .cm-string { color: #9fd88a; }
+.chat-file-editor .EasyMDEContainer .cm-s-easymde .cm-header { color: #6ea8fe; }
+.chat-file-editor .EasyMDEContainer .cm-s-easymde .cm-link,
+.chat-file-editor .EasyMDEContainer .cm-s-easymde .cm-url { color: #6ea8fe; }
+.chat-file-editor .EasyMDEContainer .cm-s-easymde .cm-comment { color: #a9adb6; }
+.chat-file-editor .EasyMDEContainer .cm-s-easymde .cm-string { color: #9fd88a; }
 
-.chat__file-editor .EasyMDEContainer .editor-toolbar {
+.chat-file-editor .EasyMDEContainer .editor-toolbar {
     background: #16181c;
     border: 1px solid #2e3138;
     border-bottom: none;
 }
 
-.chat__file-editor .EasyMDEContainer .editor-toolbar button {
+.chat-file-editor .EasyMDEContainer .editor-toolbar button {
     color: #d8dce4 !important;
 }
 
-.chat__file-editor .EasyMDEContainer .editor-toolbar button:hover,
-.chat__file-editor .EasyMDEContainer .editor-toolbar button.active {
+.chat-file-editor .EasyMDEContainer .editor-toolbar button:hover,
+.chat-file-editor .EasyMDEContainer .editor-toolbar button.active {
     background: #2e3138;
     border-color: #2e3138;
 }
 
-.chat__file-editor .EasyMDEContainer .editor-toolbar i.separator {
+.chat-file-editor .EasyMDEContainer .editor-toolbar i.separator {
     border-left: 1px solid #2e3138;
     border-right: 1px solid #2e3138;
 }
 
-.chat__file-editor .EasyMDEContainer .editor-preview,
-.chat__file-editor .EasyMDEContainer .editor-preview-side {
+.chat-file-editor .EasyMDEContainer .editor-preview,
+.chat-file-editor .EasyMDEContainer .editor-preview-side {
     background: #131417;
     color: #d8dce4;
 }
 
-.chat__file-editor .EasyMDEContainer .editor-preview pre,
-.chat__file-editor .EasyMDEContainer .editor-preview-side pre {
+.chat-file-editor .EasyMDEContainer .editor-preview pre,
+.chat-file-editor .EasyMDEContainer .editor-preview-side pre {
     background: #1c1e23;
 }
 
-.chat__file-editor .EasyMDEContainer .editor-preview code,
-.chat__file-editor .EasyMDEContainer .editor-preview-side code {
+.chat-file-editor .EasyMDEContainer .editor-preview code,
+.chat-file-editor .EasyMDEContainer .editor-preview-side code {
     background: #1c1e23;
     color: #d8dce4;
 }

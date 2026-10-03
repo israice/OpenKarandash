@@ -20,14 +20,14 @@
     view.innerHTML = `
         <nav class="side-nav" id="bookNav" aria-label="Book">
             <h2 class="side-nav__title side-nav__title--nav"><span>Book</span></h2>
-            <ul class="session-list project-cards" id="bookList"></ul>
-            <div class="session-resize" id="bookResize" aria-hidden="true"></div>
+            <ul class="session-list" id="bookList"></ul>
+            <div class="panel-resize" id="bookResize" aria-hidden="true"></div>
         </nav>
         <div class="view__content">
             <p class="book-empty" id="bookEmpty">Select a section on the left</p>
-            <div class="chat__file-editor" id="bookFileEditor" hidden>
-                <div class="chat__file-editor-header">
-                    <h2 class="chat__file-editor-title" id="bookFileEditorTitle"></h2>
+            <div class="chat-file-editor" id="bookFileEditor" hidden>
+                <div class="chat-file-editor-header">
+                    <h2 class="chat-file-editor-title" id="bookFileEditorTitle"></h2>
                     <p class="file-modal__meta" id="bookFileEditorMeta"></p>
                 </div>
                 <div class="file-modal__links" id="bookFileEditorLinks"></div>
@@ -38,14 +38,16 @@
             </div>
         </div>
     `;
-    // вкладки лежат подряд в одном контейнере — встаём на прежнее место, перед
-    // вкладкой Sessions. Якорь — #chatView: он и есть эта вкладка, а #sessionsView,
-    // на который смотрели раньше, в разметке больше нет (вкладку переименовали),
-    // и молчащий выход здесь ронял всё переключение вкладок, а не только нас.
-    // Разметки нет — вкладку показать некуда, дальше идти незачем
-    const sessionsView = document.getElementById('chatView');
-    if (!sessionsView) return;
-    sessionsView.parentElement.insertBefore(view, sessionsView);
+    // Вкладки лежат подряд в body — встаём на прежнее место, после вкладки
+        // Sessions. Якорь — #chatView: он и есть эта вкладка, и sessions-view.js
+        // (он грузится раньше нас) к этому моменту её уже вставил. Смотреть надо
+        // именно на неё, а не на #chatAnchor из разметки страницы: тот остаётся
+        // на месте и после вставки, и вставляться рядом с ним нельзя — вкладка
+        // уехала бы за Sessions и перестала открываться.
+        // Разметки нет — вкладку показать некуда, дальше идти незачем
+        const sessionsView = document.getElementById('chatView');
+        if (!sessionsView) return;
+        sessionsView.parentElement.insertBefore(view, sessionsView.nextSibling);
 
     const list = view.querySelector('#bookList');
     const fileEditor = view.querySelector('#bookFileEditor');

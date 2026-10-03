@@ -466,7 +466,7 @@
 }
 
 .flow-node__footer--controls .flow-node__control,
-.chat__session-bar .flow-node__control {
+.chat-session-bar .flow-node__control {
     flex: 1 1 64px;
     min-width: 64px;
     padding: 4px 10px;
@@ -481,13 +481,13 @@
 }
 
 .flow-node__footer--controls .flow-node__control:hover,
-.chat__session-bar .flow-node__control:hover {
+.chat-session-bar .flow-node__control:hover {
     background: #2a2d34;
     color: #f2f2f4;
 }
 
 .flow-node__footer--controls .flow-node__control:focus-visible,
-.chat__session-bar .flow-node__control:focus-visible {
+.chat-session-bar .flow-node__control:focus-visible {
     outline: none;
     border-color: #6ea8fe;
     color: #f2f2f4;
@@ -720,7 +720,7 @@ textarea.node-modal__field {
 }
 
 /* --- личная стартовая нода бэкенд-разработчика (шаблон #flowNodeBackendTemplate,
-   DOCS/decisions/033) --- та же двухколоночная раскладка и тот же фон, что у
+   PROJECTS/Flow/profiles/Backend developer/) --- та же двухколоночная раскладка и тот же фон, что у
    QA: обе личные ноды — точка входа профиля, а не разные семейства карточек,
    поэтому фон/рамка/полоса меню — общие правила .flow-node--qa, а не свой цвет */
 .flow-node--backend {
