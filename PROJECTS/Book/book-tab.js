@@ -39,10 +39,13 @@
         </div>
     `;
     // вкладки лежат подряд в одном контейнере — встаём на прежнее место, перед
-    // Projects. Разметки нет — вкладку показать некуда, дальше идти незачем
-    const chatView = document.getElementById('chatView');
-    if (!chatView) return;
-    chatView.parentElement.insertBefore(view, chatView);
+    // вкладкой Sessions. Якорь — #chatView: он и есть эта вкладка, а #sessionsView,
+    // на который смотрели раньше, в разметке больше нет (вкладку переименовали),
+    // и молчащий выход здесь ронял всё переключение вкладок, а не только нас.
+    // Разметки нет — вкладку показать некуда, дальше идти незачем
+    const sessionsView = document.getElementById('chatView');
+    if (!sessionsView) return;
+    sessionsView.parentElement.insertBefore(view, sessionsView);
 
     const list = view.querySelector('#bookList');
     const fileEditor = view.querySelector('#bookFileEditor');
@@ -118,7 +121,7 @@
         telegramButton: 'PROJECTS/Telegram/README.md',
         flowButton: 'PROJECTS/Flow/README.md',
         kanbanButton: 'PROJECTS/Kanban/README.md',
-        chatButton: 'PROJECTS/Chat/README.md',
+        chatButton: 'PROJECTS/Sessions/README.md',
         homeButton: 'PROJECTS/Home/README.md',
         bookButton: 'PROJECTS/Book/README.md',
         karandashButton: 'PROJECTS/Karandash/README.md',
@@ -201,4 +204,8 @@
     }
 
     window.MissionBookTab = { show, openFile, closePanel };
+
+    // горячая перезагрузка этого скрипта: снимаем вкладку, которую он нарисовал, —
+    // свежая копия вставит свою на то же место
+    window.App?.registerHotReload('PROJECTS/Book/book-tab.js', () => view.remove());
 })();

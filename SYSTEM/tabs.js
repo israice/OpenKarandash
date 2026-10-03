@@ -28,7 +28,10 @@
                 // в том числе при программном MissionTabs.show из app.js
                 window.MissionPages?.hideAll();
                 for (const [key, view] of Object.entries(App.VIEWS)) {
-                    view.hidden = key !== name;
+                    // раздел, чья разметка не достроилась (свой скрипт не дошёл),
+                    // не должен ронять переключение всех вкладок: без узла просто
+                    // нечего показывать и нечего включать
+                    if (view) view.hidden = key !== name;
                 }
                 for (const btn of viewButtons) {
                     btn.setAttribute('aria-pressed', String(btn.dataset.view === name));

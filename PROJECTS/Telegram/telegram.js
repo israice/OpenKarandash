@@ -40,10 +40,13 @@
         </div>
     `;
     // вкладки лежат подряд в одном контейнере — встаём рядом с ними.
+    // Якорь — #chatView: он и есть вкладка Sessions, а #sessionsView, на который
+    // смотрели раньше, в разметке больше нет (вкладку переименовали), и молчащий
+    // выход здесь ронял всё переключение вкладок, а не только нас.
     // Разметки нет — вкладку показать некуда, дальше идти незачем
-    const chatView = document.getElementById('chatView');
-    if (!chatView) return;
-    chatView.parentElement.insertBefore(view, chatView);
+    const sessionsView = document.getElementById('chatView');
+    if (!sessionsView) return;
+    sessionsView.parentElement.insertBefore(view, sessionsView);
 
     // индикатор связи с сервером для опроса фрагмента: вешаем на
     // #telegramMessages — этот узел htmx не подменяет (подмена идёт oob-блоками
@@ -77,5 +80,9 @@
         firstLoad = false;
         messages.scrollTop = messages.scrollHeight;
     });
+
+    // горячая перезагрузка этого скрипта: снимаем вкладку, которую он нарисовал, —
+    // свежая копия вставит свою на то же место
+    window.App?.registerHotReload('PROJECTS/Telegram/telegram.js', () => view.remove());
 
 })();
