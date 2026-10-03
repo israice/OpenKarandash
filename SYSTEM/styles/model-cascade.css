@@ -62,3 +62,33 @@
     flex: 0 0 auto;
     width: auto;
 }
+
+/* Раскрытый список уровня: пункты начинаются с левого края. Закрытое значение
+   остаётся по центру (text-align выше), потому что центр у селекта — его
+   собственное правило, а вот раскрытый список браузер рисует по text-align
+   каждого option'а: унаследованный от селекта центрировал бы все пункты, и
+   имена агентов и шлюзов разной длины не с чем было бы сравнивать — строки
+   начинались бы каждая со своего места. Приём тот же, что и у самого селекта
+   (text-align плюс text-align-last), потому что закрытое значение рисуется по
+   text-align-last, а раскрытое — по text-align */
+.provider__select--source option {
+    text-align: left;
+}
+
+/* Пункт «Add» в списках CLI и Gateway — служебная строка, а не имя уровня:
+   она остаётся по центру, как и всё, что этим списком не выбирают */
+.provider__select--source option.provider__option--add {
+    text-align: center;
+}
+
+/* Раскрытый список: выбранный пункт помечен цветом, остальные, кроме служебного
+   «Add», — серым, как неактивные */
+.provider__select--source option:checked {
+    background: #2f4a75;
+    color: #eaf1ff;
+}
+
+.provider__select--source option:not(:checked):not(.provider__option--add) {
+    background: #33363d;
+    color: #83878f;
+}
