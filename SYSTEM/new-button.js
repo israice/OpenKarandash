@@ -96,7 +96,12 @@
         // папку переименование меняет вместе с заголовком (см. /api/pages/rename),
         // поэтому SYSTEM/toolbar-menu.js обновляет её здесь после переименования
         btn.dataset.folder = folder;
-        // иконка «+» уже занята кнопкой newButton — у сгенерированных страниц своя, номер страницы
+        // иконка «+» уже занята кнопкой newButton — у сгенерированных страниц своя,
+        // по умолчанию номер страницы. Своя иконка кладётся в папку страницы файлом
+        // page-icon.svg (третий файл страницы рядом с page.js и page.css): рисунок
+        // живёт в папке той страницы, которой он и принадлежит, а этот файл знает
+        // о нём только имя. Нет файла или он не читается — остаётся номер, кнопка
+        // не гаснет: иконка здесь украшение, а не содержимое страницы.
         const svg = btn.querySelector('svg');
         svg.replaceChildren();
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -109,6 +114,14 @@
         text.setAttribute('fill', 'currentColor');
         text.textContent = String(id);
         svg.appendChild(text);
+
+        App.api('/api/pages/icon', { folder })
+            .then(({ icon }) => {
+                // внутри ещё номер значит иконку никто не подменил: выбранная
+                // пользователем в меню тулбара (SYSTEM/toolbar-menu.js) главнее
+                if (icon && svg.querySelector('text')) svg.innerHTML = icon;
+            })
+            .catch(() => {}); // нет иконки или сервер не отдал — остаётся номер
 
         let mounted = null; // AbortController собранной страницы; null — не собрана
         let version = 0;    // ?v= в адресе модуля: без него браузер отдаёт старый из кэша
@@ -160,6 +173,10 @@
             for (const vb of document.querySelectorAll('.toolbar [data-view]')) vb.setAttribute('aria-pressed', 'false');
             page.hidden = false;
             btn.setAttribute('aria-pressed', 'true');
+            // вкладку показал не tabs.js, а эта страница, поэтому метку до первой
+            // отрисовки (SYSTEM/index.html) снимаем сами — иначе пустая страница
+            // осталась бы скрытой стилями
+            MissionTabs.endRestore();
             // запоминаем страницу тем же ключом, что и вкладки (SYSTEM/tabs.js),
             // чтобы после перезагрузки открылась она, а не последняя вкладка
             MissionTabs.saveLastView(`page:${id}`);
