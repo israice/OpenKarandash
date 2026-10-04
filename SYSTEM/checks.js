@@ -69,10 +69,44 @@ function checkSize() {
     for (const { file, lines } of long.sort((a, b) => b.lines - a.lines)) console.log(`  ${lines}\t${file}`);
 }
 
+// Размер, отсчитываемый от экрана (vh/vw), живёт в одном файле —
+// SYSTEM/styles/base.css (DOCS/decisions/093). Повтор такого значения в
+// компоненте — это ровно тот дефект, из-за которого страница то выше окна, то
+// ниже: правка одной страницы ломает остальные. Здесь механическая страховка:
+// список файлов с vh/vw даёт красный список мест, а не тихое «ну ладно».
+function checkScreenUnits() {
+    process.stdout.write('размер от экрана... ');
+    const ALLOWED = 'SYSTEM' + path.sep + 'styles' + path.sep + 'base.css';
+    const UNIT = /(^|[^\w-])\d*\.?\d+(d?vh|d?vw)\b/i;
+    const hits = [];
+    (function walk(dir) {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (SKIP.has(entry.name)) continue;
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) { walk(full); continue; }
+            if (!/\.(css|js|html)$/.test(entry.name)) continue;
+            if (path.relative(ROOT, full) === ALLOWED) continue;
+            // комментарии ничего не задают: они объясняют, откуда взялось
+            // значение, и «100dvh» в тексте правилом не считается
+            const code = fs.readFileSync(full, 'utf8')
+                .replace(/\/\*[\s\S]*?\*\//g, '')
+                .replace(/^\s*\/\/.*$/gm, '');
+            code.split('\n').forEach((line, i) => {
+                if (UNIT.test(line)) hits.push(`${path.relative(ROOT, full)}:${i + 1}`);
+            });
+        }
+    }(ROOT));
+    if (hits.length === 0) { console.log('чисто'); return; }
+    failed = true;
+    console.log(`НАШЛОСЬ: vh/vw вне SYSTEM/styles/base.css — значение размера от экрана должно быть одно (DOCS/decisions/093):`);
+    for (const hit of hits) console.log(`  ${hit}`);
+}
+
 run('неизвестные имена', process.execPath, [path.join(TOOLS, 'node_modules', 'eslint', 'bin', 'eslint.js')]);
 // не .bin/madge — это shell-скрипт (#!/bin/sh), node напрямую его не исполнит,
 // он ищет настоящий вход в самом пакете
 run('циклические связи', process.execPath, [path.join(TOOLS, 'node_modules', 'madge', 'bin', 'cli.js'), '--circular', 'server.js']);
 checkSize();
+checkScreenUnits();
 
 process.exit(failed ? 1 : 0);
