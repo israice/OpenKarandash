@@ -182,8 +182,13 @@ function hits(kind, step, st) {
 }
 
 // карта вид → позиции шагов, которые под него подошли. Шаги приходят по
-// position; порядок не нужен, но база отдаёт его как есть — сортируем на входе
-function classify(steps) {
+// position; порядок не нужен, но база отдаёт его как есть — сортируем на входе.
+//
+// reportAttached — уехал ли в ход отчёт разведки. Тогда виды про домашнюю работу
+// не считаются вовсе: их смысл был в том, что разведку делает агент сам, а с
+// отчётом в запросе это уже не так, и «не запустил скрипт» становится нормой
+function classify(steps, { reportAttached = false } = {}) {
+    const kinds = reportAttached ? KINDS.filter((k) => k.id !== 'homework-late') : KINDS;
     const st = {
         checks: 0,
         edited: editedFiles(steps),
@@ -195,15 +200,16 @@ function classify(steps) {
     const found = new Map();
     for (const row of steps.slice().sort((a, b) => a.position - b.position)) {
         const step = stepOf(row);
-        for (const kind of KINDS) {
+        for (const kind of kinds) {
             if (!hits(kind, step, st)) continue;
             if (!found.has(kind.id)) found.set(kind.id, []);
             found.get(kind.id).push(step.position);
         }
     }
     // сессия без домашней работы: один счёт за сессию, а не за каждый шаг —
-    // это не шаг, а сам факт, и в сумме лишних он стоит единицу
-    if (!st.homeworkAt) found.set(SESSION_KIND.id, [steps[0]?.position ?? 0]);
+    // это не шаг, а сам факт, и в сумме лишних он стоит единицу. С отчётом в
+    // запросе скрипт не нужен, поэтому вид не ставится вовсе
+    if (!reportAttached && !st.homeworkAt) found.set(SESSION_KIND.id, [steps[0]?.position ?? 0]);
     return found;
 }
 
