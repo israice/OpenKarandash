@@ -38,6 +38,41 @@ const CRITERIA_BUDGET_CHARS = 60000;
 // заголовок и первый абзац каждой записки: из них получаются criteria выбора.
 // Читаем один раз и перечитываем, когда папка изменилась, — записок полсотни,
 // и гонять диск на каждом ходе незачем
+// Заголовок раздела с самим решением. Раньше подбор брал первый «## » в записке
+// как есть — и у части записок он назывался «Проблема» или «Что было», так что
+// модели уходило описание проблемы, а решение оставалось за кадром: у 039 на
+// решение шло 5 абзацев, у 079 — десять, и таких записок 18 из 66. Подсказка
+// нужна ради правила, поэтому ищем раздел с решением, а он есть не у всех.
+//
+// Границы слова тут не пишем: в JavaScript \w — это только латиница, поэтому
+// \b после кириллицы не срабатывает и условие молча не проходит никогда
+const DECISION_HEADING = /^##\s*(решение|что решили|что выбрали|приняли|правило)/i;
+
+// сколько абзацев решения уходит в описание. Число прежнее, но теперь это
+// действительно абзацы: текст записок обёрнут по ширине, и «три строки» —
+// меньше одного абзаца, то есть обещание не выдерживалось
+const PARAGRAPHS = 3;
+
+// Абзацы от заданной строки: блоки между пустыми строками, длиной больше 40
+// символов и без заголовков. Раньше фильтр брал строки по одной, и таблица
+// попадала в описание тремя обрезанными строками — половина таблицы читалась
+// как правило
+function readParagraphs(lines, from) {
+    const blocks = [];
+    let current = [];
+    const flush = () => {
+        const text = current.join(' ').replace(/\s+/g, ' ').trim();
+        if (text.length > 40 && !text.startsWith('#')) blocks.push(text);
+        current = [];
+    };
+    for (const line of lines.slice(from + 1)) {
+        if (line.trim()) current.push(line.trim());
+        else flush();
+    }
+    flush();
+    return blocks;
+}
+
 let decisionsCache = { key: '', items: [] };
 
 function readDecisions() {
@@ -60,15 +95,14 @@ function readDecisions() {
         }
         const lines = text.split(/\r?\n/);
         const title = (lines.find((line) => line.startsWith('# ')) || name).replace(/^#\s*/, '').trim();
-        // первые абзацы после заголовка «## Решение» — в них суть записки.
-        // Одного абзаца не хватало: по нему вторая ступень не могла отличить
-        // «записка про эту работу» от «записка про соседнюю тему» и отвечала
-        // около половины, то есть ничего
-        const start = lines.findIndex((line) => line.startsWith('## '));
-        const body = lines.slice(start + 1)
-            .filter((line) => line.trim().length > 40 && !line.startsWith('#'))
-            .slice(0, 3)
-            .join(' ');
+        // Сначала ищем раздел с решением, и только если его нет — первый заголовок
+        // (from === -1 при отсутствии заголовков даёт lines.slice(0), то есть всю
+        // записку: прежнее поведение для заметок без «## »)
+        const decisionAt = lines.findIndex((line) => DECISION_HEADING.test(line));
+        const from = decisionAt !== -1
+            ? decisionAt
+            : lines.findIndex((line) => line.startsWith('## '));
+        const body = readParagraphs(lines, from).slice(0, PARAGRAPHS).join(' ');
         items.push({
             id: name.replace(/\.md$/, ''),
             file: `DOCS/decisions/${name}`,
