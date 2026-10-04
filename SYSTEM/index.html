@@ -83,6 +83,11 @@
             // то же, что и tabs.js при отсутствии сохранённого места
             try { view = localStorage.getItem('lastView') || 'chat'; } catch (e) { view = 'chat'; }
             document.documentElement.setAttribute('data-restored-view', view);
+            // Заслон на время первой сборки страницы: пока разделы не дорисовали
+            // своё содержимое, страница не показывается вовсе (SYSTEM/boot.js,
+            // стиль в SYSTEM/styles/base.css). Метку ставим здесь же, в <head>:
+            // поставленный позже скрипт успел бы показать пустую страницу.
+            document.documentElement.setAttribute('data-booting', '');
             // страховка на случай, если отложенные скрипты не дошли: без метки
             // вкладка осталась бы пустой навсегда. К load они уже отработали
             // (defer и модули выполняются до load), так что штатно это пустое место
@@ -93,103 +98,17 @@
     </script>
 </head>
 <body>
-    <div class="topbar">
-        <!-- Панели самих страниц кнопки «+» (например, выбор сессии у Feed) сюда
-             не пишутся: их вставляет модуль страницы из своей папки, см. new-button.js. -->
-        <div class="flow-canvas__zoom btn-group" id="flowZoomPanel" role="toolbar" aria-label="Page tools" hidden>
-            <select class="flow-canvas__zoom-select" id="flowSessionSelect" title="Open session in Flow" hidden>
-                <option value="">Session…</option>
-            </select>
-            <button type="button" class="flow-canvas__zoom-btn btn-group__btn" id="flowZoomOut" title="Zoom out">−</button>
-            <span class="flow-canvas__zoom-value" id="flowZoomValue">100%</span>
-            <button type="button" class="flow-canvas__zoom-btn btn-group__btn" id="flowZoomIn" title="Zoom in">+</button>
-            <button type="button" class="flow-canvas__zoom-btn btn-group__btn" id="flowLayoutReset" title="Lay nodes out as a tree without overlaps">⊞</button>
-            <button type="button" class="flow-canvas__zoom-btn btn-group__btn" id="flowCanvasReset" title="Reset canvas: remove all added nodes">↺</button>
-        </div>
-        <!-- Левая панель тулбара: кнопка «Новое» и созданные ею страницы (SYSTEM/new-button.js) -->
-        <div class="toolbar btn-group toolbar--left" role="toolbar" aria-label="New projects">
-            <button type="button" class="icon-button btn-group__btn" id="newButton" data-new-page="true" aria-label="New" title="New">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M12 5v14M5 12h14"></path>
-                </svg>
-            </button>
-        </div>
-        <!-- Группа дополнительных кнопок (не страницы) -->
-        <div class="toolbar btn-group toolbar--actions" role="toolbar" aria-label="Actions">
-            <!-- Второй «+»: та же кнопка, что и newButton слева, — заводит страницу
-                 в PROJECTS/ так же (SYSTEM/new-button.js). Кнопки создаваемых
-                 страниц по-прежнему появляются в левой группе рядом с newButton -->
-            <button type="button" class="icon-button btn-group__btn" id="newPageButton" data-new-page="true" aria-label="New" title="New">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M12 5v14M5 12h14"></path>
-                </svg>
-            </button>
-            <button type="button" class="icon-button btn-group__btn" aria-label="Search" title="Search">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <circle cx="11" cy="11" r="7"></circle>
-                    <path d="m21 21-4.35-4.35"></path>
-                </svg>
-            </button>
-            <button type="button" class="icon-button btn-group__btn" aria-label="Refresh" title="Refresh">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"></path>
-                </svg>
-            </button>
-            <button type="button" class="icon-button btn-group__btn" aria-label="Favorite" title="Favorite">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"></path>
-                </svg>
-            </button>
-            <button type="button" class="icon-button btn-group__btn" aria-label="Notifications" title="Notifications">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
-                    <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-                </svg>
-            </button>
-        </div>
-        <!-- Новая кнопка здесь — только с иконкой, ещё не занятой соседями по .btn-group__btn -->
-        <div class="toolbar btn-group" role="toolbar" aria-label="System projects">
-            <button type="button" class="icon-button btn-group__btn" id="telegramButton" data-view="telegram" aria-pressed="false" aria-label="Telegram" title="Telegram">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M21 4 3 11l6 2 2 6z"></path>
-                    <path d="M9 13 21 4l-8 16-2-5z"></path>
-                </svg>
-            </button>
-            <button type="button" class="icon-button btn-group__btn" id="flowButton" data-view="flow" aria-pressed="false" aria-label="Flow" title="Flow">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <rect x="3" y="3" width="7" height="6" rx="1.5"></rect>
-                    <rect x="14" y="15" width="7" height="6" rx="1.5"></rect>
-                    <path d="M6.5 9v6a3 3 0 0 0 3 3H14"></path>
-                </svg>
-            </button>
-            <button type="button" class="icon-button btn-group__btn" id="kanbanButton" data-view="kanban" aria-pressed="false" aria-label="Kanban" title="Kanban">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <rect x="3" y="4" width="5" height="16" rx="1.5"></rect>
-                    <rect x="9.5" y="4" width="5" height="11" rx="1.5"></rect>
-                    <rect x="16" y="4" width="5" height="14" rx="1.5"></rect>
-                </svg>
-            </button>
-            <button type="button" class="icon-button btn-group__btn" id="chatButton" data-view="chat" aria-pressed="false" aria-label="Sessions" title="Sessions">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-5.5A8 8 0 0 1 11 4h2a8 8 0 0 1 8 8z"></path>
-                </svg>
-                <span id="chatButtonBadge" class="icon-button__badge"></span>
-            </button>
-            <button type="button" class="icon-button btn-group__btn" id="bookButton" data-view="book" aria-pressed="false" aria-label="Book" title="Book">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"></path>
-                    <path d="M4 5.5v15A2.5 2.5 0 0 0 6.5 23H20"></path>
-                </svg>
-            </button>
-            <button type="button" class="icon-button btn-group__btn" id="addButton" aria-label="Add" title="Add">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M12 5v14M5 12l7 7 7-7"></path>
-                </svg>
-            </button>
-        </div>
-
-        <!-- Кнопка-шестерёнка и её меню — в PROJECTS/Settings/settings.js -->
-    </div>
+    <!-- Верхнее меню рисует сервер (DOCS/decisions/005): вся его разметка лежит
+         в шаблоне SYSTEM/topbar.eta и подставляется в страницу на месте заглушки
+         TOPBAR ниже (renderPage в SYSTEM/core/version.js). Литерал заглушки здесь
+         не пишется: replace() берёт первое вхождение, и меню уехало бы в этот
+         комментарий. Тем же шаблоном отдаётся маршрут
+         /api/fragment/topbar. Меню приходит вместе со страницей одной частью —
+         раньше его половину дописывали скрипты уже после разбора страницы
+         (шестерёнка настроек, кнопка Karandash), и верхний ряд дёргался на глазах.
+         Здесь остаётся только сама полка: её высота заложена в тело каждой
+         вкладки через --topbar-height, поэтому она должна быть в разметке страницы. -->
+    <div class="topbar" id="topbar">{{TOPBAR}}</div>
 
     <div class="view view--side" id="flowView" hidden>
         <nav class="side-nav" id="flowNav" aria-label="Flows">
@@ -857,6 +776,9 @@
     <!-- Части Settings грузятся перед settings.js и в том же порядке: разметку рисует
          settings-markup.js (app.js ищет #settingsModal/#pickerModal на старте), остальные
          только заводят window.Settings* с init(...) — сами ничего не выполняют. -->
+    <!-- Заслон первой сборки: самый первый отложенный скрипт, чтобы разделы,
+         идущие ниже, могли звать window.MissionBoot.task (SYSTEM/boot.js). -->
+    <script src="SYSTEM/boot.js" type="module"></script>
     <script src="PROJECTS/Settings/settings-markup.js" defer></script>
     <script src="PROJECTS/Settings/settings-providers.js" defer></script>
     <script src="PROJECTS/Settings/settings-screenshot.js" defer></script>

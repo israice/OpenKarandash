@@ -17,10 +17,13 @@ import {
 } from '../../SYSTEM/providers.js';
 import {
     DRAFT_PREFIX, setSessionId, saveDraft, clearDraft, copyId,
-    loadSessions, insertDraftRow, deselect, remove, initPanel,
+    loadSessions, startNewSession, remove, initPanel,
 } from './sessions-panel.js';
 import { openSession, sendTurn } from './sessions-stream.js';
 import { stopTurn } from './sessions-ndjson.js';
+// Заслон первой сборки страницы (SYSTEM/boot.js): страница не показывается, пока
+// вкладка не доставит список сессий и ленту
+import { bootTask } from '../../SYSTEM/boot.js';
 
 // режим отправки: обе опции видны, активная помечена aria-checked
 function setMode(mode) {
@@ -50,7 +53,6 @@ function startCommentSession(prompt, thumb, mode) {
     saveAllProviderStates();
     state.run += 1;
     state.list.innerHTML = '';
-    state.empty.hidden = false;
 
     const sendMode = mode === 'Chat' ? 'Chat' : 'Action';
     setMode(sendMode);
@@ -64,7 +66,6 @@ function bindNodes() {
     state.sessionList = document.getElementById('sessionList');
     state.messages = document.getElementById('chatMessages');
     state.list = document.getElementById('chatList');
-    state.empty = document.getElementById('chatEmpty');
     state.fileEditor = document.getElementById('chatFileEditor');
     state.composer = document.getElementById('chatComposer');
     state.input = document.getElementById('chatInput');
@@ -168,22 +169,14 @@ function bindPanel() {
         const btn = e.target.closest('.session-item');
         if (!btn?.dataset.sessionId) return;
 
-        if (btn.getAttribute('aria-current') === 'true') deselect();
+        if (btn.getAttribute('aria-current') === 'true') startNewSession();
         else openSession(btn.dataset.sessionId, btn.classList.contains('session-item--running'));
     });
 
     // новая сессия: чистим ленту, следующий вопрос начнёт свою историю в CLI,
     // а в списке сразу появляется черновик — реальная сессия придёт с сервера
     // позже
-    document.getElementById('sessionNew').addEventListener('click', () => {
-        setSessionId(null);
-        saveAllProviderStates();
-        state.run += 1;
-        state.list.innerHTML = '';
-        state.empty.hidden = false;
-        insertDraftRow();
-        state.input.focus();
-    });
+    document.getElementById('sessionNew').addEventListener('click', startNewSession);
 
     // обнулить базу сессий: чистим список и текущую переписку
     document.getElementById('sessionReset').addEventListener('click', async () => {
@@ -193,12 +186,10 @@ function bindPanel() {
         for (const key of Object.keys(localStorage)) {
             if (key.startsWith(DRAFT_PREFIX)) localStorage.removeItem(key);
         }
-        setSessionId(null);
-        saveAllProviderStates();
-        state.run += 1;
-        state.list.innerHTML = '';
-        state.empty.hidden = false;
         await loadSessions();
+        // список пуст, а лента должна чем-то принадлежать — открываем новую
+        // сессию после перерисовки списка, иначе её тут же смоет подмена htmx
+        startNewSession();
     });
 }
 
@@ -241,15 +232,20 @@ async function restoreOnLoad() {
     // «первую по списку» — иначе после работы с одним агентом открывалась чужая
     const currentActive = loadActiveProvider();
     const providerState = (currentActive && saved[currentActive]) ? saved[currentActive] : null;
-    const found = providerState?.sessionId && sessions.find((s) => s.id === providerState.sessionId);
+    // сервер отдаёт сессии по убыванию updated_at, поэтому первая в списке —
+    // самая свежая
+    const found = providerState?.sessionId ? sessions.find((s) => s.id === providerState.sessionId) : sessions[0];
 
     if (found) {
         await openSession(found.id, found.running);
         if (found.running) MissionTabs.show('chat');
-    } else {
-        setSessionId(null);
-        saveAllProviderStates();
+        return;
     }
+
+    // сохранённой сессии нет (ещё ни одной, её удалили, сменился провайдер) —
+    // пустой ленты с подсказкой «выбери сессию» у нас не бывает: сразу
+    // открываем чистый лист новой сессии, как если бы New был уже нажат
+    startNewSession();
 }
 
 // ---------- старт ----------
@@ -266,17 +262,19 @@ function init() {
     Object.assign(window.App, {
         setSessionId,
         chatMessages: state.messages,
-        deselectSession: deselect,
+        deselectSession: startNewSession,
         startCommentSession,
         openSession,
         getSessionId: () => state.sessionId,
     });
 
-    restoreOnLoad();
-
     // список сессий (боковая панель на всех экранах) обновляется сам,
     // пока вкладка открыта
     setInterval(loadSessions, 8000);
+
+    // первая сборка вкладки — условие, снимемое заслоном (SYSTEM/boot.js):
+    // страница открывается целиком, а не достраивается на глазах
+    bootTask('sessions', restoreOnLoad());
 }
 
 init();

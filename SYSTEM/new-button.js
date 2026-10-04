@@ -6,6 +6,16 @@
 // созданных страниц хранится на сервере (см. /api/pages), иначе они пропадали бы
 // при каждой перезагрузке страницы.
 //
+// Список страниц приходит с сервера, а ядро (window.App) собирает модуль
+// SYSTEM/app.js — тот грузится модулем, и модуль попадает в очередь выполнения
+// тогда, когда докачался, а не в порядке тегов. Поэтому на старте этого файла
+// window.App может ещё не быть: читать его здесь нельзя, и вся работа с
+// сервером ждёт DOMContentLoaded (к нему и defer-скрипты, и модули уже
+// отработали). Раньше чтение шло сразу, и гонка была видна не всегда — при
+// медленном app.js restore() падал на «App is not defined», а вместе с ним
+// пропадали все кнопки страниц, кроме «+». Обработчики клика App не читают
+// (он нужен им в момент нажатия), поэтому подписываются сразу.
+//
 // Этот файл про кнопки и переключение, а не про то, что на страницах нарисовано:
 // содержимое каждой страницы лежит в её собственной папке и грузится модулем
 // при первом открытии (DOCS/decisions/016). Поэтому здесь нет ни «Hello World»,
@@ -215,16 +225,24 @@
         btn.addEventListener('click', createPage);
     }
 
-    (async function restore() {
-        const { pages = [] } = await App.api('/api/pages', {});
-        for (const page of pages) addPageButton(page.title, page.id, page.folder);
-        // последним был открыт не таб, а одна из этих страниц — возвращаем на неё.
-        // Вкладку в этом случае tabs.js специально не показывал: он не знает список страниц
-        const last = MissionTabs.readLastView() || '';
-        if (!last.startsWith('page:')) return;
-        const open = openers.get(last.slice('page:'.length));
-        // страницу могли удалить с прошлого захода — тогда обычная вкладка по умолчанию
-        if (open) open();
-        else MissionTabs.show('chat');
-    })();
+    // Восстановление страниц — после DOMContentLoaded: до него модуль
+    // SYSTEM/app.js с window.App ещё мог не отработать (см. шапку файла)
+    document.addEventListener('DOMContentLoaded', function () {
+        // страницы «+» приходят с сервера — тоже до сборки страницы (SYSTEM/boot.js)
+        window.MissionBoot?.task('pages', restore());
+    });
+    async function restore() {
+            const { pages = [] } = await App.api('/api/pages', {});
+            for (const page of pages) addPageButton(page.title, page.id, page.folder);
+            // последним был открыт не таб, а одна из этих страниц — возвращаем на неё.
+            // Вкладку в этом случае tabs.js специально не показывал: он не знает список страниц
+            const last = MissionTabs.readLastView() || '';
+            if (!last.startsWith('page:')) return;
+            const open = openers.get(last.slice('page:'.length));
+            // страницу могли удалить с прошлого захода — тогда обычная вкладка по умолчанию
+            // открытие ждём: содержимое страницы тоже должно быть на месте к
+            // тому моменту, когда страницу наконец покажут (SYSTEM/boot.js)
+            if (open) await open();
+            else MissionTabs.show('chat');
+    }
 })();
