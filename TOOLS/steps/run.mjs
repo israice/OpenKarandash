@@ -71,9 +71,22 @@ function measure(id, steps) {
 const sessions = chosen.map(([id, steps]) => measure(id, steps));
 sessions.sort((a, b) => (a.at < b.at ? -1 : 1));
 
-// половины окна: свежие сессии против тех, что были до отметки времени
-function split(list) {
-    const cut = new Date(vsAt).getTime();
+// Время в базе записано в UTC, а `--vs` человек читает с экрана инструмента.
+// Если печатать UTC, а отметку понимать как местное, сравнение получается правдоподобным
+// и completely неверным: на окне из шестнадцати сессий инструмент так напечатал
+// «лишних 442 → 73» на пустой правой половине. Поэтому печатаем местное время —
+// скопированное с экрана отметку инструмент понимает однозначно.
+function fmtLocal(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso).slice(5, 16);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+// половины окна: свежие сессии против тех, что были до отметки времени.
+// Отметку проверяет вызывающий — неразбираемое время должно давать понятную
+// строку, а не стек ошибки посреди сводки
+function split(list, cut) {
     const before = list.filter((s) => new Date(s.at).getTime() < cut);
     const after = list.filter((s) => new Date(s.at).getTime() >= cut);
     return { before, after };
@@ -94,13 +107,16 @@ function totalsOf(list) {
 }
 
 const share = (n, steps) => (steps ? `${Math.round((n / steps) * 100)}%` : '—');
+// доля числом, а не строкой: иначе строка сравнения получает строки и печатает
+// «▲ NaN» рядом с числом, которое как раз и есть доказательство
+const pctNum = (n, steps) => (steps ? Math.round((n / steps) * 100) : 0);
 const whatOf = (id) => (id === SESSION_KIND.id ? SESSION_KIND : KINDS.find((k) => k.id === id))?.what || '';
 
 function printList(list) {
     console.log('сессия                        шагов  жёстких  всего  доля');
     for (const s of list) {
         const hardShare = Math.round((s.hard / Math.max(s.steps, 1)) * 100);
-        console.log(`  ${s.id.padEnd(28)} ${String(s.steps).padStart(5)}  ${String(s.hard).padStart(7)}  ${String(s.waste).padStart(5)}  ${String(hardShare).padStart(4)}%  ${s.at.slice(5, 16)}`);
+        console.log(`  ${s.id.padEnd(28)} ${String(s.steps).padStart(5)}  ${String(s.hard).padStart(7)}  ${String(s.waste).padStart(5)}  ${String(hardShare).padStart(4)}%  ${fmtLocal(s.at)}`);
     }
 }
 
@@ -109,14 +125,17 @@ function printList(list) {
 // Обе половины печатаются рядом и по видам, а не только итогом: правка обычно
 // бьёт по одному виду, и по нему и видно, сработала она или нет
 if (vsAt) {
-    const { before, after } = split(sessions);
+    const cut = new Date(vsAt).getTime();
+    const { before, after } = Number.isNaN(cut) ? { before: [], after: [] } : split(sessions, cut);
     const was = totalsOf(before);
     const now = totalsOf(after);
-    if (!was.sessions || !now.sessions) {
+    if (Number.isNaN(cut)) {
+        console.log(`--vs: «${vsAt}» не разбирается как время. Ожидается местное время в виде 2026-10-04T18:30.\n`);
+    } else if (!was.sessions || !now.sessions) {
         console.log(`Одна из половин окна пуста (было ${was.sessions}, стало ${now.sessions}) — сравнивать нечего.`);
         console.log('Отметку --vs ставь по времени между старой и новой сессиями.\n');
     } else {
-        console.log(`окно: до ${vsAt} и после. Сессий: было ${was.sessions}, стало ${now.sessions}\n`);
+        console.log(`окно: до ${fmtLocal(vsAt)} (местное время) и после. Сессий: было ${was.sessions}, стало ${now.sessions}\n`);
         const line = (name, a, b) => {
             const delta = b - a;
             const mark = delta === 0 ? '  =  ' : delta < 0 ? ' ▼ ' : ' ▲ ';
@@ -126,7 +145,7 @@ if (vsAt) {
         line('шагов всего', was.steps, now.steps);
         line('лишних шагов', was.waste, now.waste);
         line('жёстких лишних', was.hard, now.hard);
-        line('доля жёстких', share(was.hard, was.steps), share(now.hard, now.steps));
+        line('доля жёстких, %', pctNum(was.hard, was.steps), pctNum(now.hard, now.steps));
         console.log('\n  по видам (было → стало):');
         const ids = [...new Set([...was.kinds.keys(), ...now.kinds.keys()])];
         for (const id of ids.sort((a, b) => (now.kinds.get(b) || 0) - (now.kinds.get(a) || 0))) {
