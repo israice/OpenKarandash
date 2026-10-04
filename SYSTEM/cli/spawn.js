@@ -26,13 +26,32 @@ function killTree(child) {
 
 const EXEC_MODE = process.env.EXEC_MODE || null;
 const EXEC_BRIDGE_URL = (process.env.EXEC_BRIDGE_URL || 'http://host.docker.internal:8789').replace(/\/+$/, '');
+
+// Сколько молчать, прежде чем считать ход зависшим. Молчание CLI — не ошибка
+// само по себе: модель думает, инструмент работает (bash-с шагом в 5 минут —
+// обычное дело). Порог стоит выше самой долгой legit-тишины и заменяется
+// STALL_TIMEOUT_MS в .env.
+//
+// Зачем он нужен: провайдерский лимит opencode/openrouter CLI переживает молча.
+// Он не печатает события в поток (значит, лента не получает ни ошибки, ни
+// конца хода), не отдаёт код возврата и не пишет в stderr — запрос висит, и
+// ход остаётся «идущим» на все часы OPENCODE_ASK_TIMEOUT_MS, пока клиент не
+// догадается нажать Stop. Проверено вживую: после «Rate limit exceeded:
+// free-models-per-day-stealth» в логе CLI не было ни строки следующие полчаса,
+// сессия так и осталась активной.
+//
+// Текст ошибки намеренно называет лимит: по нему суждение о поломке хода
+// (failure-judgment.js, критерий limit) кладёт пару агент+модель в кулдаун до
+// конца суток UTC — следующий ход не полезет в ту же исчерпанную модель.
+const STALL_MS = Number(process.env.STALL_TIMEOUT_MS) || 10 * 60 * 1000;
+const STALL_TEXT = (ms) => `No output from the CLI for ${Math.round(ms / 1000)}s — the turn is stuck. Most often the model provider's rate limit or daily quota is exhausted (openrouter: "Rate limit exceeded"), and the CLI keeps the request hanging instead of failing it.`;
 const EXEC_BRIDGE_TOKEN = process.env.EXEC_BRIDGE_TOKEN || '';
 
 function execBridgeHeaders() {
     return EXEC_BRIDGE_TOKEN ? { Authorization: `Bearer ${EXEC_BRIDGE_TOKEN}` } : {};
 }
 
-function execViaBridge(cmd, args, { timeoutMs, onLine, onSpawn } = {}) {
+function execViaBridge(cmd, args, { timeoutMs, stallMs, onLine, onSpawn } = {}) {
     return new Promise((resolve, reject) => {
         const url = new URL(`${EXEC_BRIDGE_URL}/exec`);
         const payload = JSON.stringify({ cmd, args, timeoutMs });
@@ -43,6 +62,23 @@ function execViaBridge(cmd, args, { timeoutMs, onLine, onSpawn } = {}) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...execBridgeHeaders() },
         });
+
+        // тот же сторож молчания, что и у локального spawn: мост шлёт события
+        // построчно, и любая строка (event.type === 'line') доказывает, что
+        // процесс жив. Без него зависший по лимиту ход ждал бы на мосте все
+        // timeoutMs точно так же
+        const stallAfter = Number(stallMs) > 0 ? Number(stallMs) : STALL_MS;
+        let stallTimer = setTimeout(onStall, stallAfter);
+        const fed = () => {
+            clearTimeout(stallTimer);
+            stallTimer = setTimeout(onStall, stallAfter);
+        };
+        function onStall() {
+            if (finished) return;
+            done(new Error(STALL_TEXT(stallAfter)));
+            req.destroy();
+            fakeChild.kill();
+        }
 
         // мост сам применяет timeoutMs к процессу — это лишь страховка на случай,
         // если сам HTTP-запрос к мосту повиснет (сеть недоступна, мост завис)
@@ -73,6 +109,7 @@ function execViaBridge(cmd, args, { timeoutMs, onLine, onSpawn } = {}) {
         const done = (err, value) => {
             if (finished) return;
             finished = true;
+            clearTimeout(stallTimer);
             err ? reject(err) : resolve(value);
         };
 
@@ -99,7 +136,7 @@ function execViaBridge(cmd, args, { timeoutMs, onLine, onSpawn } = {}) {
                     let event;
                     try { event = JSON.parse(raw); } catch { continue; }
                     if (event.type === 'started') fakeChild.__runId = event.runId;
-                    else if (event.type === 'line') onLine ? onLine(event.text) : (stdout += event.text + '\n');
+                    else if (event.type === 'line') { fed(); onLine ? onLine(event.text) : (stdout += event.text + '\n'); }
                     else if (event.type === 'done') {
                         if (event.timedOut) return done(new Error(`Timed out (${Math.round((timeoutMs || 0) / 1000)}s)`));
                         if (event.code === 0) return done(null, stdout);
@@ -114,11 +151,11 @@ function execViaBridge(cmd, args, { timeoutMs, onLine, onSpawn } = {}) {
     });
 }
 
-// run(cmd, args, { timeoutMs, onLine, onSpawn }) — обе ветви (локальная и мост)
-// отдают одно и то же: stdout строкой, если onLine не задан, и по одной строке
-// в onLine, если задан. Таймаут и Stop — тоже одни и те же
-function run(cmd, args, { timeoutMs, onLine, onSpawn } = {}) {
-    if (EXEC_MODE === 'remote') return execViaBridge(cmd, args, { timeoutMs, onLine, onSpawn });
+// run(cmd, args, { timeoutMs, stallMs, onLine, onSpawn }) — обе ветви (локальная и
+// мост) отдают одно и то же: stdout строкой, если onLine не задан, и по одной
+// строке в onLine, если задан. Таймаут, сторож молчания и Stop — тоже одни и те же
+function run(cmd, args, { timeoutMs, stallMs, onLine, onSpawn } = {}) {
+    if (EXEC_MODE === 'remote') return execViaBridge(cmd, args, { timeoutMs, stallMs, onLine, onSpawn });
 
     return new Promise((resolve, reject) => {
         const child = spawn(cmd, args, { windowsHide: true });
@@ -127,9 +164,17 @@ function run(cmd, args, { timeoutMs, onLine, onSpawn } = {}) {
         let stdout = '';
         let stderr = '';
         let finished = false;
+        // сторож молчания: ни байта от процесса за stallMs — считаем ход
+        // зависшим и гасим дерево. ТишинаCLI сама по себе нормальна (модель
+        // думает, инструмент работает), поэтому порог большой, и любая прожитка
+        // его сдвигает. Обнуляется целиком: иначе зависший после долгой работы
+        // ход ждал бы ещё полный срок с нуля
+        const stallAfter = Number(stallMs) > 0 ? Number(stallMs) : STALL_MS;
+        let stallTimer = setTimeout(onStall, stallAfter);
 
         const timer = setTimeout(() => {
             finished = true;
+            clearTimeout(stallTimer);
             killTree(child);
             reject(new Error(`Timed out (${Math.round(timeoutMs / 1000)}s)`));
         }, timeoutMs);
@@ -138,7 +183,25 @@ function run(cmd, args, { timeoutMs, onLine, onSpawn } = {}) {
             if (finished) return;
             finished = true;
             clearTimeout(timer);
+            clearTimeout(stallTimer);
             err ? reject(err) : resolve(value);
+        };
+
+        // ход повис: тот же путь, что и таймаут, — дерево гасится и приходит
+        // отказ с внятным текстом. Дальше его подхватит общая обвязка хода:
+        // ошибка уйдёт в ленту, а пара агент+модель — в кулдаун до конца суток
+        function onStall() {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            killTree(child);
+            reject(new Error(STALL_TEXT(stallAfter)));
+        }
+
+        const fed = () => {
+            if (finished) return;
+            clearTimeout(stallTimer);
+            stallTimer = setTimeout(onStall, stallAfter);
         };
 
         child.on('error', (err) => {
@@ -147,6 +210,7 @@ function run(cmd, args, { timeoutMs, onLine, onSpawn } = {}) {
 
         let tail = '';
         child.stdout.on('data', (chunk) => {
+            fed();
             if (!onLine) {
                 stdout += chunk;
                 return;
@@ -158,7 +222,8 @@ function run(cmd, args, { timeoutMs, onLine, onSpawn } = {}) {
                 if (line.trim()) onLine(line);
             }
         });
-        child.stderr.on('data', (chunk) => { stderr += String(chunk); });
+        // stderr — тоже признак жизни процесса: часть CLI пишет туда прогресс
+        child.stderr.on('data', (chunk) => { fed(); stderr += String(chunk); });
 
         child.on('close', (code) => {
             // CLI шлёт ошибку хода событием type:'error' внутри NDJSON, а не
