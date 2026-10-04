@@ -146,7 +146,11 @@ const MAX_HINTS = 2;
 // только сужает полсотни записок до нескольких, а решает по каждой отдельный
 // Noul — они независимы, считаются в одном запросе параллельно и не мешают
 // друг другу, как мешали бы варианты одного выбора.
-async function pickDecisionHints(request) {
+//
+// gateHint — минимальная уверенность первого выбора, ниже которой подсказки не
+// берём вовсе. Приходит снаружи: judgment-config.js сам требует этот файл, и
+// собственный импорт порогов здесь замкнул бы цикл (DOCS/decisions/089).
+async function pickDecisionHints(request, gateHint) {
     if (!typesafe.isEnabled()) return null;
     const text = String(request || '').trim();
     if (text.length < 20) return null; // «привет» и «продолжай» подсказки не требуют
@@ -208,12 +212,103 @@ async function pickDecisionHints(request) {
     const second = await typesafe.systemOne({ ...state, notes }, questions);
     if (!second?.answers) return null;
 
-    const picked = shortlist
-        .map((item) => ({ ...item, noul: typesafe.noul(second.answers, item.id) ?? 0 }))
-        .filter((item) => item.noul >= DECISION_HINT)
-        .sort((a, b) => b.noul - a.noul)
-        .slice(0, MAX_HINTS);
+    // отсекаем ещё и по уверенности первого запроса: noul-вопрос отвечает «обязана
+    // ли записка», и на запросе вроде «удалить карточку провайдера» он уверенно
+    // отвечает «да» сразу трём запискам про место. Уверенность Choice говорит, насколько
+    // выбор вообще однозначен, и шум отсекает (замер в DOCS/decisions/089).
+    // Порог приходит параметром, а не из judgment-config.js: тот сам требует этот
+    // файл, и импорт отсюда замкнул бы цикл (см. комментарий в judgment-config)
+    const gate = Number(gateHint) > 0 ? Number(gateHint) : 0;
+    const confidence = first.answers.decision_note?.confidence ?? 1;
+    const picked = confidence >= gate
+        ? shortlist
+            .map((item) => ({ ...item, noul: typesafe.noul(second.answers, item.id) ?? 0, confidence }))
+            .filter((item) => item.noul >= DECISION_HINT)
+            .sort((a, b) => b.noul - a.noul)
+            .slice(0, MAX_HINTS)
+        : [];
+    // что получилось — возвращаем как раньше (файл и заголовок), но с оценками
+    // рядом: их кладёт вызывающий в result_meta хода, чтобы пороги можно было
+    // перемерить на живых данных, а не по памяти (DOCS/decisions/089)
     return picked.length ? picked : null;
+}
+
+// Разбор подбора по ступеням — для замера, а не для поведения: показывает, на
+// какой ступени запрос потерялся. Документация TypeSafe прямо советует смотреть
+// именно на это («identify which nodes your misclassifications occur most in»),
+// а без разбора молчание записок неотличимо от «подсказки не нужны».
+// Поведения не меняет: та же логика и тот же порядок отсечек.
+async function traceDecisionHints(request, gateHint) {
+    if (!typesafe.isEnabled()) return null;
+    const text = String(request || '').trim();
+    if (text.length < 20) return { reason: 'слишком короткий запрос', none: null, top: [], stage2: [] };
+    const items = fitToBudget(readDecisions());
+    if (!items.length) return { reason: 'нет записок', none: null, top: [], stage2: [] };
+
+    const criteria = { [NO_MATCH]: { what: 'No note here explains this request; the code is enough.' } };
+    for (const item of items) criteria[item.id] = { what: `${item.title}. ${item.summary}` };
+    const first = await typesafe.systemOne({ request: text.slice(0, REQUEST_LIMIT) }, {
+        decision_note: {
+            type: 'choice',
+            instructions: {
+                question: 'Which project decision note is most relevant to `request`?',
+                focus: 'These notes record why the project is built the way it is.',
+            },
+            criteria,
+        },
+    });
+    const probabilities = first?.answers?.decision_note?.probabilities;
+    if (!probabilities) return { reason: 'нет ответа', none: null, top: [], stage2: [] };
+
+    const confidence = first.answers.decision_note?.confidence ?? 1;
+    const top = Object.entries(probabilities)
+        .filter(([id]) => id !== NO_MATCH)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, SHORTLIST)
+        .map(([id, p]) => ({ id, p, title: items.find((one) => one.id === id)?.title || id }));
+    const none = probabilities[NO_MATCH] ?? 0;
+    const shortlist = top
+        .filter((one) => one.p > 0)
+        .map((one) => items.find((i) => i.id === one.id))
+        .filter(Boolean);
+
+    let stage2 = [];
+    if (!shortlist.length || none >= shortlist.reduce((max, one) => Math.max(max, probabilities[one.id]), 0)) {
+        return { reason: shortlist.length ? '«ничего не подходит» увереннее кандидатов' : 'кандидатов нет вовсе', none, confidence, top, stage2 };
+    }
+
+    const notes = {};
+    const questions = {};
+    for (const item of shortlist) {
+        notes[item.id] = { title: item.title, summary: item.detail };
+        questions[item.id] = {
+            type: 'noul',
+            instructions: `Must the note \`notes.${item.id}\` be read before doing \`request\`?`,
+            criteria: {
+                true: { what: 'Doing the request without this note would produce work that contradicts it.' },
+                false: {
+                    what: 'The note is on a neighbouring topic, or the request does not touch what it decides.',
+                    not_for: 'A note that genuinely constrains the request.',
+                },
+            },
+        };
+    }
+    const second = await typesafe.systemOne({ request: text.slice(0, REQUEST_LIMIT), notes }, questions);
+    stage2 = shortlist.map((item) => ({
+        id: item.id,
+        title: item.title,
+        noul: typesafe.noul(second?.answers, item.id),
+    }));
+    // вердикт считается по тем же правилам, что и в самом подборе: иначе разбор
+    // врал бы и на запросах, где записка была подобрана (замер 2026-10-04)
+    const gate = Number(gateHint) > 0 ? Number(gateHint) : 0.6;
+    const passed = stage2.filter((one) => (one.noul ?? 0) >= DECISION_HINT);
+    const best = stage2.reduce((max, one) => Math.max(max, one.noul ?? 0), 0);
+    let reason;
+    if (passed.length && confidence >= gate) reason = `подобрано ${passed.length}`;
+    else if (confidence < gate) reason = `уверенность первого выбора ${confidence.toFixed(2)} ниже гарда ${gate}`;
+    else reason = `второй запрос не дал оценки ≥ ${DECISION_HINT} (лучшая ${best.toFixed(2)})`;
+    return { reason, none, confidence, top, stage2 };
 }
 
 // то, что дописывается к запросу агента. Отдельной функцией, чтобы текст
@@ -225,4 +320,9 @@ function hintPreamble(hints) {
         + 'Записки объясняют, почему в проекте сделано так; идти против них нельзя, не переписав саму записку.\n\n';
 }
 
-module.exports = { pickDecisionHints, hintPreamble, DECISION_HINT };
+// что из подбора пишется в result_meta хода: заголовок, оценка и уверенность.
+// Заголовок, а не путь к файлу: путь и так есть в самой подсказке, а читать
+// через год будут именно заголовки — что подсовывалось и с какой оценкой
+const HINT_FIELDS = ['title', 'noul', 'confidence'];
+
+module.exports = { pickDecisionHints, hintPreamble, traceDecisionHints, DECISION_HINT, HINT_FIELDS };
