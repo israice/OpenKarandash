@@ -26,13 +26,14 @@ function create(deps) {
     const {
         startExchange, setMessageMode, setCliSession, finishExchange,
         countToolSteps, listToolSteps, getSessionTitle,
+        recordThinking, setMessageText, appendRaw, clip,
         turnJudgment, notifyTurnFinished, willHandOver, runs, map, live,
     } = deps;
 
     // сколько отложенный перезапуск сервера ждёт письмо о конце хода (см. finally)
     const MAIL_WAIT_MS = 30000;
 
-    return async function runTurn({ target, prompt, sessionId, model, effort, mode, plan }, send, drive) {
+    return async function runTurn({ target, prompt, sessionId, model, effort, mode, plan, hints, skill }, send, drive) {
         // startedAt — момент начала именно этого хода: по нему панель Sessions
         // тикает «живую» длительность активной сессии (см. runs.activeStartedAt
         // и /api/fragment/session-list), пока finishExchange не зафиксирует
@@ -51,6 +52,28 @@ function create(deps) {
             // Hermes — у него их бывает несколько: автоповтор внутри хода)
             resultRaws: [],
         };
+
+        // Рассуждение модели — одна строка базы на блок мыслей, а не на
+        // каждый пришедший кусок. Строка базы — это то, что показывают все
+        // три отображения (DOCS/decisions/039), и Sessions рисует такую
+        // строку гармошкой: в заголовке последний абзац мыслей, в теле все
+        // абзацы блока. Копить на клиенте нельзя — в базе оказалось бы N
+        // строк, на странице одна, и сверка three-views сочла бы это
+        // расхождением (TOOLS/live-verify/scenarios/three-views.js).
+        //
+        // Блок дополняется, пока идут мысли, и закрывает первое событие
+        // хода, которое не мысль: действие, ответ, ошибка. Закрывать его
+        // порой нельзя — иначе строка базы и блок на странице разойдутся:
+        // мысли после действия дописались бы в строку до него, а на странице
+        // встали бы отдельным блоком
+        const CLOSES_THOUGHT = new Set(['tool', 'notice', 'text', 'error']);
+        const thought = { position: null, parts: [] };
+
+        // следующая мысль встанет новой строкой базы и новым блоком в ленте
+        function closeThought() {
+            thought.position = null;
+            thought.parts = [];
+        }
 
         const ctx = {
             run, target, meta,
@@ -76,6 +99,7 @@ function create(deps) {
                 if (found || ctx.planBuffer.length > 1500) ctx.planDone = true;
             },
             emit(event) {
+                if (CLOSES_THOUGHT.has(event.type)) closeThought();
                 if (event.type === 'text') ctx.planFeed(`${event.text}\n`);
                 // план после первого шага — уже не план, а отчёт: такой не пересылаем
                 if (event.type === 'tool') { ctx.planFeed('', true); ctx.planDone = true; }
@@ -89,6 +113,27 @@ function create(deps) {
             emitLive(event) {
                 send(event);
                 runs.emitLive(ctx.session, event);
+            },
+            // мысль модели (reasoning у OpenCode, thinking у Claude).
+            //
+            // Лента получает не кусок, а блок целиком: заголовок гармошки
+            // показывает последний абзац мыслей, и по кускам он прыгал бы с
+            // каждой новой мыслью. В базу кладётся тот же самый текст, поэтому
+            // живая лента и лента, перечитанная после хода, рисуют одно и
+            // то же. Обрезка clip — общая с записью в базу, иначе после
+            // перечитывания блок выглядел бы иначе, чем во время хода
+            think(text, raw, signature) {
+                const part = String(text || '').trim();
+                if (!ctx.session || !part) return;
+                thought.parts.push(part);
+                const block = clip(thought.parts.join('\n\n'));
+                if (thought.position === null) {
+                    thought.position = recordThinking(ctx.session, block, signature || null, raw);
+                } else {
+                    setMessageText.run(block, ctx.session, thought.position);
+                    if (raw) appendRaw(ctx.session, thought.position, raw);
+                }
+                ctx.emit({ type: 'thinking', text: block });
             },
             fail(text) {
                 ctx.errorText = text;
@@ -170,6 +215,19 @@ function create(deps) {
                     if (ctx.errorText) await turnJudgment.classifyFailure(ctx.errorText).catch(() => null);
                     const notify = turnJudgment.shouldNotify(judgment, { errorText: ctx.errorText });
                     if (judgment) meta.resultMeta = { ...(meta.resultMeta || {}), judgment: { ...judgment, notified: notify } };
+                    // что было подложено в запрос и с какими оценками. Это то, по
+                    // чему пороги перемеряются на живых данных: без записи их
+                    // пришлось бы угадывать по памяти, а замер на двадцати одном
+                    // запросе однажды устареет (DOCS/decisions/089)
+                    if (hints?.length || skill) {
+                        meta.resultMeta = {
+                            ...meta.resultMeta,
+                            suggestions: {
+                                notes: (hints || []).map((h) => ({ title: h.title, noul: h.noul, confidence: h.confidence ?? null })),
+                                skill: skill ? { title: skill.title, match: skill.match } : null,
+                            },
+                        };
+                    }
                     // durationMs: только askClaude реально разбирает event.duration_ms
                     // от CLI (см. event.type === 'result' в коннекторе) — у остальных
                     // коннекторов meta.durationMs так и остаётся null, ничего не попадает

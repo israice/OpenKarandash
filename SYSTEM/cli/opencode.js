@@ -109,20 +109,28 @@ function create({ runTurn, resumeAndHandoff, db }) {
         return stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean);
     }
 
-    async function ask({ prompt, model, sessionId, mode, hints, plan }, send) {
+    async function ask({ prompt, model, sessionId, mode, hints, skill, plan }, send) {
         if (!activeTarget) return send({ type: 'error', error: 'OpenCode is not connected' });
         const target = activeTarget;
         if (!prompt) return send({ type: 'error', error: 'Empty request' });
 
-        const { resumeId, handoff } = await resumeAndHandoff(sessionId, target.id, hints, plan, prompt);
+        const { resumeId, handoff } = await resumeAndHandoff(sessionId, target.id, hints, skill, plan, prompt);
         const args = ['run', handoff + prompt, '--format', 'json'];
+        // Рассуждение модели CLI печатает отдельными событиями только с этим
+        // флагом («show thinking blocks»): без него в поток уходят лишь текст
+        // и шаги, и мысли в ленте не появятся вовсе. На сам ход флаг не
+        // влияет — модель рассуждает как умеет, CLI лишь показывает написанное
+        args.push('--thinking');
         if (model) args.push('--model', model);
         if (resumeId) args.push('--session', resumeId);
         // у OpenCode нет проверенного аналога --permission-mode/--disallowedTools у Claude
         // (см. память команды) — режим Chat/Action пока только помечает строки в базе
         // (mode-колонка), инструменты CLI на уровне флагов не ограничивает
 
-        return runTurn({ target, prompt, sessionId, model, mode, plan }, send, async (ctx) => {
+        // подсказки и приём едут в runTurn не ради текста запроса (он уже собран
+        // в handoff выше), а ради своих оценок: они ложатся в result_meta хода,
+        // и по ним пороги перемеряются на живых данных (DOCS/decisions/089)
+        return runTurn({ target, prompt, sessionId, model, mode, plan, hints, skill }, send, async (ctx) => {
             let cliSessionSeen = false;
             // callID вызова инструмента -> позиция строки шага: tool_use приходит дважды
             // на один callID (сперва running, потом completed), вторая запись только
@@ -142,6 +150,22 @@ function create({ runTurn, resumeAndHandoff, db }) {
                 if (event.sessionID && !cliSessionSeen) {
                     cliSessionSeen = true;
                     ctx.begin(event.sessionID);
+                }
+
+                if (event.type === 'reasoning' && event.part) {
+                    // Рассуждение модели — часть типа reasoning. CLI отдаёт её
+                    // уже собранной и только когда она дописана (у части стоит
+                    // time.end), поэтому склеивать куски здесь нечего: блок
+                    // мыслей собирает общая обвязка хода (ctx.think в
+                    // SYSTEM/core/run-turn.js) — она же кладёт его в базу одной
+                    // строкой, которую показывают Sessions, Feed и Flow
+                    // подпись блока хранится фактом и длиной, а не самой строкой
+                    // (recordThinking), поэтому в неё годится только строка:
+                    // у opencode в подписи провайдера может лежать объект
+                    const signature = typeof event.part.signature === 'string'
+                        ? event.part.signature : null;
+                    ctx.think(event.part.text, event.part, signature);
+                    return;
                 }
 
                 if (event.type === 'text' && event.part?.text?.trim()) {
@@ -195,7 +219,7 @@ function create({ runTurn, resumeAndHandoff, db }) {
                 }
 
                 // step_start и прочие неразобранные события: у OpenCode нет аналога
-                // thinking/rate_limit, своей ветки в общей схеме под них нет
+                // rate_limit, своей ветки в общей схеме под него нет
             };
 
             await runOpenCode(target, args, {

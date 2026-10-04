@@ -7,7 +7,7 @@
 // иначе модули импортировали бы друг друга по кругу.
 import { state, PENDING_SESSION_ID } from './sessions-state.js';
 import {
-    isNearBottom, scrollToBottom, addStep, addThinking, addMessage,
+    isNearBottom, scrollToBottom, addStep, addThinking, addMessage, thinkingText,
     addPending, markPendingActivity, removePending, addInterrupted,
 } from './sessions-feed.js';
 import { renderStored, isTurnUnfinished } from './sessions-history.js';
@@ -48,10 +48,15 @@ function makeRenderer(status, model) {
                     ? addThinking('', status)
                     : addMessage('', 'assistant', null, status);
                 node.classList.add('chat-message--draft');
-                draft = { kind: event.kind, text: '', node };
+                // мысли, уже собранные в блок, — начало набора: первый кусок
+                // потока дополняет блок, а не заменяет его (thinkingText)
+                draft = { kind: event.kind, text: event.kind === 'thinking' ? thinkingText() : '', node };
             }
             draft.text += event.text;
-            draft.node.textContent = draft.text;
+            // мысли идут кусками только у CLI, которые шлют поток: набор идёт
+            // в тот же блок, что и целый текст, а ответ — в свой узел
+            if (event.kind === 'thinking') addThinking(draft.text, status);
+            else draft.node.textContent = draft.text;
             markPendingActivity(status);
             if (stick) scrollToBottom();
             return;

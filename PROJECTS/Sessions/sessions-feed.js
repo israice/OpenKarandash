@@ -133,6 +133,8 @@ function setStepOpen(step, open) {
 // инструмента выделяем цветным тегом, разбирая первое слово.
 // row — строка сессии целиком: из неё тело гармошки (если оно есть)
 export function addStep(text, before, row) {
+    // действие закрывает блок мыслей: дальше модель думает уже о новом шаге
+    closeThinking();
     const stick = isNearBottom();
     const step = document.createElement('div');
     step.className = 'chat-message chat-message--tool';
@@ -174,18 +176,75 @@ export function addStep(text, before, row) {
     return step;
 }
 
-// Рассуждение модели (event.type === 'thinking'). Раньше текст в неё вообще
-// не попадал — событие тихо отбрасывалось, и в ленте не оставалось следа
+// ---------- блок размышления ----------
+
+// Блок мыслей модели: в заголовке последний дошедший абзац, в теле — все
+// абзацы блока по порядку. Собирает его сервер (одна строка базы на блок,
+// ctx.think в SYSTEM/core/run-turn.js), лента только рисует: текст приходит
+// уже целиком, поэтому блок не растёт по кускам, а заменяется целиком.
+// Свёрнут он по умолчанию — мыслей в ходе много, а читают ответ и шаги
+let openThinking = null;
+
+// абзац мысли — кусок между пустыми строками, как их пишет модель. Тот же
+// разрез делает и сервер, склеивая мысли блока через пустую строку, поэтому
+// блок из базы и блок живого потока режутся одинаково
+function thoughtParagraphs(text) {
+    return String(text).split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
+}
+
 export function addThinking(text, before) {
     const stick = isNearBottom();
-    const step = document.createElement('div');
-    step.className = 'chat-message chat-message--thinking';
-    step.textContent = text;
-    step.title = text;
-    if (before && before.parentNode === state.list) state.list.insertBefore(step, before);
-    else state.list.append(step);
+    // блок из прошлой сессии или прошлого хода к списку не подключён: мысли
+    // дописывать в него нельзя, следующая встанет своим блоком
+    if (!openThinking?.isConnected) {
+        const block = document.createElement('details');
+        block.className = 'chat-message chat-message--thinking';
+
+        const head = document.createElement('summary');
+        head.className = 'chat-thinking-head';
+
+        const body = document.createElement('div');
+        body.className = 'chat-thinking-body';
+
+        block.append(head, body);
+        if (before && before.parentNode === state.list) state.list.insertBefore(block, before);
+        else state.list.append(block);
+        openThinking = block;
+    }
+
+    const paragraphs = thoughtParagraphs(text);
+    if (paragraphs.length) {
+        const head = openThinking.querySelector('.chat-thinking-head');
+        head.textContent = paragraphs[paragraphs.length - 1];
+        head.title = head.textContent;
+
+        const body = openThinking.querySelector('.chat-thinking-body');
+        body.replaceChildren(...paragraphs.map((part) => {
+            const paragraph = document.createElement('p');
+            paragraph.className = 'chat-thinking-paragraph';
+            paragraph.textContent = part;
+            return paragraph;
+        }));
+    }
+
     if (stick) scrollToBottom();
-    return step;
+    return openThinking;
+}
+
+// Блок мыслей закончен: следующая мысль встанет своим блоком. Зовут его
+// addStep (действие) и addMessage (ответ или реплика человека) — там мысли
+// и заканчиваются по смыслу; сам блок остаётся в ленте свёрнутым
+export function closeThinking() {
+    openThinking = null;
+}
+
+// Текст текущего блока мыслей целиком. Нужен потоку, который шлёт мысли
+// кусками (событие delta, sessions-stream.js): первый его кусок должен
+// дополнить уже собранный блок, а не заменить его своими двумя словами
+export function thinkingText() {
+    if (!openThinking?.isConnected) return '';
+    return openThinking.querySelectorAll('.chat-thinking-paragraph')
+        .map((paragraph) => paragraph.textContent).join('\n\n');
 }
 
 // Реплика ленты. model — та модель, которая дала этот ответ: у строки из базы
@@ -195,6 +254,8 @@ export function addThinking(text, before) {
 // before — вставить перед этой строкой, а не в конец: так ответ встаёт выше
 // строки ожидания, которая остаётся последней
 export function addMessage(text, kind, model, before) {
+    // ответ или реплика человека закрывают блок мыслей
+    closeThinking();
     const stick = isNearBottom();
     state.empty.hidden = true;
 

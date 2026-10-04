@@ -216,22 +216,47 @@
     font-size: 0.78em;
 }
 
-/* рассуждение модели — визуально рядом со шагами инструментов, но курсивом,
-   чтобы читалось как «модель размышляет», а не как выполненное действие */
+/* блок размышления модели (sessions-feed.js, addThinking) — визуально рядом
+   со шагами инструментов, но курсивом, чтобы читалось как «модель
+   размышляет», а не как выполненное действие. Свёрнут по умолчанию: в
+   заголовке последний дошедший абзац мыслей, в теле — все абзацы блока */
 .chat-message--thinking {
     align-self: flex-start;
     max-width: 100%;
+    padding: 0;
     border: 1px solid #2e3138;
     background: transparent;
     color: #6a6f78;
     font-size: 0.8rem;
-    font-style: italic;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
+    /* переносы внутри абзаца ставит сам абзац (pre-wrap ниже), а не весь блок */
+    white-space: normal;
 }
+
+.chat-message--thinking:hover { border-color: #454a54; }
+
+.chat-thinking-head {
+    padding: 6px 14px;
+    font-style: italic;
+    cursor: pointer;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* своя стрелка <details> здесь лишняя: блок и так помечен курсивом, а рядом
+   с шагами инструментов читается как продолжение их списка */
+.chat-thinking-head::-webkit-details-marker { display: none; }
+
+.chat-thinking-body {
+    padding: 8px 14px;
+    border-top: 1px solid #2e3138;
+}
+
+/* абзац мысли: одиночные переносы модели сохраняются, пустыми строками она
+   сама разделяет абзацы — на этом и режется блок */
+.chat-thinking-paragraph { margin: 0; white-space: pre-wrap; }
+
+.chat-thinking-paragraph + .chat-thinking-paragraph { margin-top: 8px; }
 
 /* ---------- тело шага: секции с данными ---------- */
 
