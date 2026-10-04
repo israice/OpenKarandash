@@ -15,18 +15,18 @@
 // правило, что у MissionFiles, SidebarResize и TurnJudgment.
 
 (() => {
-    // «openrouter/stealth/space-bunny-alpha» → «Space Bunny Alpha».
-    // Провайдер и всё, что левее последнего слэша, — техническая часть имени
-    // (она же целиком лежит в подсказке): в подписи остаётся только то, что
-    // человек читает. Хвост после двоеточия (вариант «:free» у OpenRouter) и
-    // подчёркивания — тоже часть одной и той же строки, поэтому и они
-    // становятся пробелом, а не остаются в виде мусора
+    // «openrouter/stealth/space-bunny-alpha» → то же самое, целиком: весь путь
+    // к модели, а не только её имя. Раньше в подписи оставался хвост
+    // («Space Bunny Alpha»), но по нему не видно, через какой шлюз и чей
+    // поставщик отвечал, а при передаче хода другому исполнителю путь меняется
+    // целиком. Хвост после двоеточия (вариант «:free» у OpenRouter) и
+    // подчёркивания — часть одной и той же строки, поэтому и они становятся
+    // пробелом, а не остаются в виде мусора
     function label(model) {
         if (typeof model !== 'string') return '';
-        const tail = model.trim().split('/').pop().split(':')[0].replace(/_/g, '-');
-        return tail.split('-').filter(Boolean)
-            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(' ');
+        return model.trim().split('/')
+            .map((level) => level.split(':')[0].replace(/_/g, '-'))
+            .join('/');
     }
 
     // Плашка с названием модели. model неизвестен (старая строка, ход не от
@@ -38,8 +38,8 @@
         const span = document.createElement('span');
         span.className = 'model-tag';
         span.textContent = text;
-        // полное имя модели — в подсказке: видно, какая именно модель
-        // ответила, даже когда подпись сокращена
+        // путь целиком — в подсказке: подпись обрезается по ширине пузыря
+        // (SYSTEM/model-tag.css), и обрезанный конец виден только здесь
         span.title = model;
         return span;
     }

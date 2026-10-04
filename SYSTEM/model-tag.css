@@ -12,6 +12,11 @@
     font-size: 11px;
     line-height: 1.5;
     white-space: nowrap;
+    /* путь модели длинный, чем он уже — тем меньше от него должно уезжать за
+       край карточки или пузыря: обрезанный хвост виден в подсказке */
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* в ленте Sessions плашка — первой строкой внутри пузыря ответа: прижата к
@@ -21,8 +26,5 @@
 .chat-message--assistant > .model-tag {
     display: block;
     width: fit-content;
-    max-width: 100%;
     margin: 0 0 6px;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
