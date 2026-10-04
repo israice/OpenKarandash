@@ -44,7 +44,10 @@ function editedIn(sessionId) {
     for (const row of rows) {
         if (!/^(write|edit|multiedit|patch)$/.test(row.tool_name || '')) continue;
         let fp = '';
-        try { fp = JSON.parse(row.tool_input || '{}').filePath || ''; } catch { continue; }
+        // имя файла у разных коннекторов разное: opencode пишет `filePath`,
+        // pi — `path`. Читая только первое, инструмент молча пропускал все
+        // сессии pi (правок «ноль» → сессия в замер не попадала вовсе)
+        try { fp = JSON.parse(row.tool_input || '{}').filePath || JSON.parse(row.tool_input || '{}').path || ''; } catch { continue; }
         const file = norm(fp);
         if (!file.startsWith(ROOT_NORM)) continue;
         if (/\/data\/live\/|_scratch|\.md$|probe-|tmp-/.test(file)) continue;
@@ -75,6 +78,10 @@ const sessions = db.prepare(`
 let checked = 0;
 let hit = 0;
 const misses = [];
+// разрез по строке `Code:` из клика (DOCS/decisions/091): с ней отчёт называет
+// точные файлы, без неё — ищет по имени класса. Это и есть проверка того, что
+// решение 091 окупается, поэтому оно меряется отдельно, а не прячется в общем числе
+const eras = { withCode: [0, 0], withoutCode: [0, 0] };
 
 for (const s of sessions) {
     const request = db.prepare(`
@@ -89,8 +96,11 @@ for (const s of sessions) {
     checked += 1;
     const entry = base(edited[0]);
     const named = namedIn(built.report);
+    const era = /Code:\s*\S+\.(?:js|mjs|css|html|eta)/i.test(request) ? 'withCode' : 'withoutCode';
+    eras[era][1] += 1;
     if (named.has(entry)) {
         hit += 1;
+        eras[era][0] += 1;
         continue;
     }
     misses.push(`${s.session_id} — вход ${entry}, отчёт назвал ${named.size} файлов, сессия правила ${new Set(edited.map(base)).size}`);
@@ -101,4 +111,9 @@ console.log(`вход в задачу отчёт назвал: ${hit} из ${che
 for (const line of misses) console.log(`  нет: ${line}`);
 if (!misses.length) console.log('  все совпали');
 
+
+const eraLine = (name, [hits, total]) => `  ${name.padEnd(28)} ${hits} из ${total}${total ? ` (${Math.round((hits / total) * 100)}%)` : ''}`;
+console.log('\n— по наличию строки Code: в клике —');
+console.log(eraLine('со строкой Code:', eras.withCode));
+console.log(eraLine('без строки Code:', eras.withoutCode));
 db.close();
