@@ -149,22 +149,15 @@ export function restoreServerConnection(providerId = DEFAULT_AGENT) {
                 if (!r?.ok) return false;
                 if (Array.isArray(r.models) && r.models.length) {
                     const provider = PROVIDERS.find((p) => p.id === providerId);
-                    // Модель по умолчанию проекта живёт в этом же списке, а первая
-                    // строка от CLI — платная opencode/*, которая без ключа zen
-                    // отвечает 401 и кладёт каждый ход. Поэтому «модель пропала»
-                    // означает возврат к дефолту, а не к первой строке списка
-                    const fallbackModel = r.models.includes(DEFAULT_AGENT_MODEL)
-                        ? DEFAULT_AGENT_MODEL
-                        : (provider?.defaultModel && r.models.includes(provider.defaultModel)
-                            ? provider.defaultModel
-                            : r.models[0]);
                     if (provider) {
                         provider.models = r.models;
-                        if (!provider.defaultModel || !r.models.includes(provider.defaultModel)) {
-                            provider.defaultModel = fallbackModel;
+                        if (!provider.defaultModel || !r.models.includes(state.model)) {
+                            provider.defaultModel = provider.defaultModel && r.models.includes(provider.defaultModel)
+                                ? provider.defaultModel
+                                : r.models[0];
                         }
                     }
-                    if (state.model && !r.models.includes(state.model)) state.model = fallbackModel;
+                    if (state.model && !r.models.includes(state.model)) state.model = r.models[0];
                 }
                 return true;
             })
