@@ -29,9 +29,10 @@ function create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFall
         : Promise.resolve(null));
     // отчёт домашней работы — тем же путём, что и в пульте (homework-hint.js):
     // ход из Telegram ничем не отличается, иначе разведка шла бы по старой
-    // дороге только на одной половине входов
-    const pickHomework = (text) => (typeof homeworkHint.pickHomework === 'function'
-        ? homeworkHint.pickHomework({ request: text }).catch(() => null)
+    // дороге только на одной половине входов. sessionId обязателен: по нему
+    // память сессии отдаёт карту собранного отчёта на продолжающем ходу
+    const pickHomework = (text, id) => (typeof homeworkHint.pickHomework === 'function'
+        ? homeworkHint.pickHomework({ request: text, sessionId: id }).catch(() => null)
         : Promise.resolve(null));
 
     // Кто поведёт ход не из браузера. Подключение живёт в памяти процесса, а сторож
@@ -82,7 +83,7 @@ function create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFall
         // отказ до старта хода (не подключён, пустой запрос) в базу не попадёт и
         // обратно сам не уедет — такой возвращаем ошибкой. Всё, что случилось уже
         // внутри хода, дописано в сессию и уйдёт в Telegram обычным путём
-        const [hints, skill, homework] = await Promise.all([pickHints(text), pickSkill(text, name), pickHomework(text)]);
+        const [hints, skill, homework] = await Promise.all([pickHints(text), pickSkill(text, name), pickHomework(text, sessionId)]);
         const { failure, started } = await askWithFallback(
             name,
             {
@@ -111,7 +112,7 @@ function create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFall
         const like = likeSessionId && getSessionTitle.get(likeSessionId) ? likeSessionId : null;
         const { name, replaced } = await readyExecutor(like ? getSessionMeta.get(like)?.target : null, 'new session', note);
         const last = like ? (getLastTurnParams.get(like) || {}) : {};
-        const [hints, skill, homework] = await Promise.all([pickHints(text), pickSkill(text, name), pickHomework(text)]);
+        const [hints, skill, homework] = await Promise.all([pickHints(text), pickSkill(text, name), pickHomework(text, null)]);
         const { failure, started } = await askWithFallback(
             name,
             {

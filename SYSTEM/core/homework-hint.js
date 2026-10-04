@@ -27,15 +27,20 @@
 // Функции возвращают null, когда ключа нет, сервис не ответил, отчёт пустой
 // или суждение признало сообщение разговором: подсказка — украшение хода, а не
 // его условие.
-
 const path = require('path');
 const typesafe = require('./typesafe.js');
 const { THRESHOLDS } = require('./judgment-config.js');
 
-// collect.js лежит в TOOLS, а серверный код — в SYSTEM: путь строим от корня
-// проекта, чтобы модуль не зависел от того, откуда его подключили
+
+// collect.js и anchors.js лежат в TOOLS, а серверный код — в SYSTEM: путь
+// строим от корня проекта, чтобы модуль не зависел от того, откуда его
+// подключили
 const ROOT = path.join(__dirname, '..', '..');
 const { collect } = require(path.join(ROOT, 'TOOLS', 'homework', 'collect.js'));
+// якоря нужны отдельно от сборщика: по ним видно, есть ли в сообщении хоть
+// что искать, и это стоит без похода в rg — на продолжении сессии сбор
+// пропускается целиком
+const { anchorsOf } = require(path.join(ROOT, 'TOOLS', 'homework', 'anchors.js'));
 
 // сколько символов сообщения отдаём на суждение: решение «работа в проекте»
 // принимается по виду задачи, а длинное письмо его только размывает
@@ -87,13 +92,50 @@ function clipReport(report) {
     return `${cut.slice(0, cut.lastIndexOf('\n'))}\n…(отчёт обрезан)`;
 }
 
-// { report, kind, files, chars, work } либо null — отчёта нет
-async function pickHomework({ request }) {
+// ---------- память сессии ----------
+//
+// Продолжающий ход («ищи ещё глубже», «эту же строку и в настройках», «да
+// сделай») своих якорей не имеет: в замере на 23 ходах восьми сессий таких
+// было 8, и отчёт для них не собирался вовсе — агент остаётся с тем, что было
+// в первом запросе, и идёт перечитывать файлы целиком. Карта (файлы и строки)
+// весит около килобайта против 10–19 КБ отчёта с кусками кода, поэтому на
+// продолжении едет она, а не весь отчёт.
+//
+// Память живёт в процессе сервера и только на текущую работу: переживать
+// перезапуск нечему, а хранить её в базе — значило бы держать в памяти отчёт
+// ради каждой сессии месяцами.
+const maps = new Map();
+
+// карта отчёта — его заголовки «## Файл …, строки …»: файлы и строки, без
+// кусков кода. Берём из отчёта, а не строим заново, чтобы формат отчёта и
+// карта не разъехались
+function mapOf(report) {
+    return String(report || '')
+        .split('\n')
+        .filter((line) => line.startsWith('## Файл'))
+        .slice(0, 12)
+        .map((line) => line.replace(/^##\s*/, '').trim())
+        .join('\n');
+}
+
+// { report | map, kind, files, chars, work, reused } либо null — отчёта нет
+async function pickHomework({ request, sessionId }) {
     const text = String(request || '').trim();
     if (!text || text.length < 10) return null;
 
-    // Сначала суждение и только потом сбор: сборщик ходит в rg и в индекс
-    // проекта, то есть тратит секунды даже там, где искать нечего, а запросов
+    // Продолжение той же сессии проверяется первым и без суждения: своих
+    // якорей у такого хода нет («ищи ещё глубже», «да сделай», «и эту строку
+    // тоже»), и на замере модель оценивает его в 0.03–0.26 — гард отсекал бы
+    // ровно те ходы, ради которых карта и заводится. Отчёт по этой сессии уже
+    // собран, значит работа в проекте тут точно есть, а суждение было бы
+    // вторым мнением о том же самом
+    const known = sessionId ? maps.get(sessionId) : null;
+    if (known && !anchorsOf(text).code.length) {
+        return { ...known, report: null, work: null, reused: true };
+    }
+
+    // Дальше суждение, и только потом сбор: сборщик ходит в rg и в индекс
+    // проекта, то есть тратит секунды даже там, где искать нечему, а запросов
     // без правки много. Вопрос узкий и на нём модель надёжна — «просят ли в
     // проекте что-то менять», а не «про этот ли отчёт». Нет суждения или сеть
     // легла — собираем: дешевле лишняя секунда, чем лишняя разведка в ходе
@@ -112,13 +154,14 @@ async function pickHomework({ request }) {
     // без якоря отчёт пустой: ехать в промпт нечему
     if (!built.code.length || !built.files.length || built.chars < MIN_CHARS) return null;
 
-    return {
-        report: clipReport(built.report),
+    const found = {
+        map: mapOf(built.report),
         kind: built.kind?.id || null,
         files: built.files.length,
         chars: built.chars,
-        work,
     };
+    if (sessionId) maps.set(sessionId, found);
+    return { ...found, report: clipReport(built.report), work, reused: false };
 }
 
 // блок в запрос агента. Это не вопрос человека, а служебная преамбула, поэтому
@@ -126,6 +169,11 @@ async function pickHomework({ request }) {
 // (SYSTEM/core/handoff.js). Агент вправе не доверять отчёту и искать сам
 function homeworkPreamble(homework) {
     if (!homework) return '';
+    if (homework.reused) {
+        return `[OpenKarandash] По этой сессии отчёт уже собран, вот его карта — файлы и строки, `
+            + `где смотреть (${homework.files} файлов, ${homework.kind || 'тип не определён'}):\n\n${homework.map}\n\n`
+            + 'Кусков кода здесь нет намеренно: полный отчёт был в первом запросе этой сессии.\n\n';
+    }
     return `[OpenKarandash] Домашняя работа по этому запросу уже собрана (${homework.files} файлов, `
         + `${homework.kind || 'тип не определён'}), искать то же самое ещё раз не нужно:\n\n${homework.report}\n\n`
         + 'Отчёт указывает, где смотреть, но решение и правка за тобой: он мог указать не туда.\n\n';
@@ -136,7 +184,7 @@ function homeworkPreamble(homework) {
 // запросы
 function homeworkTrace(homework) {
     if (!homework) return null;
-    return { kind: homework.kind, files: homework.files, chars: homework.chars, work: homework.work };
+    return { kind: homework.kind, files: homework.files, chars: homework.chars, work: homework.work, reused: homework.reused };
 }
 
 module.exports = { pickHomework, homeworkPreamble, homeworkTrace, clipReport, WORK_QUESTION: QUESTION };

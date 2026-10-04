@@ -8,10 +8,12 @@
 // есть. Виды, где «лишним» можно считать только на глаз, помечены soft и в
 // общий счёт с нарушениями не идут.
 //
-// Замер на 8 последних сессиях 2026-10-04: 326 шагов, 112 лишних (34 %),
-// жёстких 58 (18 %). По видам: read-untouched 54 и console-search 22 (мягкие),
-// homework-late 22, console-read 12, list-to-guess 11, check-again 5,
-// homework-skipped 2.
+// Замер на 8 последних сессиях 2026-10-04: 326 шагов, 170 лишних (52 %),
+// жёстких 52 (16 %), мягких 118. По видам: read-untouched 54, console-search 22,
+// homework-late 22, verify-churn 18, repeat-read 15, console-read 12,
+// list-to-guess 11, same-call-twice 9, check-again 5, homework-skipped 2.
+// Мягкие виды в счёт нарушений не идут: они показывают, где тратится время,
+// но сами по себе правилом не запрещены.
 
 // ---------- признаки шага ----------
 
@@ -29,6 +31,10 @@ const CONSOLE_SEARCH_RE = /Select-String|findstr|git\s+grep|grep\s+-r|\brg\s+-\w
 const LIST_RE = /^\s*(Get-ChildItem|gci|ls|dir)\b/i;
 const SEARCH_TOOLS = /^(grep|glob|read|find)$/;
 const WRITE_TOOLS = /^(write|edit|multiedit|patch)$/;
+const LIVE_RE = /TOOLS[\\/]live-verify[\\/]run\.mjs/;
+// сколько живых проверок за сессию ещё нормально: в замере на девятнадцати
+// сессиях их было 94, то есть по пять на сессию, а в худшей девятнадцать
+const VERIFY_FREE = 5;
 
 const norm = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
 
@@ -71,6 +77,24 @@ const KINDS = [
         what: 'разведка grep/glob/read раньше домашней работы: на замере 122 шага против 37',
         remedy: 'первым ходом запускай node TOOLS/homework/run.mjs с текстом задачи, а не grep и не чтение наугад',
     },
+    {
+        soft: true,
+        id: 'repeat-read',
+        what: 'повторное чтение того же файла в той же сессии (мягкий вид)',
+        remedy: 'файл, который ты уже открывал в этом ходе, повторно не читай: держи найденное в голове',
+    },
+    {
+        soft: true,
+        id: 'same-call-twice',
+        what: 'повтор того же вызова с теми же аргументами (мягкий вид)',
+        remedy: 'повтор с теми же аргументами вернёт то же самое — меняй аргументы или приём',
+    },
+    {
+        soft: true,
+        id: 'verify-churn',
+        what: 'живая проверка сверх пятой за сессию (мягкий вид: каждая проверка стоит секунды и контекста)',
+        remedy: 'живую проверку запускай после правки, а не после каждого пробного изменения',
+    },
 ];
 
 // вид, который считается один раз за сессию, а не за шаг: у него нет проверки
@@ -102,6 +126,9 @@ function stepOf(row) {
         tool_error: row.tool_error,
         cmd: arg(row.tool_input, 'command') || '',
         file: norm(arg(row.tool_input, 'filePath') || arg(row.tool_input, 'path')),
+        // подпись вызова целиком: два одинаковых вызова отличаются только
+        // аргументами, а шаг «тот же самый» и значит повтор
+        key: `${row.tool_name}:${String(row.tool_input || '')}`,
     };
 }
 
@@ -130,6 +157,25 @@ function hits(kind, step, st) {
             return step.tool_name === 'read' && Boolean(step.file) && !st.edited.has(step.file);
         case 'homework-late':
             return st.homeworkAt > 0 && step.position < st.homeworkAt && SEARCH_TOOLS.test(step.tool_name || '');
+        case 'repeat-read': {
+            // тот же файл во второй раз за сессию: первое чтение уже дало ответ
+            if (step.tool_name !== 'read' || !step.file) return false;
+            if (!st.reads.has(step.file)) { st.reads.add(step.file); return false; }
+            return true;
+        }
+        case 'same-call-twice': {
+            // ровно тот же вызов: ответ не изменится, если между ними не
+            // изменилось то, что он читает, а таких мест в ходе десятки
+            if (!step.key) return false;
+            if (!st.calls.has(step.key)) { st.calls.add(step.key); return false; }
+            return true;
+        }
+        case 'verify-churn':
+            // первые пять проверок за сессию — нормальная работа, дальше идёт
+            // перебор: в замере на девятнадцати сессиях их было 94, по пять и
+            // больше в семи, а до 19 в одной
+            if (!LIVE_RE.test(step.cmd)) return false;
+            return st.live++ >= VERIFY_FREE;
         default:
             return false;
     }
@@ -138,7 +184,14 @@ function hits(kind, step, st) {
 // карта вид → позиции шагов, которые под него подошли. Шаги приходят по
 // position; порядок не нужен, но база отдаёт его как есть — сортируем на входе
 function classify(steps) {
-    const st = { checks: 0, edited: editedFiles(steps), homeworkAt: homeworkAt(steps) };
+    const st = {
+        checks: 0,
+        edited: editedFiles(steps),
+        homeworkAt: homeworkAt(steps),
+        reads: new Set(),
+        calls: new Set(),
+        live: 0,
+    };
     const found = new Map();
     for (const row of steps.slice().sort((a, b) => a.position - b.position)) {
         const step = stepOf(row);

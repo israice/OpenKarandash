@@ -118,8 +118,10 @@ function createRoutes({ agents, cooldowns, turnJudgment, runs }) {
                     pickHints(body.prompt),
                     skillHints.pickSkill({ request: body.prompt, agent: body.agent, profile: body.profile }).catch(() => null),
                     // отчёт разведки собирает код по якорям из сообщения и едет в
-                    // запрос сам: агент на эту работу ходов тратить не должен
-                    homeworkHint.pickHomework({ request: body.prompt }).catch(() => null),
+                    // запрос сам: агент на эту работу ходов тратить не должен.
+                    // sessionId нужен памяти сессии: у продолжающего хода своих
+                    // якорей нет, и вместо нового отчёта едет карта собранного
+                    homeworkHint.pickHomework({ request: body.prompt, sessionId: body.sessionId }).catch(() => null),
                 ]);
                 body.hints = hints;
                 body.skill = skill;

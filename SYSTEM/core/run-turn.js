@@ -225,7 +225,13 @@ function create(deps) {
                                 notes: (hints || []).map((h) => ({ title: h.title, noul: h.noul, confidence: h.confidence ?? null })),
                                 skill: skill ? { title: skill.title, match: skill.match } : null,
                                 homework: homework
-                                    ? { kind: homework.kind, files: homework.files, chars: homework.chars, work: homework.work }
+                                    ? {
+                                        kind: homework.kind,
+                                        files: homework.files,
+                                        chars: homework.chars,
+                                        work: homework.work,
+                                        reused: Boolean(homework.reused),
+                                    }
                                     : null,
                             },
                         };
