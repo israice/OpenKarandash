@@ -64,9 +64,11 @@ function namedIn(report) {
     return out;
 }
 
+// Отбор по шагам, а не по префиксу: префикс менялся при переезде корпуса на
+// другого агента, и фильтр по нему обнулял замер целиком (новых сессий ещё нет)
 const sessions = db.prepare(`
     SELECT session_id, MAX(created_at) at FROM messages
-    WHERE role = 'tool' AND session_id LIKE 'pi-windows-%'
+    WHERE role = 'tool' AND session_id NOT LIKE 'hermes-%'
     GROUP BY session_id ORDER BY at DESC
 `).all().slice(0, COUNT || undefined);
 

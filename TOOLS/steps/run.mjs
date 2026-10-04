@@ -40,10 +40,17 @@ const rows = db.prepare(`
     ORDER BY created_at DESC
 `).all();
 
+// Сессии отбираются по наличию шагов инструмента, а не по префиксу id. Префикс
+// менялся при переезде корпуса на другого агента (pi вместо opencode), и
+// фильтр по нему молча обнулял весь замер: новых сессий ещё нет, а старые
+// выпадали из вида. Исключается ровно одно — старый корпус другого агента,
+// который к проекту не относится и в правилах не упоминается
+const FOREIGN = /^hermes-/;
+
 const bySession = new Map();
 for (const row of rows) {
     const id = row.session_id || '';
-    if (!id.startsWith('pi-')) continue;
+    if (!id || FOREIGN.test(id)) continue;
     if (!bySession.has(id)) bySession.set(id, []);
     bySession.get(id).push(row);
 }
@@ -52,7 +59,7 @@ const all = [...bySession.entries()];
 const chosen = ONLY ? all.filter(([id]) => id === ONLY) : all.slice(0, COUNT);
 
 if (!chosen.length) {
-    console.log('Нет сессий pi в базе — или неверный идентификатор.');
+    console.log('Нет сессий со шагами инструмента — или неверный идентификатор.');
     process.exit(0);
 }
 
