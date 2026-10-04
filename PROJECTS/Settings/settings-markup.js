@@ -1,6 +1,11 @@
-// Разметка окна Settings вынесена в отдельный файл: три её куска (кнопка-шестерёнка
-// с меню, окно выбора окружения CLI, окно настроек с четырьмя вкладками) — половина
-// прежнего settings.js. Логики здесь нет вообще.
+// Разметка окна Settings вынесена в отдельный файл: два её куска (окно выбора
+// окружения CLI и окно настроек с четырьмя вкладками) — половина прежнего
+// settings.js. Логики здесь нет вообще.
+//
+// Кнопку-шестерёнку с её меню скрипт не рисует: они лежат в SYSTEM/topbar.eta рядом
+// с остальным верхним меню, а вторая копия в тулбаре — это как раз тот дубль,
+// из-за которого шестерёнка и кнопка Karandash оказывались на странице по две.
+// Берём их из шаблона, ровно как Karandash берёт свою кнопку (karandash.js).
 //
 // Подключён с defer раньше settings.js: app.js на старте сразу ищет
 // #settingsModal/#pickerModal в DOM (порядок <script> в SYSTEM/index.html), а рисовать их
@@ -10,41 +15,9 @@
 window.SettingsMarkup = (function () {
 
     function mount() {
-        // ---------- разметка: кнопка-шестерёнка и меню ----------
+        // ---------- разметка: кнопка-шестерёнка и меню — из шаблона ----------
 
-        const topbar = document.querySelector('.topbar');
-
-        const settingsRoot = document.createElement('div');
-        settingsRoot.className = 'settings';
-        settingsRoot.id = 'settings';
-        settingsRoot.setAttribute('role', 'toolbar');
-        settingsRoot.setAttribute('aria-label', 'Settings');
-        settingsRoot.innerHTML = `
-        <button
-            type="button"
-            class="icon-button settings__button"
-            id="settingsButton"
-            aria-haspopup="true"
-            aria-expanded="false"
-            aria-controls="settingsMenu"
-            aria-label="Settings"
-            title="Settings"
-        >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-            </svg>
-        </button>
-
-        <ul class="settings__menu" id="settingsMenu" role="menu" aria-labelledby="settingsButton" hidden>
-            <li role="none"><button type="button" class="settings__item" role="menuitem">Login</button></li>
-            <li role="none"><button type="button" class="settings__item" role="menuitem">Placeholder_2</button></li>
-            <li role="none"><div class="settings__separator"></div></li>
-            <li role="none"><button type="button" class="settings__item" role="menuitem">Settings</button></li>
-        </ul>
-    `;
-        topbar.append(settingsRoot);
-
+        const settingsRoot = document.getElementById('settings');
         const settingsButton = settingsRoot.querySelector('#settingsButton');
         const settingsMenu = settingsRoot.querySelector('#settingsMenu');
 

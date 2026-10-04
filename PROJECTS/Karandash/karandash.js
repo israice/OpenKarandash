@@ -1,24 +1,22 @@
-// Кнопка Karandash: полностью самодостаточный файл. Создаёт свою разметку (кнопку в
-// тулбаре, рамку наведения и попап комментария) и реализует режим комментариев
-// к элементам интерфейса. Наведение рисует рамку, колесо поднимает выбор к
-// родителю, клик открывает поле — комментарий уходит отдельной сессией.
+// Режим комментариев к элементам интерфейса. Кнопка в тулбаре — не здесь: её
+// разметка лежит в SYSTEM/topbar.eta вместе со всем верхним меню, а скрипт
+// реализует только её поведение. Дублировать кнопку он больше не может —
+// статичный узел шаблона не снимается, и вторая копия осталась бы поверх первой
+// навсегда. Свою разметку скрипт рисует ровно одну: рамку наведения и попап
+// комментария. Наведение рисует рамку, колесо поднимает выбор к родителю, клик
+// открывает поле — комментарий уходит отдельной сессией.
 (function () {
     // ---------- разметка ----------
 
-    const toolbar = document.createElement('div');
-    toolbar.className = 'toolbar';
-    toolbar.setAttribute('role', 'toolbar');
-    toolbar.setAttribute('aria-label', 'Karandash');
-    toolbar.innerHTML = `
-        <button type="button" class="icon-button" id="karandashButton" aria-pressed="false" aria-label="Karandash" title="Karandash">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 20h9"></path>
-                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
-            </svg>
-        </button>
-    `;
-    const settings = document.getElementById('settings');
-    settings.parentElement.insertBefore(toolbar, settings);
+    // Все слушатели скрипта — на одном сигнале, и снимаются разом. Кнопка в
+    // тулбаре и document переживают горячую перезагрузку этого файла: второй
+    // экземпляр навесил бы на них свои поверх старых, и клик по кнопке
+    // переключал бы режим дважды — то есть не переключал бы вовсе.
+    const listeners = new AbortController();
+    const ON = { signal: listeners.signal };
+
+    // кнопка — из шаблона верхнего меню, скрипт её только оживляет
+    const karandashButton = document.getElementById('karandashButton');
 
     const frame = document.createElement('div');
     frame.className = 'hover-frame';
@@ -49,7 +47,6 @@
     `;
     document.body.appendChild(popover);
 
-    const karandashButton = toolbar.querySelector('#karandashButton');
     const popoverTarget = popover.querySelector('#commentTarget');
     const field = popover.querySelector('#commentField');
     const commentCancel = popover.querySelector('#commentCancel');
@@ -73,8 +70,8 @@
         karandashButton.title = text;
     }
 
-    karandashButton.addEventListener('mouseenter', refreshTitle);
-    karandashButton.addEventListener('focus', refreshTitle);
+    karandashButton.addEventListener('mouseenter', refreshTitle, ON);
+    karandashButton.addEventListener('focus', refreshTitle, ON);
     refreshTitle();
 
     // режим отправки комментария: те же Chat/Action/Loop, что и в композере
@@ -96,7 +93,7 @@
     commentMode.addEventListener('click', (e) => {
         const option = e.target.closest('.mode-switch__option');
         if (option) setCommentMode(option.dataset.mode);
-    });
+    }, ON);
 
     // стрелками переключаемся между опциями, как в обычной группе радиокнопок
     commentMode.addEventListener('keydown', (e) => {
@@ -106,7 +103,7 @@
         const next = commentModeOptions[(current + (e.key === 'ArrowRight' ? 1 : -1) + commentModeOptions.length) % commentModeOptions.length];
         setCommentMode(next.dataset.mode);
         next.focus();
-    });
+    }, ON);
 
     // ---------- режим комментариев ----------
 
@@ -305,7 +302,7 @@
     document.addEventListener('pointermove', (e) => {
         cursorX = e.clientX;
         cursorY = e.clientY;
-    }, true);
+    }, { ...ON, capture: true });
 
     function track() {
         rafId = requestAnimationFrame(track);
@@ -342,7 +339,7 @@
         if (!karandashMode || picked) return;
         e.preventDefault();
         hoverDepth = Math.max(0, hoverDepth + (e.deltaY < 0 ? 1 : -1));
-    }, { capture: true, passive: false });
+    }, { ...ON, capture: true, passive: false });
 
     // перехватываем клик до обычных обработчиков страницы
     let clickSeen = false;
@@ -357,7 +354,7 @@
         e.preventDefault();
         e.stopPropagation();
         openPopover(el);
-    }, true);
+    }, { ...ON, capture: true });
 
     // клик по нативному скроллбару браузер не превращает в событие click,
     // поэтому такой элемент нельзя было выбрать наведением на его скролл —
@@ -372,14 +369,14 @@
         setTimeout(() => {
             if (!clickSeen) openPopover(el);
         }, 0);
-    }, true);
+    }, { ...ON, capture: true });
 
     // Esc выключает режим и закрывает открытое окно комментария;
     // меню закрывает обработчик выше, поэтому одного нажатия хватает на всё
     document.addEventListener('keydown', (e) => {
         if (e.key !== 'Escape' || !karandashMode) return;
         exitKarandash();
-    });
+    }, ON);
 
     // в поле комментария те же правила: Enter — новая строка, Ctrl+Enter — отправка
     field.addEventListener('keydown', (e) => {
@@ -387,9 +384,9 @@
             e.preventDefault();
             commentSave.click();
         }
-    });
+    }, ON);
 
-    commentCancel.addEventListener('click', exitKarandash);
+    commentCancel.addEventListener('click', exitKarandash, ON);
 
     // снимок для миниатюры сессии — настоящий скриншот экрана. Canvas на фронтенде
     // видит только содержимое вкладки, а не экран целиком, поэтому снимает сервер
@@ -434,19 +431,22 @@
 
         exitKarandash(); // снимает рамку и выходит из режима Karandash
         App.startCommentSession(prompt, thumb, mode);
-    });
+    }, ON);
 
     // ---------- кнопка ----------
 
     karandashButton.addEventListener('click', () => {
         karandashMode ? exitKarandash() : enterKarandash();
-    });
+    }, ON);
 
-    // горячая перезагрузка этого скрипта: снимаем всё, что он нарисовал, иначе
-    // свежая копия добавит вторую кнопку и вторую рамку поверх первой
+    // горячая перезагрузка этого скрипта: снимаем всё, что он нарисовал, и свои
+    // слушатели, иначе свежая копия добавит вторую рамку поверх первой, а на
+    // общих узлах — кнопке и document — ещё и вторые обработчики. Кнопку в
+    // тулбаре не снимаем: она теперь из шаблона (SYSTEM/topbar.eta), и снятая
+    // кнопка уехала бы из меню до перерисовки страницы.
     window.App?.registerHotReload('PROJECTS/Karandash/karandash.js', () => {
         if (karandashMode) exitKarandash();
-        toolbar.remove();
+        listeners.abort();
         frame.remove();
         popover.remove();
     });

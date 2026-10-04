@@ -19,6 +19,13 @@
 // уже после того, как app.js его определит.
 (function () {
 
+    // Слушатели файла — на одном сигнале, и снимаются разом: шестерёнка и её меню
+    // теперь из шаблона верхнего меню (SYSTEM/topbar.eta) и переживают горячую
+    // перезагрузку этого файла. Без снятия второй экземпляр навесил бы на них свои
+    // обработчики поверх старых, и меню открывалось бы со второго раза.
+    const listeners = new AbortController();
+    const ON = { signal: listeners.signal };
+
     // Разметку рисует settings-markup.js: он подключён раньше всех и отдал функцию
     // mount(), а не готовые узлы — при горячей перезагрузке settings.js разметка
     // должна появиться заново (иначе свежая копия добавит вторую поверх первой).
@@ -29,9 +36,12 @@
     // пусто, после сборки частей — готовая функция (слушатели сработают позже).
     let openSettings = null;
 
-    // горячая перезагрузка этого скрипта: снимаем всё, что он нарисовал (кнопку в
-    // топбаре и обе модалки), иначе свежая копия добавит вторую такую же поверх
-    // первой. Дальше скрипт выполняется обычным порядком и рисует себя заново сам.
+    // горячая перезагрузка этого скрипта: снимаем всё, что он нарисовал (обе
+    // модалки) и свои слушатели, иначе свежая копия добавит вторые модалки поверх
+    // первых, а на общих узлах — вторые обработчики. Дальше скрипт выполняется
+    // обычным порядком и рисует себя заново сам. Шестерёнку в топбаре не снимаем:
+    // она теперь из шаблона (SYSTEM/topbar.eta), и снятая уехала бы из меню до
+    // перерисовки страницы.
     //
     // Через очередь на окне, а не через window.App: этот файл подключён раньше
     // app.js, и App там ещё undefined — вызов через App молча ничего не делал, а
@@ -39,7 +49,7 @@
     (window.__hotReloads || (window.__hotReloads = [])).push([
         'PROJECTS/Settings/settings.js',
         () => {
-            settingsRoot.remove();
+            listeners.abort();
             pickerModal.remove();
             settingsModal.remove();
         },
@@ -94,7 +104,7 @@
     settingsButton.addEventListener('click', () => {
         if (settingsMenu.hidden) openMenu();
         else closeMenu();
-    });
+    }, ON);
 
     document.addEventListener('click', (e) => {
         if (settingsRoot.contains(e.target)) return;
@@ -103,14 +113,14 @@
         const karandashButton = document.getElementById('karandashButton');
         if (karandashButton && e.composedPath().includes(karandashButton)) return;
         closeMenu();
-    });
+    }, ON);
 
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && !settingsMenu.hidden) {
             closeMenu();
             settingsButton.focus();
         }
-    });
+    }, ON);
 
     settingsMenu.addEventListener('click', (e) => {
         const item = e.target.closest('.settings__item');
@@ -119,7 +129,7 @@
         closeMenu();
         if (label === 'Settings') openSettings();
         else console.log('Selected:', label);
-    });
+    }, ON);
 
     // ---------- части раздела ----------
 
