@@ -1022,6 +1022,15 @@
     <!-- htmx: серверные фрагменты подменяют куски страницы без своего JS.
          Файл ставится через npm (package.json), поэтому путь ведёт в node_modules -->
     <script src="node_modules/htmx.org/dist/htmx.min.js" defer></script>
+    <!-- Части Settings грузятся перед settings.js и в том же порядке: разметку рисует
+         settings-markup.js (app.js ищет #settingsModal/#pickerModal на старте), остальные
+         только заводят window.Settings* с init(...) — сами ничего не выполняют. -->
+    <script src="PROJECTS/Settings/settings-markup.js" defer></script>
+    <script src="PROJECTS/Settings/settings-providers.js" defer></script>
+    <script src="PROJECTS/Settings/settings-screenshot.js" defer></script>
+    <script src="PROJECTS/Settings/settings-telegram.js" defer></script>
+    <script src="PROJECTS/Settings/settings-sandglass-tab.js" defer></script>
+    <script src="PROJECTS/Settings/settings-modal.js" defer></script>
     <script src="PROJECTS/Settings/settings.js" data-hot-src="PROJECTS/Settings/settings.js" defer></script>
     <!-- 3D-рендер песочных часов вкладки Sandglass: ES-модуль (import three), поэтому type="module" -->
     <script src="PROJECTS/Settings/settings-sandglass.js" data-hot-src="PROJECTS/Settings/settings-sandglass.js" type="module"></script>

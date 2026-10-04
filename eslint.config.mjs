@@ -28,9 +28,16 @@ const readonly = (names) => Object.fromEntries(names.map((name) => [name, 'reado
 
 export default [
     {
-        // вендорные сборки не наши — их правила и их же ошибки нас не касаются
+        // вендорные сборки не наши — их правила и их же ошибки нас не касаются.
+        // TOOLS/penpot-mcp/design — скрипты-плагины Penpot: это тела функций,
+        // которые движок Penpot выполняет сам и в globals подставляет (penpot, C,
+        // storage), поэтому верхнеуровневый `return` и незнакомые имена там — не
+        // ошибка, а устройство скрипта; раньше они роняли проверку семью
+        // «Parsing error: 'return' outside of function» (DOCS/decisions/034 —
+        // проверка, которая всегда красная, не учит ничему)
         ignores: ['node_modules/**', 'DATA/**', 'hermes/**', 'hermes-home/**',
-            'PROJECTS/Graph/vendor/**', '**/*.min.js'],
+            'PROJECTS/Graph/vendor/**', '**/*.min.js',
+            'TOOLS/penpot-mcp/**'],
     },
     {
         files: ['PROJECTS/**/*.js', 'SYSTEM/**/*.js'],

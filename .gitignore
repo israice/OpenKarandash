@@ -18,12 +18,6 @@ claude-bridge/__pycache__/
 
 *.db
 
-# Окружение Laya (TOOLS/laya): чужой код и чекпойнты, в git не храним —
-# ставится скриптом setup.ps1 (см. TOOLS/laya/README.md). HF-кэш чекпойнтов
-# тоже наружу не пускаем.
-/TOOLS/laya/.venv/
-/TOOLS/laya/hf-cache/
-
 # то, что pi заводит в папке профиля работника сам (ключи и его сессии)
 /PROJECTS/Flow/profiles/*/auth.json
 /PROJECTS/Flow/profiles/*/sessions/

@@ -20,8 +20,10 @@ const ROOT = rootArg > 0 && process.argv[rootArg + 1] ? path.resolve(process.arg
 // норма «один файл — одна тема» (DOCS/decisions/022): 150–300 строк, за 400 — делить
 const MAX_LINES = 400;
 // чужой код (node_modules, вендор) и то, что сервер собирает сам (DATA): их размер
-// и их ошибки не наши
-const SKIP = new Set(['node_modules', 'DATA', '.git']);
+// и их ошибки не наши. Сюда же — окружения и кэши инструментов: они весят больше
+// гигабайта и состоят из чужих пакетов, и их файлы попадали в счёт «наших
+// длинных» (DOCS/decisions/034)
+const SKIP = new Set(['node_modules', 'DATA', '.git', '.venv', 'hf-cache', 'vendor']);
 
 let failed = false;
 

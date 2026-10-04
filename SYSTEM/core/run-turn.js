@@ -1,8 +1,8 @@
 // Общая обвязка хода: одна на все CLI.
 //
 // Коннекторы отличаются ровно двумя вещами: как запустить свой процесс и как
-// разобрать его вывод. Всё остальное у хода общее — счётчик занятости (откладывает
-// перезапуск сервера), поток событий живым слушателям, запись хода в базу и
+// разобрать его вывод. Всё остальное у хода общее — состояние хода в реестре
+// идущих ходов (runs), поток событий живым слушателям, запись хода в базу и
 // уборка в finally. Эта общая часть живёт здесь, а различия коннектор передаёт
 // функцией drive(ctx).
 //
@@ -12,7 +12,8 @@
 //   emit(event)          — событие и отправителю, и подключённым к сессии
 //   session              — наш id сессии (null, пока не позвали begin)
 //   meta                 — turnMeta хода: usage/cost/stopReason/resultMeta
-//   run                  — запись в activeRuns: сюда драйвер кладёт child
+//   run                  — запись хода в реестре runs: сюда драйвер кладёт child,
+//                          а снять ход может кто угодно — уборка здесь или Stop
 //   answer / fail(text)  — итоговый текст ответа и текст ошибки хода
 //
 // create(deps): нужные функции хранилища сессий (SYSTEM/core/sessions-db.js),
@@ -36,10 +37,8 @@ function create(deps) {
         // тикает «живую» длительность активной сессии (см. runs.activeStartedAt
         // и /api/fragment/session-list), пока finishExchange не зафиксирует
         // итоговый duration_ms в базе
-        const run = { sessionId: sessionId || null, child: null, done: null, target, startedAt: Date.now() };
-        let resolveDone;
+        const run = { sessionId: sessionId || null, child: null, target, startedAt: Date.now() };
         let mail = null; // письмо о конце хода: перезапуск сервера его дожидается
-        run.done = new Promise((resolve) => { resolveDone = resolve; });
 
         // usage/cost/duration копим по ходу стрима и пишем разом в finishExchange:
         // событие с итогами приходит раньше, чем процесс CLI завершится
@@ -112,84 +111,86 @@ function create(deps) {
         // показывает статусом, но без id ему нечего выделять в списке)
         ctx.session = sessionId || `${target.id}-${Date.now().toString(36)}`;
         run.sessionId = ctx.session;
-        // владельца сессии не перебиваем: её мог завести другой CLI, и продолжать
-        // её должен уметь он же — target проставляется только при заведении строки
-        // (upsertSession: ON CONFLICT обновляет одну updated_at). Кто выполнил
-        // конкретный ход, видно в result_meta этого сообщения
-        ctx.userPosition = startExchange(ctx.session, prompt, target.id, meta.model, meta.effort);
-        setMessageMode.run(mode || null, ctx.session, ctx.userPosition);
-        runs.open(ctx.session);
-        ctx.emit({ type: 'session', id: ctx.session });
-        // без этого push сессия появлялась в списке только у вкладки, которая её
-        // завела (там 'sessions-changed' шлёт сам app.js), — у остальных открытых
-        // вкладок только через опрос раз в 5с. Тот же канал, что и у live reload
-        if (live.clientCount()) {
-            live.notifyClients('fragment:session-list');
-            live.notifyClients('fragment:home-observation');
-        }
-
-        const runId = runs.beginRun(run);
-        runs.busy(1);
+        // Реестр узнаёт о ходе раньше, чем о нём узнала база, и узнаёт раньше
+        // любой его записи: падение на старте (завести сессию, открыть поток)
+        // оставляло сессию «идущей» без единого способа её остановить. Всё, что
+        // дальше, — внутри try, и ход снимается уборкой в finally
+        runs.beginTurn(run);
 
         try {
+            // владельца сессии не перебиваем: её мог завести другой CLI, и продолжать
+            // её должен уметь он же — target проставляется только при заведении строки
+            // (upsertSession: ON CONFLICT обновляет одну updated_at). Кто выполнил
+            // конкретный ход, видно в result_meta этого сообщения
+            ctx.userPosition = startExchange(ctx.session, prompt, target.id, meta.model, meta.effort);
+            setMessageMode.run(mode || null, ctx.session, ctx.userPosition);
+            runs.open(ctx.session);
+            ctx.emit({ type: 'session', id: ctx.session });
+            // без этого push сессия появлялась в списке только у вкладки, которая её
+            // завела (там 'sessions-changed' шлёт сам app.js), — у остальных открытых
+            // вкладок только через опрос раз в 5с. Тот же канал, что и у live reload
+            if (live.clientCount()) {
+                live.notifyClients('fragment:session-list');
+                live.notifyClients('fragment:home-observation');
+            }
             await drive(ctx);
             ctx.emit({ type: 'done', text: ctx.answer });
         } catch (err) {
             ctx.errorText = ctx.errorText || err.message;
             ctx.emit({ type: 'error', error: err.message });
         } finally {
-            // ход с ошибкой дописывается наравне с успешным: answer при ошибке пуст,
-            // поэтому условие смотрит и на errorText (см. DOCS/decisions/012)
-            if (ctx.session && (ctx.answer || ctx.errorText)) {
-                // типизированное суждение о ходе (DOCS/decisions/051): ход уже
-                // отдан в ленту событием 'done', поэтому лишние доли секунды здесь
-                // никого не ждут, а результат нужен и ленте, и телеграм-мосту.
-                // Сбой суждения — не сбой хода: judgeTurn отдаёт null, и дальше всё
-                // работает ровно как до него
-                const judgment = await turnJudgment.judgeTurn({
-                    request: prompt,
-                    answer: ctx.answer,
-                    errorText: ctx.errorText,
-                    stopReason: meta.stopReason,
-                    // факт, который держит код: сделал ли ход хоть один шаг
-                    // инструментом. Отчёт «проверено» без единого шага — жёсткое
-                    // противоречие, и ловится оно здесь, а не моделью
-                    toolSteps: countToolSteps.get(ctx.session, ctx.userPosition).n,
-                }).catch(() => null);
-                // решение о письме принимается до записи хода: оно само часть
-                // суждения и должно лежать в той же строке, а не теряться
-                // причина поломки — до решения о письме: по ней willHandOver ниже знает,
-                // подхватят ли работу, а письмо об ошибке называет её человеку
-                if (ctx.errorText) await turnJudgment.classifyFailure(ctx.errorText).catch(() => null);
-                const notify = turnJudgment.shouldNotify(judgment, { errorText: ctx.errorText });
-                if (judgment) meta.resultMeta = { ...(meta.resultMeta || {}), judgment: { ...judgment, notified: notify } };
-                // durationMs: только askClaude реально разбирает event.duration_ms
-                // от CLI (см. event.type === 'result' в коннекторе) — у остальных
-                // коннекторов meta.durationMs так и остаётся null, ничего не попадает
-                // в duration_ms, и SUM(duration_ms) молча пропускает этот ход: счётчик
-                // в панели честно тикал по настенному времени, а после завершения хода
-                // фиксировать было нечего — отсюда «0s» вместо накопленного значения.
-                // Запасной вариант — настенное время самого хода (run.startedAt поставлен
-                // в начале runTurn) — используем его, только если коннектор не прислал
-                // точную цифру сам
-                finishExchange(ctx.session, ctx.answer || ctx.errorText, {
-                    ...meta,
-                    durationMs: meta.durationMs ?? (Date.now() - run.startedAt),
-                    assistantPosition: ctx.assistantPosition,
-                    stopReason: meta.stopReason || (ctx.errorText ? 'error' : null),
-                });
-                // в Telegram уходит законченный ход, а не каждый: человеку нужен
-                // сигнал «задание закончено» и сообщение, ответом на которое он
-                // продолжит сессию, — а не поток промежуточных реплик. Что считать
-                // законченным, решает правило в turn-judgment.js поверх суждения;
-                // ошибка и ход, остановившийся с вопросом к человеку, уходят всегда.
-                // Без await: почта не должна ни задерживать ход, ни ронять его.
-                // Вся работа с письмом — под защитой: любое её падение (например,
-                // разбор суждения о подхвате, которому не доехал модуль) улетело
-                // из finally, и всё, что ниже — снятие занятости, конец потока —
-                // не выполнялось. Ход оставался в реестре идущих навсегда: сессия
-                // в списке тикала минутами, хотя давно закончилась ошибкой
-                try {
+            // Уборка хода. Правило блока одно: снять ход обязан любой итог, поэтому
+            // запись в базу и письмо идут под общей защитой, а снятие хода — после
+            // них и безусловно. Раньше шаги шли подряд, и падение любого уводило
+            // остальные: ход оставался в реестре идущих навсегда, сессия в списке
+            // тикала минутами, а перезапуск сервера висел (DOCS/decisions/085)
+            try {
+                // ход с ошибкой дописывается наравне с успешным: answer при ошибке пуст,
+                // поэтому условие смотрит и на errorText (см. DOCS/decisions/012)
+                if (ctx.session && (ctx.answer || ctx.errorText)) {
+                    // типизированное суждение о ходе (DOCS/decisions/051): ход уже
+                    // отдан в ленту событием 'done', поэтому лишние доли секунды здесь
+                    // никого не ждут, а результат нужен и ленте, и телеграм-мосту.
+                    // Сбой суждения — не сбой хода: judgeTurn отдаёт null, и дальше всё
+                    // работает ровно как до него
+                    const judgment = await turnJudgment.judgeTurn({
+                        request: prompt,
+                        answer: ctx.answer,
+                        errorText: ctx.errorText,
+                        stopReason: meta.stopReason,
+                        // факт, который держит код: сделал ли ход хоть один шаг
+                        // инструментом. Отчёт «проверено» без единого шага — жёсткое
+                        // противоречие, и ловится оно здесь, а не моделью
+                        toolSteps: countToolSteps.get(ctx.session, ctx.userPosition).n,
+                    }).catch(() => null);
+                    // решение о письме принимается до записи хода: оно само часть
+                    // суждения и должно лежать в той же строке, а не теряться
+                    // причина поломки — до решения о письме: по ней willHandOver ниже знает,
+                    // подхватят ли работу, а письмо об ошибке называет её человеку
+                    if (ctx.errorText) await turnJudgment.classifyFailure(ctx.errorText).catch(() => null);
+                    const notify = turnJudgment.shouldNotify(judgment, { errorText: ctx.errorText });
+                    if (judgment) meta.resultMeta = { ...(meta.resultMeta || {}), judgment: { ...judgment, notified: notify } };
+                    // durationMs: только askClaude реально разбирает event.duration_ms
+                    // от CLI (см. event.type === 'result' в коннекторе) — у остальных
+                    // коннекторов meta.durationMs так и остаётся null, ничего не попадает
+                    // в duration_ms, и SUM(duration_ms) молча пропускает этот ход: счётчик
+                    // в панели честно тикал по настенному времени, а после завершения хода
+                    // фиксировать было нечего — отсюда «0s» вместо накопленного значения.
+                    // Запасной вариант — настенное время самого хода (run.startedAt поставлен
+                    // в начале runTurn) — используем его, только если коннектор не прислал
+                    // точную цифру сам
+                    finishExchange(ctx.session, ctx.answer || ctx.errorText, {
+                        ...meta,
+                        durationMs: meta.durationMs ?? (Date.now() - run.startedAt),
+                        assistantPosition: ctx.assistantPosition,
+                        stopReason: meta.stopReason || (ctx.errorText ? 'error' : null),
+                    });
+                    // в Telegram уходит законченный ход, а не каждый: человеку нужен
+                    // сигнал «задание закончено» и сообщение, ответом на которое он
+                    // продолжит сессию, — а не поток промежуточных реплик. Что считать
+                    // законченным, решает правило в turn-judgment.js поверх суждения;
+                    // ошибка и ход, остановившийся с вопросом к человеку, уходят всегда.
+                    // Без await: почта не должна ни задерживать ход, ни ронять его
                     if (notify.send && !(await willHandOver(ctx.session, ctx.errorText))) {
                         mail = notifyTurnFinished({
                             sessionId: ctx.session,
@@ -204,24 +205,25 @@ function create(deps) {
                             steps: ctx.errorText ? listToolSteps.all(ctx.session, ctx.userPosition).map((row) => row.text) : null,
                         }).catch(() => {});
                     }
-                } catch (err) {
-                    // ход уже записан в базу и отдан в ленту: письмо о нём сугубо
-                    // необязательно, и ронять из-за него конец хода нельзя
-                    console.error(`[turn] the closing letter failed for ${ctx.session}: ${err.message}`);
                 }
+            } catch (err) {
+                // ответ ходу уже в ленте, и письмо о нём может уйти или не уйти — а вот
+                // снятие хода ниже обязано состояться. Запись в базу, которая не
+                // получилась, доберёт следующий ход этой сессии
+                console.error(`[turn] the closing record failed for ${ctx.session}: ${err.message}`);
             }
-            if (ctx.session) runs.close(ctx.session);
-            // занятость снимаем только после записи в базу, иначе отложенный
-            // перезапуск сервера может оборвать нас между ответом и записью
-            runs.endRun(runId);
-            resolveDone();
+            // Ход закончён: поток сессии закрыт, подписи отпущены, занимать сервер
+            // он больше не будет. Идемпотентно, поэтому Stop, снявший ход раньше, ему
+            // не помешает. Занятость снята после записи в базу: иначе отложенный
+            // перезапуск сервера мог бы оборвать нас между ответом и записью
+            runs.finishTurn(run);
             // Ход, правивший серверный файл, заканчивается отложенным перезапуском —
             // и письмо о конце работы гибло вместе с процессом: работа сделана, а в
             // Telegram тишина. Поэтому занятость держим, пока письмо не ушло (с
             // потолком: зависшая почта не должна держать перезапуск вечно). Ход для
             // страниц и очереди уже закончен — ждёт только перезапуск
             if (mail) await Promise.race([mail, new Promise((resolve) => setTimeout(resolve, MAIL_WAIT_MS))]);
-            runs.busy(-1);
+            runs.releaseTurn(run);
             // переписка живёт в .sessions.db, а этот файл слежение намеренно не видит:
             // без явного вызова память о только что прошедшей сессии не попала бы
             // ни в vault, ни в поиск до следующей правки любого файла

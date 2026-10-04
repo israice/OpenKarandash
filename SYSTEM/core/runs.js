@@ -1,7 +1,7 @@
 // Идущие ходы: реестр, поток событий живым слушателям и ответ сторожу на
 // перезапуск. Один модуль потому, что все три вещи живут одним и тем же
-// состоянием — числом идущих ходов: им же меряется, можно ли серверу сейчас
-// умереть (DOCS/decisions/020).
+// состоянием — ходами в реестре: им же меряется, можно ли серверу сейчас умереть
+// (DOCS/decisions/020, 085).
 //
 // Сессии работают параллельно: новый ход стартует сразу, не дожидаясь уже идущих,
 // и файлы под ним не блокируются. Одновременную правку одного файла двумя
@@ -20,13 +20,17 @@ const STOPPED_TEXT = 'Stopped by the user';
 // Аргументом, а не require внутрь: ядро не должно знать про фичи — единственное
 // место, которое знает о них, это server.js
 function create({ releaseTelegram }) {
-    // сколько ходов идёт прямо сейчас: по этому числу откладывается и перезапуск
-    // сервера, и пересборка карты
-    let running = 0;
-
-    // идущие ходы по их номеру запуска: остановка берёт отсюда child, панель
-    // Sessions — заголовок и момент старта, Home — сколько их вообще
-    const activeRuns = new Map(); // runId -> { sessionId, child, done, target, startedAt }
+    // Идущие ходы по их номеру запуска: остановка берёт отсюда child, панель
+    // Sessions — заголовок и момент старта, Home — сколько их вообще.
+    //
+    // Реестр один на все состояния хода, и снимает ход одна функция (finishTurn).
+    // Отдельного счётчика «сколько ходов идёт» больше нет: он считал то же самое
+    // вторым способом и расходился с реестром — ход, упавший мимо своей уборки,
+    // оставался «идущим» навсегда и блокировал перезапуск (DOCS/decisions/085).
+    // Держать запись дольше, чем ход идёт, тоже можно: у записи два состояния,
+    // finished (работа кончена) и released (занятость снята), и она уходит из
+    // реестра только когда выполнены оба
+    const turns = new Map(); // runId -> { runId, sessionId, child, target, startedAt, finished, released }
     let nextRunId = 1;
 
     // запущенные сейчас запросы: id сессии -> { listeners, events, seq }.
@@ -43,8 +47,11 @@ function create({ releaseTelegram }) {
     // sessionId известен не всегда (CLI ещё не прислал id для только что стартовавшего
     // запуска) — тогда останавливаем самый свежий безымянный: неоднозначность возможна,
     // только если два новых запуска стартовали в одну и ту же секунду
+    //
+    // Ищем только среди не закончивших ходов: у ждущего письма процесса уже нет,
+    // и останавливать нечего
     function stop(sessionId) {
-        const candidates = [...activeRuns.values()];
+        const candidates = liveTurns();
         const target = sessionId
             ? candidates.find((r) => r.sessionId === sessionId)
             : candidates.filter((r) => !r.sessionId).pop();
@@ -52,10 +59,11 @@ function create({ releaseTelegram }) {
 
         // Процесс ещё жив — обычное дело: гасим дерево, конец хода сделает его
         // собственная уборка. exitCode !== null — процесс уже отработал,
-        // а запись в реестре осталась (ход упал раньше своей уборки): тогда
-        // killTree не делает ничего, и кнопка Stop выглядит как мёртвая, а сессия
-        // остаётся «идущей» навсегда, блокируя перезапуск сервера. В этом случае
-        // снимаем запись сами — иначе остановить такую сессию нечем
+        // а ход числится идущим (упал раньше своей уборки): тогда killTree не
+        // делает ничего, и кнопка Stop выглядит как мёртвая, а сессия остаётся
+        // «идущей» навсегда, блокируя перезапуск сервера. В этом случае снимаем
+        // ход теми же двумя действиями, что и уборка хода, — они идемпотентны,
+        // поэтому уборка, которая придёт позже, им ничего не испортит
         if (target.child && target.child.exitCode === null && target.child.signalCode === null) {
             target.child.__stoppedByUser = true;
             // не target.child.kill(): на Windows сигналами потомков не добить — гасим дерево
@@ -63,41 +71,71 @@ function create({ releaseTelegram }) {
             return true;
         }
 
-        // процесс мёртв, а ход числится идущим: отпускаем всё, что он держит
-        for (const [runId, run] of activeRuns) {
-            if (run === target) activeRuns.delete(runId);
-        }
-        if (target.sessionId) {
-            // событие обрыва — страница перестаёт ждать поток; обязательно ДО close,
-            // потому что close удаляет подписки, и после него broadcast уже некому
-            // и нечего раздавать
-            broadcast(target.sessionId, { type: 'error', error: STOPPED_TEXT });
-            close(target.sessionId);
-        }
-        if (running > 0) running -= 1; // снятие занятости: иначе перезапуск ждёт вечно
+        // событие обрыва — страница перестаёт ждать поток; обязательно ДО finishTurn,
+        // потому что тот закрывает подписки, и после него broadcast уже некому
+        // и нечего раздавать
+        if (target.sessionId) broadcast(target.sessionId, { type: 'error', error: STOPPED_TEXT });
+        finishTurn(target);
+        releaseTurn(target);
+        return true;
+    }
+
+    // Ход только что начат: он виден как идущий и держит занятость. Возвращает
+    // ту же запись — ход дальше снимается ею же, отдельного номера у него нет
+    function beginTurn(run) {
+        run.runId = nextRunId++;
+        run.finished = false;
+        run.released = false;
+        turns.set(run.runId, run);
+        return run;
+    }
+
+    // Работа хода окончена: ход больше не идёт, поток его сессии закрыт, подписи
+    // отпущены. Идемпотентно — звать можно из уборки хода и из stop(), и кто
+    // первый пришёл, тот и снял. Падение в уборке хода на этом уже ничего не
+    // ломает: ход снят, перезапуск разблокирован
+    function finishTurn(run) {
+        if (!run || run.finished) return false;
+        run.finished = true;
+        if (run.sessionId) close(run.sessionId);
+        dropFinished(run);
         confirmRestart();
         return true;
     }
 
-    function beginRun(run) {
-        const runId = nextRunId++;
-        activeRuns.set(runId, run);
-        return runId;
+    // Занятость снята: перезапуск сервера этот ход больше не ждёт. Отдельно от
+    // finishTurn, потому что ход, правивший серверный файл, умирает вместе с
+    // процессом — и письмо о конце работы должно уйти до этого, а не после
+    function releaseTurn(run) {
+        if (!run || run.released) return false;
+        run.released = true;
+        dropFinished(run);
+        confirmRestart();
+        return true;
     }
 
-    function endRun(runId) {
-        activeRuns.delete(runId);
+    // Запись держится, пока не выполнены оба условия. Иначе половина уборки
+    // потерялась бы вместе с записью и занятость осталась бы висеть навсегда
+    function dropFinished(run) {
+        if (run.finished && run.released) turns.delete(run.runId);
     }
 
-    const activeCount = () => activeRuns.size;
-    const busyCount = () => running;
+    // ходы, которые ещё идут (или ждут своего письма) — всё, что можно остановить
+    const liveTurns = () => [...turns.values()].filter((r) => !r.finished);
+
+    // сколько ходов держат сервер: перезапуск и пересборка карты откладываются
+    // до нуля. Считается по реестру, а не по отдельной переменной, — иначе эти
+    // два числа умели разойтись
+    const busyCount = () => [...turns.values()].filter((r) => !r.released).length;
+
+    const activeCount = () => liveTurns().length;
 
     // момент старта текущего хода активной сессии (для живого тикающего счётчика
     // в панели Sessions) — null, если по этой сессии сейчас ничего не выполняется.
     // Один и тот же sessionId вторым активным ходом на практике не бывает (composer
     // блокируется на время хода), первое совпадение достаточно
     function activeStartedAt(sessionId) {
-        for (const run of activeRuns.values()) {
+        for (const run of liveTurns()) {
             if (run.sessionId === sessionId) return run.startedAt || null;
         }
         return null;
@@ -105,7 +143,7 @@ function create({ releaseTelegram }) {
 
     // заголовки идущих ходов — для ответа «что там» в Telegram
     function activeTitles(titleOf) {
-        return [...activeRuns.values()]
+        return liveTurns()
             .map((run) => run.sessionId && titleOf(run.sessionId))
             .filter(Boolean);
     }
@@ -189,7 +227,7 @@ function create({ releaseTelegram }) {
     let stopping = false; // ответ сторожу уже отправлен: процесса вот-вот не станет
 
     async function confirmRestart() {
-        if (!restartRequested || stopping || running > 0) return;
+        if (!restartRequested || stopping || busyCount() > 0) return;
         stopping = true;
         // опрос телеграма отпускаем до смерти процесса и ждём, пока он отпустится:
         // Telegram держит getUpdates своим таймаутом, а не смертью клиента, и снять
@@ -216,19 +254,14 @@ function create({ releaseTelegram }) {
     }
 
     // счётчик идущих ходов: по нему откладывается и пересборка карты, и перезапуск.
-    // сколько отложенный перезапуск ждёт письмо о конце хода — см. run-turn.js
-    function busy(delta) {
-        running += delta;
-        if (running === 0) confirmRestart();
-    }
-
+    // сколько отложенный перезапуск ждёт письмо о конце хода — см. releaseTurn
     return {
-        busy, busyCount,
+        busyCount,
         // ответ сторожу уже ушёл: новый ход запускать нельзя, ход умрёт вместе
         // с процессом, не дописавшись ответ
         isStopping: () => stopping,
         restartError: RESTART_ERROR,
-        beginRun, endRun, stop, activeCount, activeStartedAt, activeTitles,
+        beginTurn, finishTurn, releaseTurn, stop, activeCount, activeStartedAt, activeTitles,
         open, close, isRunning, liveSeq, attach,
         stampEventSeq, broadcast, emitLive,
     };
