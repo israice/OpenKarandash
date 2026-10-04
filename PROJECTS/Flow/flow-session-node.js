@@ -163,10 +163,12 @@
         // плашка модели над заголовком ноды — тот же тег, что над ответом
         // в Sessions и в заголовке карточки Feed (SYSTEM/model-tag.js,
         // DOCS/decisions/039). Знание берётся у самой строки, а не из
-        // шапки сессии: ноды строятся по всей истории, где модели менялись
+        // шапки сессии: ноды строятся по всей истории, где модели и
+        // исполнители менялись. source строки — имя CLI, который её вёл,
+        // поэтому путь в плашке полный (pi/openrouter/stealth/…)
         function applyNodeModel(n, m) {
             n.querySelector('.flow-node__titles > .model-tag')?.remove();
-            const tag = window.ModelTag?.tag(m.role === 'assistant' ? m.model : null);
+            const tag = window.ModelTag?.tag(m.role === 'assistant' ? m.model : null, m.source);
             if (tag) n.querySelector('.flow-node__titles')?.prepend(tag);
         }
 

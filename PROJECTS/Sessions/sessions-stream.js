@@ -24,9 +24,10 @@ import { setSessionId, setRunningSessionId, setComposerBusy, loadSessions } from
 
 // Отрисовка событий потока — одна и та же для своего запроса и для
 // подключения к работе, которая уже идёт. model — та модель, которой пойдёт
-// ход: ею подписываются ответы, пока стримятся (после хода лента перечитывается
-// из базы, и подпись у каждой строки своя)
-function makeRenderer(status, model) {
+// ход, cli — тот же выбор из шапки сессии, первым уровнем пути: ею
+// подписываются ответы, пока стримятся (после хода лента перечитывается из
+// базы, и подпись у каждой строки своя — из её полей model и source)
+function makeRenderer(status, model, cli) {
     let answered = false;
 
     // черновик: текст или размышление, которое модель ещё набирает. Сервер
@@ -81,11 +82,11 @@ function makeRenderer(status, model) {
         } else if (event.type === 'text') {
             answered = true;
             markPendingActivity(status);
-            addMessage(event.text, 'assistant', model, status);
+            addMessage(event.text, 'assistant', model, status, cli);
         } else if (event.type === 'error') {
             addMessage(event.error, 'error');
         } else if (event.type === 'done') {
-            if (!answered && event.text) addMessage(event.text, 'assistant', model);
+            if (!answered && event.text) addMessage(event.text, 'assistant', model, null, cli);
             loadSessions(); // в списке обновилось число сообщений
         }
     };
@@ -96,18 +97,15 @@ function makeRenderer(status, model) {
 // Переключение на другую сессию: показываем её переписку и продолжаем её же
 export async function openSession(id, running = false) {
     MissionFiles?.closeFilePanel(); // могла быть открыта панель редактирования файла
-    state.sessionList.querySelector('.session-item--placeholder')?.closest('li').remove();
-    setSessionId(id);
+    setSessionId(id); // отсюда же уходит черновик новой сессии, если он был
     saveAllProviderStates();
 
     state.run += 1;
     state.list.innerHTML = '';
-    state.empty.hidden = true;
 
     const { messages = [], contextPercent = null, contextWindow = null, liveSeq = null } = await api('/api/sessions/messages', { id });
     for (const message of messages) renderStored(message);
 
-    if (messages.length === 0) state.empty.hidden = false;
     updateContextGauge(contextPercent, contextWindow);
 
     // работа ещё идёт (страницу перезагрузили посреди неё) — досматриваем вживую
@@ -139,7 +137,7 @@ export async function attachSession(id, run, after = null) {
         setComposerBusy(true);
         // модель для подписи ответов — та, что выбрана в шапке сессии: своих
         // настроек у чужого идущего хода нет (как и у хода из телеграма)
-        render = makeRenderer(status, getActiveModel());
+        render = makeRenderer(status, getActiveModel(), getActiveProviderId());
         // как и в sendTurn: пока довоспроизводим чужой поток, автообновление
         // подождёт, иначе очередной dev-reload оборвёт чтение раньше, чем
         // страница успеет его показать
@@ -217,7 +215,7 @@ export async function sendTurn(text, mode = 'Action') {
     let notConnected = false;
     // подпись ответов — моделью, которой реально уйдёт этот ход (та же model,
     // что уходит в теле запроса), а не той, что случайно выбрана в шапке позже
-    const render = makeRenderer(status, model);
+    const render = makeRenderer(status, model, providerId);
 
     // агент из чата правит файлы проекта — автообновление подождёт, иначе
     // перезагрузка оборвёт чтение потока и ответ пропадёт
@@ -270,7 +268,7 @@ export async function sendTurn(text, mode = 'Action') {
             return;
         }
 
-        // формулировка ошибки идёт от сервера ("OpenCode is not connected" и
+        // формулировка ошибки идёт от сервера ("pi is not connected" и
         // т.п.) — ловим по общему признаку, а не по конкретному имени провайдера
         if (event.type === 'error' && typeof event.error === 'string' && event.error.includes('is not connected')) {
             notConnected = true; // повторим после восстановления окружения

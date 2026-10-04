@@ -183,6 +183,9 @@ export function createFeedMessageCards({ addCard, addBlock, addImages, addKv }) 
             // подпись моделью — по полю самой строки: ход мог вести другая
             // модель, а выбранная в шапке сессии относится к следующему ходу
             model: kind === 'assistant' ? message.model : null,
+            // source строки — имя CLI, который вёл этот ход: первым уровнем
+            // пути в плашке модели (DOCS/decisions/076)
+            cli: kind === 'assistant' ? message.source : null,
             extraClass: `session-feed__card--${kind}${isError ? ' session-feed__card--error' : ''}`,
         }, (body) => {
             // пометка суждения о ходе — первой строкой тела карточки: то же,

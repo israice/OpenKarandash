@@ -24,10 +24,12 @@ export function renderStored(row) {
         if (nested) {
             addStep(`${nested}subagent ${text}`, undefined, row);
         } else {
-            // подпись моделью — по полю самой строки: ход мог вести другая
-            // модель, а в шапке сессии выбрана уже следующая
+            // подпись моделью — по полям самой строки: ход мог вести другой
+            // исполнитель другой моделью, а в шапке сессии выбрана уже следующая.
+            // source строки — имя CLI, который этот ход вёл (SYSTEM/cli/index.js,
+            // agentNameByTarget), поэтому путь в плашке полный
             const kind = row.stopReason === 'error' ? 'error' : 'assistant';
-            addMessage(text, kind, row.model);
+            addMessage(text, kind, row.model, null, row.source);
         }
     } else if (row.role === 'thinking') {
         addThinking(`${nested}${text}`);

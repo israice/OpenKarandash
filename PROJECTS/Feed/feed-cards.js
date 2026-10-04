@@ -27,7 +27,7 @@ export function createFeedCards() {
     // на самой карточке, см. CSS .session-feed__card--* .session-feed__card-icon).
     // model — плашка модели рядом с названием роли: та же разметка, что над
     // ответом в Sessions и на ноде Flow (SYSTEM/model-tag.js, 039)
-    function addCard(container, { icon, title, subtitle, model, extraClass }, fillBody) {
+    function addCard(container, { icon, title, subtitle, model, cli, extraClass }, fillBody) {
         const card = document.createElement('div');
         card.className = `session-feed__card${extraClass ? ` ${extraClass}` : ''}`;
 
@@ -51,7 +51,7 @@ export function createFeedCards() {
         titleEl.textContent = title;
         titleWrap.appendChild(titleEl);
 
-        const modelTag = window.ModelTag?.tag(model);
+        const modelTag = window.ModelTag?.tag(model, cli);
         if (modelTag) titleWrap.appendChild(modelTag);
 
         if (subtitle) {
