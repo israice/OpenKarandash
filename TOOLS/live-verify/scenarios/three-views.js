@@ -40,7 +40,7 @@ async function scenario(P) {
 
     // Sessions: строка базы — один .chat-message в #chatList (именно по id:
     // класс .chat-list есть и у страницы Feed);
-    // блоки Details, строка ожидания, черновик и пометка «ход прерван» строками базы не являются
+    // строка ожидания, черновик и пометка «ход прерван» строками базы не являются
     MissionTabs.show('chat');
     await wait(500);
     await App.openSession(sid, session.running);

@@ -9,7 +9,7 @@
 // на Sessions нет вовсе, и держать их в ленте было незачем.
 import { state } from './sessions-state.js';
 import { escapeHtml } from '../../SYSTEM/app.js';
-import { buildStepBody, buildDetails } from './sessions-details.js';
+import { buildStepBody } from './sessions-details.js';
 
 // ---------- прокрутка ----------
 
@@ -256,7 +256,6 @@ export function addMessage(text, kind, model, before) {
     // ответ или реплика человека закрывают блок мыслей
     closeThinking();
     const stick = isNearBottom();
-    state.empty.hidden = true;
 
     // куда встаёт строка: перед заданным узлом, а тот — в конец
     const place = (node) => {
@@ -383,5 +382,3 @@ export function addInterrupted(onContinue) {
     scrollToBottom();
     return notice;
 }
-
-export { buildDetails };

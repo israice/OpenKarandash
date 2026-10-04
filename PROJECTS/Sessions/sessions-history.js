@@ -12,14 +12,14 @@
 // Отдельный файл, а не часть потока: показ истории и показ живого ответа —
 // разные вещи. Поток (sessions-stream.js) события хода рисует сам, а отсюда
 // берёт только эту функцию для перечитывания ленты после хода.
-import { addStep, addThinking, addMessage, buildDetails } from './sessions-feed.js';
+import { addStep, addThinking, addMessage } from './sessions-feed.js';
 
 export function renderStored(row) {
     const nested = row.parentToolUseId ? '↳ ' : '';
     const text = row.text || '';
 
     if (row.role === 'user') {
-        buildDetails(row, 'user', addMessage(text, 'user'));
+        addMessage(text, 'user');
     } else if (row.role === 'assistant') {
         if (nested) {
             addStep(`${nested}subagent ${text}`, undefined, row);
@@ -27,10 +27,10 @@ export function renderStored(row) {
             // подпись моделью — по полю самой строки: ход мог вести другая
             // модель, а в шапке сессии выбрана уже следующая
             const kind = row.stopReason === 'error' ? 'error' : 'assistant';
-            buildDetails(row, 'assistant', addMessage(text, kind, row.model));
+            addMessage(text, kind, row.model);
         }
     } else if (row.role === 'thinking') {
-        buildDetails(row, 'thinking', addThinking(`${nested}${text}`));
+        addThinking(`${nested}${text}`);
     } else if (row.role === 'tool') {
         addStep(text, undefined, row);
     } else {

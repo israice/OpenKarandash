@@ -1,8 +1,8 @@
 // Полнота строки сессии: всё, что сервер знает о строке, кроме её текста —
 // полные аргументы и вывод инструмента, картинки результата, сводка полей
-// Event Schema и сырое событие. На Sessions это тело шага-гармошки и блок
-// Details под репликой; те же поля показывают Feed и Flow, и набор должен
-// совпадать на всех трёх (DOCS/decisions/039).
+// Event Schema и сырое событие. На Sessions это тело шага-гармошки; те же поля
+// показывают Feed и Flow, и набор должен совпадать на всех трёх
+// (DOCS/decisions/039).
 //
 // Отдельный файл, а не часть ленты: набор полей и разметка секций — это
 // про серверную строку, а не про то, как выглядит лента. Лента зовёт отсюда
@@ -91,30 +91,4 @@ export function buildStepBody(row) {
     addSection(body, 'Raw event', prettyJson(row.raw));
 
     return body;
-}
-
-// Блок Details под репликой. Реплика и размышление — не гармошка, как шаг:
-// их данные лежат отдельным свёрнутым блоком сразу под строкой, на ту же
-// сторону. kind — вид строки ('user'/'assistant'/'thinking'), по нему блок
-// встаёт справа или слева. after — строка, под которой он должен встать
-export function buildDetails(row, kind, after) {
-    const metadata = rowMetadata(row);
-    const raw = prettyJson(row.raw);
-    if (!metadata && !raw) return null;
-
-    const details = document.createElement('details');
-    details.className = `chat-details${kind === 'user' ? ' chat-details--user' : ''}`;
-
-    const summary = document.createElement('summary');
-    summary.className = 'chat-details-summary';
-    summary.textContent = 'Details';
-
-    const body = document.createElement('div');
-    body.className = 'chat-details-body';
-    addSection(body, 'Metadata', metadata);
-    addSection(body, 'Raw event', raw);
-
-    details.append(summary, body);
-    if (after?.parentNode) after.parentNode.insertBefore(details, after.nextSibling);
-    return details;
 }
