@@ -75,7 +75,9 @@
     font-weight: 600;
 }
 
-.chat-message--assistant :first-child { margin-top: 0; }
+/* верхний отступ первого блока снят — но когда пузырь открывает плашка модели
+   (SYSTEM/model-tag.css), первым блоком становится уже тот, что за ней */
+.chat-message--assistant :is(:first-child, .model-tag + *) { margin-top: 0; }
 
 .chat-message--assistant pre {
     margin: 6px 0;

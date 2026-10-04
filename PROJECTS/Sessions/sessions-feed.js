@@ -198,24 +198,26 @@ export function addMessage(text, kind, model, before) {
     const stick = isNearBottom();
     state.empty.hidden = true;
 
-    // куда встаёт строка: перед заданным узлом, а тот — в конец. Плашка модели
-    // обязана встать тем же before, что и пузырь: иначе она уезжает в конец
-    // ленты и оказывается после ответа и после строки ожидания
+    // куда встаёт строка: перед заданным узлом, а тот — в конец
     const place = (node) => {
         if (before && before.parentNode === state.list) state.list.insertBefore(node, before);
         else state.list.append(node);
     };
 
-    // плашка модели — строкой над пузырём ответа, слева: тот же тег, что в
-    // Feed и на ноде Flow (SYSTEM/model-tag.js, DOCS/decisions/039). Без
-    // модели у ответа её не бывает — звать с пустым значением незачем
-    const tag = window.ModelTag?.tag(model);
-    if (tag) place(tag);
-
     const message = document.createElement('div');
     message.className = `chat-message chat-message--${kind}`;
     if (kind === 'assistant' && text) message.innerHTML = renderMarkdown(text);
     else message.textContent = text;
+
+    // плашка модели — первой строкой внутри пузыря ответа, слева над текстом:
+    // та же подпись, что в заголовке карточки Feed и на ноде Flow
+    // (SYSTEM/model-tag.js, DOCS/decisions/039). Внутри пузыря, а не над ним:
+    // своего тона у неё нет, плашка на фоне ленты читалась как отдельная
+    // строка переписки. Без модели у ответа её не бывает — звать с пустым
+    // значением незачем
+    const tag = window.ModelTag?.tag(model);
+    if (tag) message.prepend(tag);
+
     place(message);
 
     if (stick) scrollToBottom();
