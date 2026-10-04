@@ -104,14 +104,21 @@ function renderMarkdown(text) {
 
 // ---------- шаги инструментов ----------
 
-// Цвет тега инструмента считаем от имени хэшем: одно и то же имя
-// (read_file, search_files, Bash, …) всегда получает один и тот же оттенок,
-// а разные имена визуально различаются — без ручного списка всех инструментов
-// всех CLI
-function toolTagHue(name) {
+// Тег строки слева: имя инструмента у шага, «thinking» у блока размышления.
+// Оттенок считаем от имени хэшем — одно и то же имя (read_file, Bash, thinking)
+// всегда того же цвета, а разные визуально различаются, без ручного списка
+// инструментов всех CLI. Оттенок берётся всегда от name: у метки «↳ thinking»
+// он тот же, что у «thinking», иначе мысли субагента красились бы иначе
+function makeTag(label, name = label) {
     let hash = 0;
     for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-    return hash % 360;
+    const hue = hash % 360;
+    const tag = document.createElement('span');
+    tag.className = 'chat-tag';
+    tag.style.color = `hsl(${hue}, 70%, 68%)`;
+    tag.style.background = `hsl(${hue}, 45%, 18%)`;
+    tag.textContent = label;
+    return tag;
 }
 
 // Шаги сворачиваются гармошкой: открыт может быть только один — клик по
@@ -142,13 +149,7 @@ export function addStep(text, before, row) {
     head.className = 'chat-tool-head';
     const match = String(text).match(/^(\S+)(\s+([\s\S]*))?$/);
     if (match) {
-        const hue = toolTagHue(match[1]);
-        const tag = document.createElement('span');
-        tag.className = 'chat-tool-tag';
-        tag.style.color = `hsl(${hue}, 70%, 68%)`;
-        tag.style.background = `hsl(${hue}, 45%, 18%)`;
-        tag.textContent = match[1];
-        head.append(tag);
+        head.append(makeTag(match[1]));
         if (match[3]) head.append(document.createTextNode(` ${match[3]}`));
     } else {
         head.textContent = text;
@@ -177,12 +178,19 @@ export function addStep(text, before, row) {
 
 // ---------- блок размышления ----------
 
-// Блок мыслей модели: в заголовке последний дошедший абзац, в теле — все
-// абзацы блока по порядку. Собирает его сервер (одна строка базы на блок,
+// Блок мыслей модели: в заголовке тег и последний дошедший абзац, в теле —
+// все абзацы блока по порядку. Собирает его сервер (одна строка базы на блок,
 // ctx.think в SYSTEM/core/run-turn.js), лента только рисует: текст приходит
 // уже целиком, поэтому блок не растёт по кускам, а заменяется целиком.
 // Свёрнут он по умолчанию — мыслей в ходе много, а читают ответ и шаги
 let openThinking = null;
+
+// тег блока мыслей — тот же, что имя инструмента у шага: он и называет блок,
+// и заменяет стрелку <details>, которой в ленте нет ни у одного шага. Мысль
+// субагента приходит с «↳ » в начале (renderStored в sessions-history.js так же
+// помечает шаги вложенного хода) — у шага эта метка уезжает в тег, здесь тоже
+const THINKING_TAG = 'thinking';
+const NESTED = /^\u21b3\s+/;
 
 // абзац мысли — кусок между пустыми строками, как их пишет модель. Тот же
 // разрез делает и сервер, склеивая мысли блока через пустую строку, поэтому
@@ -193,6 +201,8 @@ function thoughtParagraphs(text) {
 
 export function addThinking(text, before) {
     const stick = isNearBottom();
+    const nested = NESTED.test(text);
+    const thoughts = thoughtParagraphs(nested ? text.replace(NESTED, '') : text);
     // блок из прошлой сессии или прошлого хода к списку не подключён: мысли
     // дописывать в него нельзя, следующая встанет своим блоком
     if (!openThinking?.isConnected) {
@@ -201,6 +211,10 @@ export function addThinking(text, before) {
 
         const head = document.createElement('summary');
         head.className = 'chat-thinking-head';
+        const preview = document.createElement('span');
+        preview.className = 'chat-thinking-preview';
+        head.append(makeTag(nested ? `\u21b3 ${THINKING_TAG}` : THINKING_TAG, THINKING_TAG),
+            document.createTextNode(' '), preview);
 
         const body = document.createElement('div');
         body.className = 'chat-thinking-body';
@@ -211,14 +225,14 @@ export function addThinking(text, before) {
         openThinking = block;
     }
 
-    const paragraphs = thoughtParagraphs(text);
-    if (paragraphs.length) {
+    if (thoughts.length) {
         const head = openThinking.querySelector('.chat-thinking-head');
-        head.textContent = paragraphs[paragraphs.length - 1];
-        head.title = head.textContent;
+        const preview = head.querySelector('.chat-thinking-preview');
+        preview.textContent = thoughts[thoughts.length - 1];
+        head.title = preview.textContent;
 
         const body = openThinking.querySelector('.chat-thinking-body');
-        body.replaceChildren(...paragraphs.map((part) => {
+        body.replaceChildren(...thoughts.map((part) => {
             const paragraph = document.createElement('p');
             paragraph.className = 'chat-thinking-paragraph';
             paragraph.textContent = part;

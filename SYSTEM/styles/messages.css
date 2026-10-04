@@ -203,20 +203,24 @@
 
 .chat-message--tool.is-open .chat-tool-body { display: block; }
 
-/* тег имени инструмента (read_file, search_files, Bash, …) — цвет считает
-   toolTagHue в sessions-feed.js по хэшу имени, здесь только форма */
-.chat-tool-tag {
+/* тег строки слева: имя инструмента у шага, «thinking» у блока размышления —
+   форма здесь, цвет и текст считает makeTag в sessions-feed.js */
+.chat-tag {
     display: inline-block;
     padding: 1px 6px;
     border-radius: 4px;
     font-weight: 600;
     font-size: 0.78em;
+    /* внутри блока размышления курсив заголовка на имя не распространяется:
+       тег — метка, а не часть мысли */
+    font-style: normal;
 }
 
 /* блок размышления модели (sessions-feed.js, addThinking) — визуально рядом
    со шагами инструментов, но курсивом, чтобы читалось как «модель
    размышляет», а не как выполненное действие. Свёрнут по умолчанию: в
-   заголовке последний дошедший абзац мыслей, в теле — все абзацы блока */
+   заголовке тег и последний дошедший абзац мыслей, в теле — все абзацы
+   блока */
 .chat-message--thinking {
     align-self: flex-start;
     max-width: 100%;
@@ -238,11 +242,15 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+    /* своей стрелки у <details> нет: слева стоит тег, как у шага
+       инструмента, и рядом с шагами блок читается продолжением их списка.
+       Маркер прячется тремя способами сразу — иначе он вылезет там, где не
+       работает ::-webkit-details-marker */
+    list-style: none;
 }
 
-/* своя стрелка <details> здесь лишняя: блок и так помечен курсивом, а рядом
-   с шагами инструментов читается как продолжение их списка */
 .chat-thinking-head::-webkit-details-marker { display: none; }
+.chat-thinking-head::marker { content: none; }
 
 .chat-thinking-body {
     padding: 8px 14px;
