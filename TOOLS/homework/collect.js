@@ -148,13 +148,31 @@ function rankHotFiles(wideFiles) {
 }
 
 function collect(message, opts = {}) {
-    const { code, phrases, kind } = anchorsOf(message);
+    const { code, phrases, kind, places } = anchorsOf(message);
     const parts = [];
     parts.push(`# Домашняя работа по задаче\n\nТип задачи: ${kind ? kind.id : 'не опознан'}.`);
 
     const seenFiles = new Set();
 
-    const { anchors, wide, wideFiles } = rgAnchors(code);
+    // Место из строки «Code:» — самая точная находка, какая вообще возможна:
+    // Karandash назвал файл и строки, и осталось только их прочитать (091).
+    // Поэтому она идёт первым и без всякого поиска по имени класса: тот на общих
+    // классах уводил не туда и требовал отдельного захода (087)
+    for (const { file, lines, style } of places) {
+        const full = path.join(ROOT, file);
+        let text;
+        try { text = fs.readFileSync(full, 'utf8').split('\n'); } catch { continue; }
+        const chunks = lines.map((at) => windowAround(text, at - 1, 10, 24)).join('\n...\n');
+        parts.push(section(`Файл ${file} (${text.length} строк)${style ? ' — стиль элемента' : ' — здесь элемент создаётся'}, Karandash указал строки ${lines.join(', ')}`,
+            chunks));
+        seenFiles.add(file);
+    }
+
+    // Когда Karandash уже назвал файл и строки, поиск по именам классов не нужен:
+    // он и есть та самая разведка, ради которой отчёт и собирается, а на общих
+    // классах вдобавок уводит не туда. Поэтому в этом случае он не выполняется
+    // вовсе — отчёт состоит из названных мест, правил и команды проверки
+    const { anchors, wide, wideFiles } = places.length ? { anchors: [], wide: [], wideFiles: [] } : rgAnchors(code);
 
     // Широкий якорь сам по себе в отчёт не годится, но файлы из него — годятся:
     // берём те, где имя встречается чаще всего, и читаем вокруг попаданий. Так
@@ -236,8 +254,14 @@ function collect(message, opts = {}) {
             [`Файл: ${rules.file} (${rules.lines} строк)`, `Как проверить: ${rules.check}`].join('\n')));
     }
 
+    // список сценариев назван прямо здесь: по замеру перечисление папки
+    // TOOLS/live-verify ради имён сценариев стоило 11 шагов в пяти сессиях из
+    // восьми, а README их уже перечисляет
     parts.push(section('Живая проверка — сначала посмотри, отвечает ли сервер',
-        'node TOOLS/live-verify/run.mjs open view=all — без работающего сервера результат врёт'));
+        [
+            'node TOOLS/live-verify/run.mjs open view=all — без работающего сервера результат врёт',
+            'имена сценариев и их аргументы перечислены в TOOLS/live-verify/README.md — читай README, а папку не перечисляй',
+        ].join('\n')));
 
     if (wide.length) {
         parts.push(section('Якоря отброшены как слишком общие', wide.join(', ')));
