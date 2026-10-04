@@ -10,14 +10,10 @@
 import { state, PENDING_SESSION_ID } from './sessions-state.js';
 import { api, confirmModal } from '../../SYSTEM/app.js';
 import {
-    connections, saveAllProviderStates, updateContextGauge, defaultProviderId,
+    saveAllProviderStates, updateContextGauge,
 } from '../../SYSTEM/providers.js';
 import { renderSessionBarControls } from '../../SYSTEM/model-cascade.js';
 import { addPending } from './sessions-feed.js';
-
-// узлы, нужные только этому файлу — заполняет initPanel()
-let runningCountEl = null;
-let obsConnectionText = null;
 
 // ---------- текущая сессия и черновик ----------
 
@@ -76,9 +72,9 @@ function syncSelection() {
 export async function loadSessions() {
     try {
         const { sessions = [] } = await api('/api/sessions');
-        // сам список рисует сервер: этот же 'sessions-changed' слушают и
-        // home-observation, и session-list — оба фрагмента подтянутся сразу,
-        // не дожидаясь очередного опроса по таймеру
+        // сам список рисует сервер: этот же 'sessions-changed' слушает и
+        // session-list — фрагмент подтянется сразу, не дожидаясь очередного
+        // опроса по таймеру
         document.body.dispatchEvent(new CustomEvent('sessions-changed'));
         return sessions;
     } catch {
@@ -176,7 +172,6 @@ export function applyRunningIndicator() {
     }
 
     const runningCount = state.sessionList.querySelectorAll('.session-item--running').length;
-    runningCountEl.textContent = runningCount;
 
     // счётчик и круг на кнопке вкладки: видны, даже когда панель свёрнута
     document.getElementById('chatButton')?.classList.toggle('icon-button--running', runningCount > 0);
@@ -223,24 +218,6 @@ export function setComposerBusy(busy) {
     state.send.textContent = busy ? 'Stop' : 'Send';
 }
 
-// ---------- строка провайдера на панели наблюдения Home ----------
-
-// счётчики и списки панели рисует сервер (home-observation.eta), htmx
-// подменяет их по hx-swap-oob. Здесь остаётся только строка провайдера —
-// она известна одному браузеру
-export function renderObsConnection() {
-    // строка подключения принадлежит активному провайдеру, а не первому в
-    // списке: панель показывает, с кем на самом деле идёт ход
-    const state = connections.get(defaultProviderId());
-    if (state?.note) {
-        obsConnectionText.textContent = `${state.note} · model ${state.model}`;
-        obsConnectionText.classList.remove('obs-connection__text--off');
-    } else {
-        obsConnectionText.textContent = 'Not connected · connect a provider in settings';
-        obsConnectionText.classList.add('obs-connection__text--off');
-    }
-}
-
 // ---------- живой счётчик длительности ----------
 
 // Длительность активной сессии — не статичный текст «running…», а тикающий
@@ -280,8 +257,6 @@ function tickLiveDurations() {
 // Зовёт sessions.js, когда общие узлы вкладки (state.sessionList,
 // state.sessionsPanel) уже найдены
 export function initPanel() {
-    runningCountEl = document.getElementById('runningCount');
-    obsConnectionText = document.getElementById('obsConnectionText');
     setInterval(tickLiveDurations, 1000);
 
     // Пока палец/курсор жмёт на строку (мусорка, копирование id), подмену

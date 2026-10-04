@@ -7,7 +7,7 @@
 .providers {
     display: block;
     /* .topbar — position: fixed на --topbar-height, поэтому страница обязана
-       сама отступить под неё (как .view--home в base.css и страница Feed в
+       сама отступить под неё (как .view в base.css и страница Feed в
        PROJECTS/Feed/page.css), иначе заголовок и список уезжают под панель */
     min-height: 100vh;
     overflow-y: auto;

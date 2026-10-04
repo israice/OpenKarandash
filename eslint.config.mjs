@@ -20,7 +20,7 @@ const SERVER = ['server.js', '**/*-server.js', 'SYSTEM/core/**/*.js', 'SYSTEM/cl
 // «Клиентский код» в DOCS/agents/клиент.md): для файла-потребителя они приходят
 // извне, а не объявлены
 const APP_GLOBALS = ['App', 'MissionFlow', 'MissionFiles', 'MissionTabs', 'MissionPages', 'MissionKanban',
-    'MissionBookTab', 'MdEditors', 'SidebarResize', 'Settings', 'MissionHome', 'TurnJudgment', 'ModelTag'];
+    'MissionBookTab', 'MdEditors', 'SidebarResize', 'Settings', 'TurnJudgment', 'ModelTag'];
 // библиотеки, которые страница грузит сама (importmap и <script> в index.html)
 const VENDOR_GLOBALS = ['htmx', 'EasyMDE', 'THREE', 'CodeMirror'];
 

@@ -176,7 +176,6 @@ function create(deps) {
             // вкладок только через опрос раз в 5с. Тот же канал, что и у live reload
             if (live.clientCount()) {
                 live.notifyClients('fragment:session-list');
-                live.notifyClients('fragment:home-observation');
             }
             await drive(ctx);
             ctx.emit({ type: 'done', text: ctx.answer });

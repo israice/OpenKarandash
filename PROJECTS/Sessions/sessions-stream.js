@@ -247,7 +247,7 @@ export async function sendTurn(text, mode = 'Action') {
                 saveProviderState(providerId);
                 setRunningSessionId(event.id);
 
-                // новая сессия из Karandash/Home появилась — открытые окна
+                // новая сессия из Karandash появилась — открытые окна
                 // (настройки, версии, файл) больше не нужны; окно подтверждения
                 // (modal--top) живёт своим циклом и не трогается
                 if (state.closeModalsOnSession) {

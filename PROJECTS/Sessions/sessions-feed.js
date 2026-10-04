@@ -5,9 +5,8 @@
 // шагов — свои, потому что относятся к рисованию, а не к потоку.
 //
 // Мёртвый код, который здесь жил до переписки, убран: подсказка по
-// демо-карточкам Home (WORKER_INFO, renderWorkerTooltip, initFeed) — её
-// узлов .task-card__progress-worker на Sessions нет вовсе, они только на
-// Home, и держать их в ленте было незачем.
+// демо-карточкам (WORKER_INFO, renderWorkerTooltip, initFeed) — таких узлов
+// на Sessions нет вовсе, и держать их в ленте было незачем.
 import { state } from './sessions-state.js';
 import { escapeHtml } from '../../SYSTEM/app.js';
 import { buildStepBody, buildDetails } from './sessions-details.js';

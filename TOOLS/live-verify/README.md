@@ -69,7 +69,7 @@ async function scenario(P) {
 На чём прошлые сессии теряли время:
 
 - **Всё API — только POST с JSON-телом**, кроме `/api/fragment/*`. Обычный `fetch(url)` (GET) и `?id=` в адресе получают `405 { ok: false, error: "Expected POST" }`, выдуманный путь вроде `/api/sessions/list` — `404 { ok: false, error: "Unknown endpoint" }`; данных в таком ответе нет, и сценарий, не глядя на `ok`, молча считает нули. Список сессий — `POST /api/sessions` с `{}`, строки — `POST /api/sessions/messages` с `{ id }`; текст строки лежит в `text` (не `content`), роль — в `role`.
-- **Лента Sessions — `#chatList`.** `document.querySelector('.chat__list')` находит список задач Home (`#homeTaskList`). Сессию открывать `await App.openSession(id)`, вкладку — `MissionTabs.show('chat')`.
+- **Лента Sessions — `#chatList`.** `document.querySelector('.chat__list')` находит список задач на странице Feed. Сессию открывать `await App.openSession(id)`, вкладку — `MissionTabs.show('chat')`.
 - **Страница «+»** открывается кнопкой `.toolbar [data-folder="<папка>"]` (у Feed — `Feed`); её `<main>` — `document.getElementById(кнопка.dataset.page)`.
 - **Списки сессий в Feed (`#sessionFeedSelect`) и Flow (`#flowSessionSelect`) перечитываются по `mousedown`** на самом select: сначала событие `mousedown`, пауза, потом `value` и событие `change`. `#flowSessionSelect` показан только на канвасе «321».
 - **Имена брать со страницы**, а не держать в сценарии: вкладки — `Object.keys(App.VIEWS)`, страницы «+» — `.toolbar [data-page]`. Селектор сперва подтверди Grep-ом в исходнике вкладки: разметка меняется.

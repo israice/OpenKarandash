@@ -2,7 +2,7 @@
    папки, поэтому правка подменяется на лету, без перезагрузки интерфейса. */
 /* Страница с канвасом Penpot: iframe занимает всю страницу под топбаром.
    .topbar — position: fixed на --topbar-height, поэтому страница сама отступает
-   под неё (как .view--home в base.css и .providers в PROJECTS/Page 3/page.css),
+   под неё (как .view в base.css и .providers в PROJECTS/Page 3/page.css),
    иначе верх канваса уедет под панель. */
 .penpot-frame {
     display: flex;

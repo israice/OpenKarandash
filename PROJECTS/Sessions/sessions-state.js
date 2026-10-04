@@ -22,7 +22,7 @@ export const state = {
     // с первым событием потока — до тех пор снимок ждёт здесь
     pendingThumb: null,
 
-    // сессию завёл Karandash/Home: когда она появится, открытые модальные
+    // сессию завёл Karandash: когда она появится, открытые модальные
     // окна закрываются
     closeModalsOnSession: false,
 

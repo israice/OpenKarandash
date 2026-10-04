@@ -21,9 +21,6 @@
     padding: 8px 0 16px;
 }
 
-/* на Home ширина равна остальным блокам страницы, а не ленте */
-#homeTaskList { max-width: 1080px; }
-
 .chat-empty {
     margin: auto;
     font-size: 0.85rem;

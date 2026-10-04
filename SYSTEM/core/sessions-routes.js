@@ -1,4 +1,4 @@
-// /api/sessions* — общее хранилище переписок: его читают и Chat, и Flow, и Home,
+// /api/sessions* — общее хранилище переписок: его читают и Chat, и Flow,
 // и страницы кнопки «+», поэтому маршруты живут в ядре, а не в одной папке
 // (DOCS/decisions/017). Обращения к самой базе — SYSTEM/core/sessions-db.js.
 const { readJson, sendJson } = require('./http.js');

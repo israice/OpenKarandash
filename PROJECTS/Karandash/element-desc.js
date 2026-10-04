@@ -11,7 +11,6 @@
     // человекочитаемое имя раздела — id корневого .view переводим в название,
     // под которым пользователь знает вкладку в тулбаре приложения
     const VIEW_NAMES = {
-        defaultView: 'Home',
         flowView: 'Flow',
         kanbanView: 'Kanban',
         sessionsView: 'Sessions',

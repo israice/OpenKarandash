@@ -6,7 +6,7 @@
 //
 // Подключается как <script type="module"> сразу после SYSTEM/app.js: ядро уже
 // опубликовало window.App, здесь в него дописываются функции вкладки, которые
-// зовут снаружи (Settings, Karandash, Home, tabs.js) — набор имён window.App
+// зовут снаружи (Settings, Karandash, tabs.js) — набор имён window.App
 // тот же, что был до переписки. Ядро импортируется отсюда, а не наобороду:
 // обратный импорт дал бы цикл app.js ↔ sessions-*.js.
 import { state } from './sessions-state.js';
@@ -16,7 +16,7 @@ import {
     loadActiveProvider, DEFAULT_AGENT, loadOpenCodeState,
 } from '../../SYSTEM/providers.js';
 import {
-    DRAFT_PREFIX, setSessionId, saveDraft, clearDraft, copyId, renderObsConnection,
+    DRAFT_PREFIX, setSessionId, saveDraft, clearDraft, copyId,
     loadSessions, insertDraftRow, deselect, remove, initPanel,
 } from './sessions-panel.js';
 import { openSession, sendTurn } from './sessions-stream.js';
@@ -37,8 +37,8 @@ function setMode(mode) {
         : 'Describe the action...';
 }
 
-// Комментарий из режима Karandash (или задание с Home) начинает отдельную
-// сессию с этим вопросом. Вкладку на Sessions не переключаем — человек сам
+// Комментарий из режима Karandash начинает отдельную сессию с этим вопросом.
+// Вкладку на Sessions не переключаем — человек сам
 // перейдёт туда, если захочет. mode приходит из переключателя Chat/Action
 // самого попапа Karandash: Chat обсуждает место без изменений, Action сразу
 // вносит правку; Loop недоступен там же, где и в композере, поэтому сюда
@@ -200,16 +200,6 @@ function bindPanel() {
         state.empty.hidden = false;
         await loadSessions();
     });
-
-    // Панель наблюдения на вкладке Home: слушаем контейнер, а не сами списки —
-    // htmx подменяет <ul> целиком, и обработчик, повешенный на них, пережил бы
-    // только первое обновление
-    document.querySelector('.observation')?.addEventListener('click', (e) => {
-        const btn = e.target.closest('.obs-list__item');
-        if (!btn) return;
-        MissionTabs.show('chat');
-        openSession(btn.dataset.sessionId, btn.dataset.running === '1');
-    });
 }
 
 // ---------- восстановление при загрузке ----------
@@ -239,8 +229,6 @@ async function restoreOnLoad() {
         // молчаливое воскрешение тут и было багом
         saveActiveProvider(null);
     }
-
-    renderObsConnection();
 
     // список сессий готов сразу при загрузке страницы
     const sessions = await loadSessions();
@@ -273,11 +261,10 @@ function init() {
     bindPanel();
 
     // что берут вынесенные файлы из вкладки: tabs.js (chatMessages), Settings
-    // (setSessionId), Karandash и Home (startCommentSession) — дописываем к
+    // (setSessionId), Karandash (startCommentSession) — дописываем к
     // ядру, которое app.js уже опубликовал
     Object.assign(window.App, {
         setSessionId,
-        renderObsConnection,
         chatMessages: state.messages,
         deselectSession: deselect,
         startCommentSession,
@@ -287,8 +274,8 @@ function init() {
 
     restoreOnLoad();
 
-    // список сессий (боковая панель на всех экранах + панель наблюдения на
-    // Home) обновляется сам, пока вкладка открыта
+    // список сессий (боковая панель на всех экранах) обновляется сам,
+    // пока вкладка открыта
     setInterval(loadSessions, 8000);
 }
 

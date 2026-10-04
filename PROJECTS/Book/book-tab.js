@@ -1,5 +1,5 @@
 // Вкладка Book верхнего тулбара: слева карточки всех разделов интерфейса —
-// Flow/Kanban/PROJECTS/Home/Book/Karandash/Settings, справа — README
+// Flow/Kanban/Book/Karandash/Settings, справа — README
 // выбранной карточки. Раньше это была вкладка Projects боковой панели
 // Sessions (PROJECTS/Chat/projects-tab.js) с тем же приёмом; теперь это
 // отдельная страница со своей панелью справа.
@@ -102,7 +102,7 @@
     // ---------- карточки разделов ----------
 
     const SOURCE_IDS = [
-        'telegramButton', 'flowButton', 'kanbanButton', 'chatButton', 'homeButton',
+        'telegramButton', 'flowButton', 'kanbanButton', 'chatButton',
         'bookButton', 'karandashButton', 'settingsButton',
     ];
 
@@ -112,7 +112,6 @@
         flowButton: 'Diagram of the project execution flow',
         kanbanButton: 'Task board in columns',
         chatButton: 'Chat with the assistant and the session list',
-        homeButton: 'Home screen, overall project view',
         bookButton: 'Library of interface sections',
         karandashButton: 'Karandash — interface commenting mode',
         settingsButton: 'Application and provider settings',
@@ -124,7 +123,6 @@
         flowButton: 'PROJECTS/Flow/README.md',
         kanbanButton: 'PROJECTS/Kanban/README.md',
         chatButton: 'PROJECTS/Sessions/README.md',
-        homeButton: 'PROJECTS/Home/README.md',
         bookButton: 'PROJECTS/Book/README.md',
         karandashButton: 'PROJECTS/Karandash/README.md',
         settingsButton: 'PROJECTS/Settings/README.md',

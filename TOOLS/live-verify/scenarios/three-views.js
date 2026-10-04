@@ -38,7 +38,8 @@ async function scenario(P) {
     const db = (await post('/api/sessions/messages', { id: sid })).messages || [];
     const out = { session: sid, title: String(session.title).slice(0, 80), running: session.running, db: { rows: db.length, roles: tally(db.map((m) => m.role)) } };
 
-    // Sessions: строка базы — один .chat-message в #chatList (именно по id: .chat-list есть и у Home);
+    // Sessions: строка базы — один .chat-message в #chatList (именно по id:
+    // класс .chat-list есть и у страницы Feed);
     // блоки Details, строка ожидания, черновик и пометка «ход прерван» строками базы не являются
     MissionTabs.show('chat');
     await wait(500);

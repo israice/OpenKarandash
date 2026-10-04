@@ -11,7 +11,6 @@ What is inside:
 
 | Tab | What it is for |
 | --- | --- |
-| **Home** | A live summary: how many sessions are running, activity, provider state |
 | **PROJECTS** (Chat) | The conversation with the assistant: a stream of steps, session history, `Action` / `Chat` modes |
 | **Graph** | A map of the project — files, sections, functions, routes and session memory — plus full-text search |
 | **Flow** | An infinite canvas: the task as a diagram of nodes and arrows |

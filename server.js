@@ -85,7 +85,7 @@ const {
     setMessageToolIds, setMessageMode, setMessageInputSent, setMessageExtraMeta, touchSession,
     setSessionThumb, setSessionContext, setSessionInfo, setSessionRateLimit,
     setMessageCreatedAt, lastMessageTime, getSessionMeta, getSessionTitle, getLastTurnParams,
-    listSessions, listMessages, countNeedsAttention, sumSessionUsage, countMessages, listToolSteps,
+    listSessions, listMessages, sumSessionUsage, countMessages, listToolSteps,
     countToolSteps, getMessageRole, setMessageText, clip, toolResultText, toolResultImages, resetSessions,
     deleteSession, stampEvent, appendRaw, startExchange, extractTitle, sessionTitle, recordStep,
     recordHookStart, recordHookResponse, recordThinking, recordAssistantText, recordNotice,
@@ -190,7 +190,7 @@ bridge = telegram.init({
     }),
 });
 
-// сводка по сессиям для списков и панелей — её читают Sessions, Home и маршруты
+// сводка по сессиям для списков и панелей — её читают Sessions и маршруты
 const sessionList = require('./SYSTEM/core/session-list.js').create({
     listSessions,
     sessionTitle,
@@ -214,13 +214,6 @@ const featureRoutes = {
         sessions: sessionList.sessionSummaries,
         usage: (id) => sumSessionUsage.get(id),
         activeStartedAt: sessionList.activeStartedAt,
-    }),
-    ...require('./PROJECTS/Home/home-server.js').createRoutes({
-        // сколько сессий просят человека вмешаться: порог шкалы держит
-        // turn-judgment.js, чтобы он был один на панель и на пометку в ленте
-        needsAttention: () => countNeedsAttention.get(turnJudgment.THRESHOLDS.awaitsHuman, turnJudgment.THRESHOLDS.attentionShown).n,
-        sessions: sessionList.sessionSummaries,
-        activeCount: sessionList.activeCount,
     }),
     ...require('./PROJECTS/Karandash/karandash-server.js').createRoutes({ setEnvValue }),
     ...telegram.createRoutes(),

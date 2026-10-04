@@ -10,7 +10,7 @@ This card list used to be the "Projects" tab of the Sessions side panel (switche
 
 ## 🗂️ What is on screen
 
-On the left — a side panel (`#bookNav`, `#bookList`) with one card per toolbar button: Flow, Kanban, PROJECTS, Home, Book, Karandash, Settings, plus the sections added with the "+" button (`SYSTEM/new-button.js`). The list is rebuilt every time the tab is opened, so a new folder from the "+" button is picked up immediately.
+On the left — a side panel (`#bookNav`, `#bookList`) with one card per toolbar button: Flow, Kanban, PROJECTS, Book, Karandash, Settings, plus the sections added with the "+" button (`SYSTEM/new-button.js`). The list is rebuilt every time the tab is opened, so a new folder from the "+" button is picked up immediately.
 
 On the right — the README of the selected card in an editable panel (`#bookFileEditor`), saved automatically after a pause in typing. Clicking the selected card again closes the panel. With nothing selected the panel shows the hint `#bookEmpty`.
 
