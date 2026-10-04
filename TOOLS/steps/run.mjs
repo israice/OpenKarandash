@@ -20,15 +20,17 @@ import { DatabaseSync } from 'node:sqlite';
 
 const ROOT = path.resolve(path.join(import.meta.dirname, '..', '..'));
 const argv = process.argv.slice(2);
-const vsAt = argv.indexOf('--vs') >= 0 ? argv[argv.indexOf('--vs') + 1] : null;
-const pairAt = argv.indexOf('--pair') >= 0 ? argv.indexOf('--pair') + 1 : -1;
-const plain = argv.filter((a, i) => a !== '--vs' && a !== '--pair' && i !== vsAt && i !== pairAt && i !== pairAt + 1);
-const COUNT = Number(plain[0] || 8);
+// Разбор по индексам, а не по значениям: смешивать тут нельзя — фильтр по
+// значению съедал первый позиционный аргумент, и `run.mjs 12 --vs <время>`
+// молча превращался в «нет сессий» вместо сравнения
+const vsIdx = argv.indexOf('--vs');
+const vsAt = vsIdx >= 0 ? argv[vsIdx + 1] : null;
+const pairIdx = argv.indexOf('--pair');
+const PAIR = pairIdx >= 0 ? [argv[pairIdx + 1], argv[pairIdx + 2]].filter(Boolean) : null;
+const taken = new Set([vsIdx, vsIdx + 1, pairIdx, pairIdx + 1, pairIdx + 2].filter((i) => i >= 0));
+const plain = argv.filter((_, i) => !taken.has(i));
+const COUNT = Number.isFinite(Number(plain[0])) && Number(plain[0]) > 0 ? Number(plain[0]) : 8;
 const ONLY = plain[1] || null;
-// --pair <сессия-было> <сессия-стало>: сравнение двух конкретных сессий.
-// Нужно там, где задачи повторяются: окно по времени сравнивает в таком случае
-// сравнивает разное, а два прогона одной и той же задачи сравнимы
-const PAIR = pairAt > 0 ? [argv[pairAt], argv[pairAt + 1]].filter(Boolean) : null;
 
 // waste-kinds.js — CommonJS, как весь серверный код проекта
 const require = createRequire(import.meta.url);
@@ -139,7 +141,7 @@ const share = (n, steps) => (steps ? `${Math.round((n / steps) * 100)}%` : '—'
 // «▲ NaN» рядом с числом, которое как раз и есть доказательство
 const pctNum = (n, steps) => (steps ? Math.round((n / steps) * 100) : 0);
 // шаги на ход — единственная величина, которой сравниваются сессии разной длины
-const perTurn = (t) => (t.turns ? Number((t.steps / t.turns).toFixed(1)) : 0);
+const perTurn = (t) => (t.turns ? Math.round((t.steps / t.turns) * 10) / 10 : 0);
 const whatOf = (id) => (id === SESSION_KIND.id ? SESSION_KIND : KINDS.find((k) => k.id === id))?.what || '';
 
 function printList(list) {
@@ -153,7 +155,9 @@ function printList(list) {
 // строка «было → стало»: одна на оба сравнения (окно по времени и две сессии),
 // иначе разъезжаются и формат стрелок, и правило знака
 function line(name, a, b) {
-    const delta = b - a;
+    // дельта округляется: 24.4 − 28.8 иначе печатается как -4.400000000000002,
+    // и строка выглядит сломанной, хотя всё посчитано верно
+    const delta = Math.round((b - a) * 10) / 10;
     const mark = delta === 0 ? '  =  ' : delta < 0 ? ' ▼ ' : ' ▲ ';
     console.log(`  ${name.padEnd(24)} ${String(a).padStart(5)} → ${String(b).padStart(5)}${mark}${delta === 0 ? '' : String(delta)}`);
 }

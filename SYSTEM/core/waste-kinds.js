@@ -35,6 +35,9 @@ const LIVE_RE = /TOOLS[\\/]live-verify[\\/]run\.mjs/;
 // сколько живых проверок за сессию ещё нормально: в замере на девятнадцати
 // сессиях их было 94, то есть по пять на сессию, а в худшей девятнадцать
 const VERIFY_FREE = 5;
+// сколько консольных поисков по одному файлу ещё считаются разведкой, а не
+// перебором: первые два ищут, третий и дальше крутятся вокруг того же места
+const SEARCH_FREE = 2;
 
 const norm = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
 
@@ -94,6 +97,12 @@ const KINDS = [
         id: 'verify-churn',
         what: 'живая проверка сверх пятой за сессию (мягкий вид: каждая проверка стоит секунды и контекста)',
         remedy: 'живую проверку запускай после правки, а не после каждого пробного изменения',
+    },
+    {
+        soft: true,
+        id: 'search-same-file',
+        what: 'третий и последующие консольные поиски по одному файлу (мягкий вид)',
+        remedy: 'файл, по которому ты уже искал, не обыскивай снова другим словом: прочитай найденное место и продолжай',
     },
 ];
 
@@ -176,6 +185,20 @@ function hits(kind, step, st) {
             // больше в семи, а до 19 в одной
             if (!LIVE_RE.test(step.cmd)) return false;
             return st.live++ >= VERIFY_FREE;
+        case 'search-same-file': {
+            // третий и последующие консольные поиски по одному файлу: первые два
+            // — разведка, дальше идёт перебор одного и того же места разными
+            // словами (в замере: sessions-db.js на шагах 15, 16 и 19 подряд)
+            if (!step.cmd || !CONSOLE_SEARCH_RE.test(step.cmd)) return false;
+            let repeated = false;
+            for (const m of step.cmd.matchAll(/[\w./-]+\.(?:js|mjs|css|html|eta|md)/g)) {
+                const file = norm(m[0]);
+                const seen = (st.searched.get(file) || 0) + 1;
+                st.searched.set(file, seen);
+                if (seen > SEARCH_FREE) repeated = true;
+            }
+            return repeated;
+        }
         default:
             return false;
     }
@@ -196,6 +219,7 @@ function classify(steps, { reportAttached = false } = {}) {
         reads: new Set(),
         calls: new Set(),
         live: 0,
+        searched: new Map(),
     };
     const found = new Map();
     for (const row of steps.slice().sort((a, b) => a.position - b.position)) {
