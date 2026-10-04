@@ -57,6 +57,18 @@ const RELOAD_SNIPPET = `
         if (!found) reload();
     }
 
+    // правка клиентского скрипта: переисполняем файл, а крючок раздела (он же
+    // registerHotReload) снимает то, что скрипт нарисовал в прошлый раз. Крючка
+    // нет — раздел за собой не умеет убираться, и вторая копия легла бы поверх
+    // первой, поэтому тогда всё-таки перезагружаем страницу.
+    // Спросить надо canReloadScript: reloadScript отвечает промисом, а промис
+    // всегда истинный, и проверка его результата перезагрузила бы страницу
+    // только после перезагрузки — то есть никогда
+    function swapScript(file) {
+        if (!window.App || !window.App.canReloadScript(file)) { reload(); return; }
+        window.App.reloadScript(file);
+    }
+
     function connect() {
         source = new EventSource('/__reload');
         source.onmessage = (event) => {
@@ -64,10 +76,12 @@ const RELOAD_SNIPPET = `
             // карта пересобирается позже самой правки, поэтому у неё своё событие:
             // страницу перезагружать незачем, достаточно забыть прежнюю карту
             if (data === 'map') { window.__onMapUpdate && window.__onMapUpdate(); return; }
-            // точечные события: обновляем один фрагмент или одну таблицу стилей.
-            // hold здесь не смотрим — в отличие от перезагрузки, поток ответа они не рвут
+            // точечные события: обновляем один фрагмент, одну таблицу стилей или
+            // один скрипт. hold здесь не смотрим — в отличие от перезагрузки,
+            // поток ответа они не рвут
             if (data.startsWith('fragment:')) { swapFragment(data.slice(9)); return; }
             if (data.startsWith('css:')) { swapStyles(data.slice(4)); return; }
+            if (data.startsWith('script:')) { swapScript(data.slice(7)); return; }
             // правка модуля страницы кнопки «+»: пересобираем только её саму.
             // false — такой страницы в интерфейсе нет (переименовали, удалили,
             // список ещё не пришёл), и тогда обычная полная перезагрузка
@@ -198,17 +212,24 @@ function create({
             }
 
             // собираем не флаг, а список правок: по нему решается, хватит ли точечного
-            // события. Удаление файла в список не попадает — его видно только по размеру
+            // события. Отдельно — список исчезнувших файлов: раньше удаление любого
+            // файла перезагружало страницу целиком, потому что «файла нет» отвечало
+            // одним флагом без пути. Путь известен, поэтому удаление разбирается тем же
+            // правилом, что и правка: минус каталог плашек — ничего, минус скрипт раздела
+            // — надо взять страницу заново
             const changed = [];
             for (const [file, mtime] of current) {
                 if (previous.get(file) !== mtime) changed.push(file);
             }
-            const removed = current.size !== previous.size && changed.length === 0;
+            const gone = [];
+            for (const file of previous.keys()) {
+                if (!current.has(file)) gone.push(file);
+            }
 
             previous = current;
-            if (changed.length || removed) {
+            if (changed.length || gone.length) {
                 if (clients.size > 0) {
-                    for (const event of reloadEvents(root, removed ? null : changed)) notifyClients(event);
+                    for (const event of reloadEvents(root, [...changed, ...gone])) notifyClients(event);
                 }
                 scheduleMapUpdate();
                 return;

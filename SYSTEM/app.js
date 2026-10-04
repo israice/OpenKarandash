@@ -112,13 +112,13 @@ export function confirmModal(message, opts = {}) {
     });
 }
 
-// лайтбокс лежит в index.html вне вкладок — им пользуются и task-card__shot,
-// и screenshotScreenPreview (Karandash), и миниатюры сессий. Узлы заполняет init()
+// лайтбокс лежит в index.html вне вкладок — им пользуются
+// screenshotScreenPreview (Karandash) и миниатюры сессий. Узлы заполняет init()
 let shotLightbox = null;
 let shotLightboxImg = null;
 
 // единственное место в проекте, которое открывает превью скриншота на весь экран —
-// им пользуются и task-card__shot, и screenshotScreenPreview, и миниатюры сессий
+// им пользуются screenshotScreenPreview и миниатюры сессий
 export function openShotLightbox(src, alt = '') {
     shotLightboxImg.src = src;
     shotLightboxImg.alt = alt;
@@ -147,6 +147,15 @@ export function restoreServerConnection(providerId = DEFAULT_AGENT) {
         reconnecting[providerId] = api('/api/agent/connect', { agent: providerId, id: state.installId })
             .then((r) => {
                 if (!r?.ok) return false;
+                // id, который сервер принял на самом деле, записанный обратно:
+                // сохранённый стареет (цель переехала, сервер вернулся на другой
+                // id), и каждое восстановление после рестарта спотыкалось бы о
+                // него снова. Пустое id от клиента не пишем — тогда следующее
+                // восстановление снова подберёт единственную цель
+                if (r.id && state.installId !== r.id) {
+                    state.installId = r.id;
+                    saveProviderState(providerId);
+                }
                 if (Array.isArray(r.models) && r.models.length) {
                     const provider = PROVIDERS.find((p) => p.id === providerId);
                     if (provider) {
@@ -180,7 +189,7 @@ function init() {
     shotLightboxImg = document.getElementById('shotLightboxImg');
 
     document.addEventListener('click', (e) => {
-        const img = e.target.closest('.task-card__shot img, #screenshotScreenPreview');
+        const img = e.target.closest('#screenshotScreenPreview');
         if (!img || img.hidden) return;
         openShotLightbox(img.src, img.alt);
     });
@@ -212,7 +221,6 @@ function init() {
     // ---------- переключение вида Session ----------
 
     const VIEWS = {
-        home: document.getElementById('defaultView'),
         flow: document.getElementById('flowView'),
         kanban: document.getElementById('kanbanView'),
         book: document.getElementById('bookView'),
@@ -238,13 +246,30 @@ function init() {
     // разделов, а знает о себе каждый только свой файл
     const hotReloads = new Map();
 
+    // Порядок <script> в index.html не даёт гарантии: крючок регистрирует тот файл,
+    // который публикует функцию в window (SYSTEM/model-tag.js и подобные), а он
+    // подключён раньше app.js — и window.App в тот момент ещё undefined. Раньше
+    // вызов `window.App?.registerHotReload` там просто ничего не делал, и правка
+    // такого файла перезагружала страницу целиком. Поэтому крючки, пришедшие
+    // раньше ядра, копятся в очереди на окне, а ядро разбирает её после старта
+    const pendingHotReloads = window.__hotReloads || (window.__hotReloads = []);
+
+    // Синхронная проверка «умеет ли этот файл перерисоваться на месте».
+    // reloadScript возвращает промис, а промис всегда истинный: спросить его
+    // результат можно только после ожидания, а решение «перезагружать ли страницу»
+    // принимается в обработчике события сразу. Поэтому решение выносим отдельно,
+    // а reloadScript им пользуется.
+    function canReloadScript(file) {
+        return hotReloads.has(file) && Boolean(document.querySelector(`script[data-hot-src="${file}"]`));
+    }
+
     async function reloadScript(file) {
+        if (!canReloadScript(file)) return false;
         const cleanup = hotReloads.get(file);
-        if (!cleanup) return false;
         const old = document.querySelector(`script[data-hot-src="${file}"]`);
-        if (!old) return false;
         try {
-            cleanup(); // старый экземпляр убираем до загрузки нового, чтобы не наложились
+            // крючок null — «я ничего не рисую»: переисполняемся, страницу не трогаем
+            if (cleanup) cleanup(); // старый экземпляр убираем до загрузки нового, чтобы не наложились
         } catch (err) {
             console.error(`hot reload ${file}:`, err);
             return false;
@@ -299,9 +324,21 @@ PROVIDERS,
         confirmModal,
         closeModal,
         escapeHtml,
-        registerHotReload: (file, rerender) => hotReloads.set(file, rerender),
+        // регистрация крючка не зависит от порядка загрузки: до готовности ядра крючок
+        // ждёт в очереди, после — попадает в карту (см. pendingHotReloads выше)
+        registerHotReload: (file, rerender) => {
+            hotReloads.set(file, rerender);
+            const at = pendingHotReloads.indexOf(file);
+            if (at !== -1) pendingHotReloads.splice(at, 1);
+        },
+        canReloadScript,
         reloadScript,
     };
+
+    // ядро поднялось — разбираем то, что зарегистрировали раньше него
+    for (const entry of pendingHotReloads.splice(0)) {
+        if (Array.isArray(entry)) hotReloads.set(entry[0], entry[1]);
+    }
 }
 
 init();
