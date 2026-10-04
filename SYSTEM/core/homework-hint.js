@@ -131,7 +131,10 @@ async function pickHomework({ request, sessionId }) {
     // вторым мнением о том же самом
     const known = sessionId ? maps.get(sessionId) : null;
     if (known && !anchorsOf(text).code.length) {
-        return { ...known, report: null, work: null, reused: true };
+        // sent — сколько символов ушло в запрос на самом деле: у карты это её
+        // длина, а не длина отчёта, по которому она собрана. Иначе в замере
+        // объём отчёта и объём карты складываются в одну цифру
+        return { ...known, report: null, work: null, reused: true, sent: known.map.length };
     }
 
     // Дальше суждение, и только потом сбор: сборщик ходит в rg и в индекс
@@ -161,7 +164,10 @@ async function pickHomework({ request, sessionId }) {
         chars: built.chars,
     };
     if (sessionId) maps.set(sessionId, found);
-    return { ...found, report: clipReport(built.report), work, reused: false };
+    // sent считается по обрезанному отчёту: в запрос уходит именно он, а отчёт
+    // целиком может быть длиннее лимита
+    const clipped = clipReport(built.report);
+    return { ...found, report: clipped, sent: clipped.length, work, reused: false };
 }
 
 // блок в запрос агента. Это не вопрос человека, а служебная преамбула, поэтому
@@ -179,12 +185,7 @@ function homeworkPreamble(homework) {
         + 'Отчёт указывает, где смотреть, но решение и правка за тобой: он мог указать не туда.\n\n';
 }
 
-// что из отчёта пишется в result_meta хода — тем же полем, что записки и приём
-// (DOCS/decisions/089): по этим числам видно, сколько отчётов уехало и на какие
-// запросы
-function homeworkTrace(homework) {
-    if (!homework) return null;
-    return { kind: homework.kind, files: homework.files, chars: homework.chars, work: homework.work, reused: homework.reused };
-}
-
-module.exports = { pickHomework, homeworkPreamble, homeworkTrace, clipReport, WORK_QUESTION: QUESTION };
+// Поля для result_meta хода (kind, files, chars, sent, work, reused) собирает
+// сам runTurn в SYSTEM/core/run-turn.js: отдельная функция ради шести полей
+// разошлась бы с ним по первой же правке формы.
+module.exports = { pickHomework, homeworkPreamble, clipReport, WORK_QUESTION: QUESTION };

@@ -1,7 +1,7 @@
 // Накрывает ли отчёт разведки то место, которое сессия правила на самом деле.
 // Только чтение DATA/.sessions.db и сбор отчёта кодом, ничего не пишет.
 //
-//   node TOOLS/steps/quality.mjs            все сессии opencode-windows
+//   node TOOLS/steps/quality.mjs            все сессии pi-windows
 //   node TOOLS/steps/quality.mjs 10         последние десять
 //
 // Зачем отдельный инструмент, если есть run.mjs. run.mjs считает, сколько шагов
@@ -27,7 +27,8 @@ const COUNT = Number(process.argv[2] || 0);
 const require = createRequire(import.meta.url);
 const { collect } = require('../../TOOLS/homework/collect.js');
 
-const db = new DatabaseSync(path.join(ROOT, 'DATA', '.sessions.db'), { readOnly: true });
+// SESSIONS_DB — путь к другой базе (по умолчанию живая, только на чтение)
+const db = new DatabaseSync(process.env.SESSIONS_DB || path.join(ROOT, 'DATA', '.sessions.db'), { readOnly: true });
 
 const norm = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
 const base = (p) => norm(p).split('/').pop();
@@ -65,7 +66,7 @@ function namedIn(report) {
 
 const sessions = db.prepare(`
     SELECT session_id, MAX(created_at) at FROM messages
-    WHERE role = 'tool' AND session_id LIKE 'opencode-windows-%'
+    WHERE role = 'tool' AND session_id LIKE 'pi-windows-%'
     GROUP BY session_id ORDER BY at DESC
 `).all().slice(0, COUNT || undefined);
 

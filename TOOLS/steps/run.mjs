@@ -4,7 +4,7 @@
 //
 //   node TOOLS/steps/run.mjs                          сводка по последним 8 сессиям
 //   node TOOLS/steps/run.mjs 20                       по последним 20 сессиям
-//   node TOOLS/steps/run.mjs 8 opencode-windows-mutwv071   одна сессия подробно
+//   node TOOLS/steps/run.mjs 8 pi-windows-mutwv071         одна сессия подробно
 //   node TOOLS/steps/run.mjs 16 --vs 2026-10-04T16:00  «было → стало»
 //
 // Последняя форма — та, ради которой инструмент и нужен: окно сессий делится
@@ -29,7 +29,8 @@ const ONLY = plain[1] || null;
 const require = createRequire(import.meta.url);
 const { KINDS, SESSION_KIND, classify, hardCount } = require('../../SYSTEM/core/waste-kinds.js');
 
-const db = new DatabaseSync(path.join(ROOT, 'DATA', '.sessions.db'), { readOnly: true });
+// SESSIONS_DB — путь к другой базе (по умолчанию живая, только на чтение)
+const db = new DatabaseSync(process.env.SESSIONS_DB || path.join(ROOT, 'DATA', '.sessions.db'), { readOnly: true });
 
 // одна строка — один шаг инструмента: ровно то, из чего складывается ход
 const rows = db.prepare(`
@@ -42,7 +43,7 @@ const rows = db.prepare(`
 const bySession = new Map();
 for (const row of rows) {
     const id = row.session_id || '';
-    if (!id.startsWith('opencode-')) continue;
+    if (!id.startsWith('pi-')) continue;
     if (!bySession.has(id)) bySession.set(id, []);
     bySession.get(id).push(row);
 }
@@ -51,7 +52,7 @@ const all = [...bySession.entries()];
 const chosen = ONLY ? all.filter(([id]) => id === ONLY) : all.slice(0, COUNT);
 
 if (!chosen.length) {
-    console.log('Нет сессий opencode в базе — или неверный идентификатор.');
+    console.log('Нет сессий pi в базе — или неверный идентификатор.');
     process.exit(0);
 }
 

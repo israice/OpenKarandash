@@ -114,7 +114,7 @@ function create(deps) {
                 send(event);
                 runs.emitLive(ctx.session, event);
             },
-            // мысль модели (reasoning у OpenCode, thinking у Claude).
+            // мысль модели (thinking у pi, reasoning у OpenCode).
             //
             // Лента получает не кусок, а блок целиком: заголовок гармошки
             // показывает последний абзац мыслей, и по кускам он прыгал бы с
@@ -229,6 +229,9 @@ function create(deps) {
                                         kind: homework.kind,
                                         files: homework.files,
                                         chars: homework.chars,
+                                        // sent — сколько символов ушло в запрос:
+                                        // у карты это её длина, а не длина отчёта
+                                        sent: homework.sent ?? homework.chars,
                                         work: homework.work,
                                         reused: Boolean(homework.reused),
                                     }
