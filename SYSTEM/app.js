@@ -21,6 +21,10 @@ import {
     PROVIDERS, connections, saveProviderState, saveActiveProvider, loadActiveProvider,
     activateExclusive, DEFAULT_AGENT, DEFAULT_AGENT_MODEL,
 } from './providers.js';
+// Горячая перезагрузка скриптов — отдельный модуль: правило переисполнения,
+// перерисовки и поставщиков к ядру отношения не имеет, а app.js подходит к
+// четырёмстам строкам (DOCS/decisions/022)
+import * as HotReload from './hot-reload.js';
 // Каскад выбора модели и строка выбора в шапке сессии — из model-cascade.js:
 // витрина в настройках, карточка провайдера и шапка сессии берут одну и ту же
 // строку и пишут выбор одним и тем же способом
@@ -236,65 +240,15 @@ function init() {
 
     // ---------- горячая перезагрузка скриптов ----------
     // Правка клиентского скрипта приходит событием `script:<путь>`. Раздел, который
-    // умеет перерисовать себя на месте, регистрирует здесь крючок под свой файл:
-    // крючок снимает то, что скрипт нарисовал в прошлый раз, а дальше свежая копия
-    // скрипта выполняется обычным порядком и рисует себя заново сама.
-    // Крючка нет — раздел за собой не умеет убираться, и клиент откатывается к
-    // полной перезагрузке страницы: это честнее, чем оставить два экземпляра
-    // раздела один поверх другого.
-    // Регистрация идёт по точному пути файла, поэтому правило общее для всех
-    // разделов, а знает о себе каждый только свой файл
-    const hotReloads = new Map();
-
-    // Порядок <script> в index.html не даёт гарантии: крючок регистрирует тот файл,
-    // который публикует функцию в window (SYSTEM/model-tag.js и подобные), а он
-    // подключён раньше app.js — и window.App в тот момент ещё undefined. Раньше
-    // вызов `window.App?.registerHotReload` там просто ничего не делал, и правка
-    // такого файла перезагружала страницу целиком. Поэтому крючки, пришедшие
-    // раньше ядра, копятся в очереди на окне, а ядро разбирает её после старта
-    const pendingHotReloads = window.__hotReloads || (window.__hotReloads = []);
-
-    // Синхронная проверка «умеет ли этот файл перерисоваться на месте».
-    // reloadScript возвращает промис, а промис всегда истинный: спросить его
-    // результат можно только после ожидания, а решение «перезагружать ли страницу»
-    // принимается в обработчике события сразу. Поэтому решение выносим отдельно,
-    // а reloadScript им пользуется.
-    function canReloadScript(file) {
-        return hotReloads.has(file) && Boolean(document.querySelector(`script[data-hot-src="${file}"]`));
-    }
-
-    async function reloadScript(file) {
-        if (!canReloadScript(file)) return false;
-        const cleanup = hotReloads.get(file);
-        const old = document.querySelector(`script[data-hot-src="${file}"]`);
-        try {
-            // крючок null — «я ничего не рисую»: переисполняемся, страницу не трогаем
-            if (cleanup) cleanup(); // старый экземпляр убираем до загрузки нового, чтобы не наложились
-        } catch (err) {
-            console.error(`hot reload ${file}:`, err);
-            return false;
-        }
-        const fresh = document.createElement('script');
-        // те же атрибуты, что у исходного тега: обычный скрипт или ES-модуль
-        for (const name of ['type', 'defer']) {
-            if (old.hasAttribute(name)) fresh.setAttribute(name, old.getAttribute(name) || '');
-        }
-        fresh.dataset.hotSrc = file;
-        fresh.src = `${file}?v=${Date.now()}`;
-        const done = new Promise((resolve, reject) => {
-            fresh.addEventListener('load', () => resolve());
-            fresh.addEventListener('error', () => reject(new Error(`${file} не загрузился`)));
-        });
-        old.after(fresh);
-        try {
-            await done;
-            return true;
-        } catch (err) {
-            console.error(`hot reload ${file}:`, err);
-            fresh.remove(); // сломанная копия в странице только мешает
-            return false;
-        }
-    }
+    // умеет перерисовать себя на месте, регистрирует крючок под свой файл: крючок
+    // снимает то, что скрипт нарисовал в прошлый раз, а свежая копия выполняется
+    // обычным порядком и рисует себя заново сама. Крючка нет — раздел за собой не
+    // умеет убираться, и клиент откатывается к полной перезагрузке страницы: это
+    // честнее, чем оставить два экземпляра раздела один поверх другого.
+    //
+    // Само правило живёт в SYSTEM/hot-reload.js: там же перерисовка уже нарисованных
+    // узлов и поставщики, которые рисует чужой скрипт (DOCS/decisions/090).
+    const hot = HotReload.create(window);
 
     // что берут вынесенные файлы: вкладки (tabs.js), Flow, Kanban, Karandash, Settings.
     // Остальные имена (setSessionId, renderObsConnection, chatMessages,
@@ -324,21 +278,14 @@ PROVIDERS,
         confirmModal,
         closeModal,
         escapeHtml,
-        // регистрация крючка не зависит от порядка загрузки: до готовности ядра крючок
-        // ждёт в очереди, после — попадает в карту (см. pendingHotReloads выше)
-        registerHotReload: (file, rerender) => {
-            hotReloads.set(file, rerender);
-            const at = pendingHotReloads.indexOf(file);
-            if (at !== -1) pendingHotReloads.splice(at, 1);
-        },
-        canReloadScript,
-        reloadScript,
+        // Регистрация крючка не зависит от порядка загрузки: до готовности ядра крючок
+        // ждёт в очереди на окне, после — попадает в карту (см. SYSTEM/hot-reload.js)
+        registerHotReload: hot.registerHotReload,
+        registerHotRedraw: hot.registerHotRedraw,
+        declareDependent: hot.declareDependent,
+        canReloadScript: hot.canReloadScript,
+        reloadScript: hot.reloadScript,
     };
-
-    // ядро поднялось — разбираем то, что зарегистрировали раньше него
-    for (const entry of pendingHotReloads.splice(0)) {
-        if (Array.isArray(entry)) hotReloads.set(entry[0], entry[1]);
-    }
 }
 
 init();

@@ -31,12 +31,44 @@
 
     // горячая перезагрузка этого скрипта: снимаем всё, что он нарисовал (кнопку в
     // топбаре и обе модалки), иначе свежая копия добавит вторую такую же поверх
-    // первой. Дальше скрипт выполняется обычным порядком и рисует себя заново сам
-    window.App?.registerHotReload('PROJECTS/Settings/settings.js', () => {
-        settingsRoot.remove();
-        pickerModal.remove();
-        settingsModal.remove();
-    });
+    // первой. Дальше скрипт выполняется обычным порядком и рисует себя заново сам.
+    //
+    // Через очередь на окне, а не через window.App: этот файл подключён раньше
+    // app.js, и App там ещё undefined — вызов через App молча ничего не делал, а
+    // правка файла перезагружала страницу целиком.
+    (window.__hotReloads || (window.__hotReloads = [])).push([
+        'PROJECTS/Settings/settings.js',
+        () => {
+            settingsRoot.remove();
+            pickerModal.remove();
+            settingsModal.remove();
+        },
+        null,
+        null,
+    ]);
+
+    // Мои поставщики. Каждый публикует init() и ничего не рисует сам — окно
+    // настроек собираю я, поэтому правка поставщика должна перерисовать окно,
+    // а не страницу. Объявляю здесь, а не в поставщиках: кто кого рисует, знает
+    // тот, кто рисует (DOCS/decisions/090).
+    //
+    // Ключ записи — сам поставщик: dependent кладётся под ключом первого
+    // элемента, а «кто рисует этот файл» — это второй. Регистрация идёт через
+    // очередь на окне, а не через window.App: этот файл подключён раньше app.js.
+    for (const supplier of [
+        'settings-providers.js',
+        'settings-screenshot.js',
+        'settings-telegram.js',
+        'settings-sandglass-tab.js',
+        'settings-modal.js',
+    ]) {
+        (window.__hotReloads || (window.__hotReloads = [])).push([
+            `PROJECTS/Settings/${supplier}`,
+            null,
+            null,
+            'PROJECTS/Settings/settings.js',
+        ]);
+    }
 
     async function api(path, body) {
         const res = await fetch(path, {
