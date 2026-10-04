@@ -1,7 +1,15 @@
 // /api/sessions* — общее хранилище переписок: его читают и Chat, и Flow,
 // и страницы кнопки «+», поэтому маршруты живут в ядре, а не в одной папке
 // (DOCS/decisions/017). Обращения к самой базе — SYSTEM/core/sessions-db.js.
-const { readJson, sendJson } = require('./http.js');
+const { readJson, sendJson, sendImage } = require('./http.js');
+
+// Превью сессии пишется в базу готовой data-URL (скриншот системы либо клиентский
+// снимок) — такой формат и проверяем, и храним. Обе константы нужны двум
+// маршрутам: записи превью и его выдачи картинкой
+const MAX_THUMB_BYTES = 300 * 1024;
+// строгий формат data-URL: только base64, без пробелов, кавычек и скобок —
+// это то, что реально отдаёт canvas.toDataURL, и ничего сверх этого
+const THUMB_RE = /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/]+=*$/;
 
 // createRoutes({ db, list, map, runs }): db — нужные функции хранилища, list —
 // сводка сессий для списков (core/session-list.js), map — отложенная пересборка
@@ -9,7 +17,7 @@ const { readJson, sendJson } = require('./http.js');
 // старыми.
 function createRoutes({ db, list, map, runs }) {
     const {
-        resetSessions, deleteSession, setSessionThumb, getMessageRole, setMessageText,
+        resetSessions, deleteSession, setSessionThumb, getSessionThumb, getMessageRole, setMessageText,
         getSessionMeta, listMessages, sumSessionUsage,
     } = db;
     const { sessionSummaries } = list;
@@ -55,16 +63,37 @@ function createRoutes({ db, list, map, runs }) {
         // приходит уже готовой data URL (скриншот системы либо клиентский снимок)
         '/api/sessions/thumb': async (req, res) => {
             const { id, thumb } = await readJson(req);
-            const MAX_THUMB_BYTES = 300 * 1024;
-            // строгий формат data-URL: только base64, без пробелов, кавычек и скобок —
-            // это то, что реально отдаёт canvas.toDataURL, и ничего сверх этого
-            const THUMB_RE = /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/]+=*$/;
             if (!id || typeof thumb !== 'string' || thumb.length > MAX_THUMB_BYTES || !THUMB_RE.test(thumb)) {
                 sendJson(res, { ok: false, error: 'Invalid preview' });
                 return;
             }
             setSessionThumb.run(thumb, id);
             sendJson(res, { ok: true });
+        },
+
+        // Превью сессии отдельным адресом, а не строкой внутри сводки: список
+        // опрашивается каждые 5 секунд, и base64-картинка на каждую сессию
+        // ездила заново каждый раз, хотя байты не меняются (DOCS/decisions/091).
+        // Браузер берёт их один раз и дальше отдаёт из кэша по ETag
+        '/api/image/session-thumb': async (req, res) => {
+            const id = new URL(req.url, 'http://localhost').searchParams.get('id');
+            const dataUrl = id ? getSessionThumb.get(id)?.thumb : null;
+            // запись в базу проходит тот же фильтр, что и /api/sessions/thumb
+            // (THUMB_RE там), но база живёт своей жизнью: битая строка здесь
+            // обязана стать 404, а не картинкой нулевой длины
+            if (!dataUrl || !THUMB_RE.test(dataUrl)) {
+                res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('No preview');
+                return;
+            }
+
+            // в базе превью лежит data-URL, наружу отдаём сами байты:
+            // Content-Type из префикса, тело — распакованный base64
+            const mime = dataUrl.slice('data:'.length, dataUrl.indexOf(';'));
+            const bytes = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
+            // ETag — длина и хвост строки: хэш 40 КБ на каждый запрос дороже самой
+            // отдачи, а смена картинки меняет и длину, и хвост
+            const etag = `"${bytes.length}-${dataUrl.slice(-16)}"`;
+            sendImage(res, bytes, mime, etag, req.headers['if-none-match']);
         },
 
         // правка своей реплики прямо на графе Flow (§10 chat.md). Менять разрешено
@@ -106,7 +135,10 @@ function createRoutes({ db, list, map, runs }) {
                 rateLimit,
                 usage: sumSessionUsage.get(id),
                 target: meta.target ?? null,
-                thumb: meta.thumb ?? null,
+                // адресом, а не строкой data-URL: base64 ездил в каждом ответе,
+                // а карточка сессии в Feed перечитывается раз в секунду, пока идёт
+                // ход (см. /api/image/session-thumb)
+                thumb: meta.hasThumb ? `/api/image/session-thumb?id=${encodeURIComponent(id)}` : null,
                 // ход идёт прямо сейчас: номер последнего события, уже отражённого
                 // в этих строках, — с него клиент просит продолжение у attach
                 liveSeq: runs.liveSeq(id),

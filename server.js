@@ -83,7 +83,7 @@ const telegramLetters = require('./PROJECTS/Settings/telegram-letters-server.js'
 const {
     db, upsertSession, getCliSession, setCliSession, upsertMessage, setMessageToolResult,
     setMessageToolIds, setMessageMode, setMessageInputSent, setMessageExtraMeta, touchSession,
-    setSessionThumb, setSessionContext, setSessionInfo, setSessionRateLimit,
+    setSessionThumb, getSessionThumb, setSessionContext, setSessionInfo, setSessionRateLimit,
     setMessageCreatedAt, lastMessageTime, getSessionMeta, getSessionTitle, getLastTurnParams,
     listSessions, listMessages, sumSessionUsage, countMessages, listToolSteps,
     countToolSteps, getMessageRole, setMessageText, clip, toolResultText, toolResultImages, resetSessions,
@@ -218,6 +218,9 @@ const featureRoutes = {
     ...require('./PROJECTS/Karandash/karandash-server.js').createRoutes({ setEnvValue }),
     ...telegram.createRoutes(),
     ...require('./SYSTEM/toolbar-icons-server.js').createRoutes({ db }),
+    // верхнее меню страницы: шаблон SYSTEM/topbar.eta подставляется в страницу
+    // ещё и при отдаче (SYSTEM/core/version.js), маршрут отдаёт его же
+    ...require('./SYSTEM/topbar-server.js').createRoutes(),
     ...branchPreview.createRoutes({ root: ROOT }),
     // два набора ничьих маршрутов: запуск любого CLI и общее хранилище переписок
     // (DOCS/decisions/017). Оформлены так же, как фичи, — таблицей путь → обработчик
@@ -229,7 +232,7 @@ const featureRoutes = {
     }),
     ...require('./SYSTEM/core/sessions-routes.js').createRoutes({
         db: {
-            resetSessions, deleteSession, setSessionThumb, getMessageRole, setMessageText,
+            resetSessions, deleteSession, setSessionThumb, getSessionThumb, getMessageRole, setMessageText,
             getSessionMeta, listMessages, sumSessionUsage,
         },
         list: sessionList,

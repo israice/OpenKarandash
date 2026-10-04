@@ -44,7 +44,10 @@ function createRoutes({ sessions, usage, activeStartedAt }) {
                 return {
                     id: session.id,
                     title: session.title,
-                    thumb: session.thumb,
+                    // адресом, а не строкой data-URL: фрагмент опрашивается
+                    // каждые 5с, и 40 КБ base64 на сессию ездили заново каждый
+                    // раз (DOCS/decisions/091) — теперь это /api/image/session-thumb
+                    thumb: session.hasThumb ? `/api/image/session-thumb?id=${encodeURIComponent(session.id)}` : null,
                     running: session.running,
                     live: Boolean(startedAt),
                     tokensText,

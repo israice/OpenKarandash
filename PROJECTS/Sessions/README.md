@@ -30,7 +30,7 @@ On the left is the **Sessions** panel with every conversation started from this 
 2. **Open the Sessions tab** and write a question in the field at the bottom. The field grows with the text; send with **Ctrl+Enter** (Cmd+Enter on a Mac) or the `Send` button.
 3. **Pick a mode:** `Action` to act, `Chat` to discuss. `Action` is on by default.
 4. **Watch the work unfold** — steps appear in the feed as calls happen, and the answer is appended right away.
-5. **Switch between sessions** by clicking in the panel on the left. Clicking the selected one again deselects it. `+ New` starts a separate history (a draft appears in the list immediately), the bin icon deletes one session, `Reset All` deletes them all.
+5. **Switch between sessions** by clicking in the panel on the left. The last one you opened is reopened on reload; if it is gone, the most recent session is opened instead, and if the database is still empty the tab comes up with a blank sheet for a new session. Clicking the selected row again (or `+ New`) starts a separate history — a draft appears in the list immediately. The bin icon deletes one session, `Reset All` deletes them all.
 6. **Copy the session id** with the copy button that appears on the row — what gets copied is the CLI's real `session_id`.
 
 ## ⚠️ Before you start
@@ -64,6 +64,7 @@ Endpoints (all `POST`, localhost only):
 | `/api/sessions/messages` | the conversation of one session (questions, answers, steps) |
 | `/api/sessions/attach` | the stream of remaining events of work in progress |
 | `/api/sessions/thumb` | the element preview for a session started from Karandash mode |
+| `/api/image/session-thumb?id=…` | the preview itself as image bytes (`GET`, cached by `ETag` — the lists carry only the fact that a preview exists, see `DOCS/decisions/091`) |
 | `/api/sessions/delete` | deletes one session (refused while it is running) |
 | `/api/sessions/reset` | clears the whole database |
 

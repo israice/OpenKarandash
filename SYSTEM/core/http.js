@@ -1,4 +1,4 @@
-// Общие мелочи HTTP: чтение тела и три способа ответить. Вынесены из server.js,
+// Общие мелочи HTTP: чтение тела и способы ответить. Вынесены из server.js,
 // чтобы серверные половины фич (PROJECTS/*/**-server.js) не тянули за собой
 // весь сервер ради sendJson.
 
@@ -57,4 +57,24 @@ function sendHtml(res, html, status = 200) {
     sendBody(res, Buffer.from(html, 'utf8'), status, 'text/html; charset=utf-8');
 }
 
-module.exports = { readJson, escapeHtml, sendJson, sendHtml };
+// Картинка по адресу: в отличие от JSON и HTML она неизменна, поэтому браузер
+// может держать её в кэше и не переспрашивать при каждой подмене фрагмента.
+// max-age — про быстрый повтор, ETag — про правильность: кэш протух, браузер
+// переспрашивает, etag совпал — отвечаем 304 без тела
+function sendImage(res, body, contentType, etag, ifNoneMatch) {
+    const headers = {
+        'Content-Type': contentType,
+        'Cache-Control': 'private, max-age=600',
+        ETag: etag,
+    };
+    if (ifNoneMatch === etag) {
+        res.writeHead(304, headers);
+        res.end();
+        return;
+    }
+    res.writeHead(200, { ...headers, 'Content-Length': body.length });
+    res.end(body);
+}
+
+module.exports = { readJson, escapeHtml, sendJson, sendHtml, sendImage };
+

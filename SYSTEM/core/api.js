@@ -9,8 +9,10 @@ const { sendJson, sendHtml, escapeHtml } = require('./http.js');
 function createApi(routes) {
     return async function handleApi(req, res, urlPath) {
         // фрагменты только читают состояние, и htmx тянет их обычным hx-get —
-        // остальному API по-прежнему нужен POST
-        const readOnly = urlPath.startsWith('/api/fragment/');
+        // остальному API по-прежнему нужен POST. Исключение второе: картинки по
+        // адресу (/api/image/*) — их тоже забирает браузер сам, GET'ом, и в
+        // теле запроса у GET ничего нет
+        const readOnly = urlPath.startsWith('/api/fragment/') || urlPath.startsWith('/api/image/');
         if (req.method !== 'POST' && !(readOnly && req.method === 'GET')) {
             sendJson(res, { ok: false, error: readOnly ? 'Expected GET or POST' : 'Expected POST' }, 405);
             return;
@@ -49,6 +51,12 @@ function createApi(routes) {
             // htmx на 200 попробовал бы разложить тело по oob-целям, ничего не нашёл
             // и тихо оставил панель замороженной
             if (readOnly) {
+                // картинке html-комментарий не нужен: её читает <img>, и ему
+                // достаточно пустого ответа с кодом
+                if (urlPath.startsWith('/api/image/')) {
+                    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Image error');
+                    return;
+                }
                 sendHtml(res, `<!-- fragment error: ${escapeHtml(err.message)} -->`, 500);
                 return;
             }
