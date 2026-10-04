@@ -118,6 +118,21 @@ function mapOf(report) {
         .join('\n');
 }
 
+// Привязка карты к id, который заводит сервер. У первого хода сессии клиент id
+// ещё не знает (он приходит первым событием потока), и без привязки
+// продолжение сессии карту не нашло бы — а именно на продолжении отчёт и нужен.
+// Модуль тот же, что и у маршрута: память карт живёт в его переменной, а второй
+// require того же пути даёт ту же копию
+function bindSession(sessionId, homework) {
+    if (!sessionId || !homework || !homework.map) return;
+    maps.set(sessionId, {
+        map: homework.map,
+        kind: homework.kind,
+        files: homework.files,
+        chars: homework.chars,
+    });
+}
+
 // { report | map, kind, files, chars, work, reused } либо null — отчёта нет
 async function pickHomework({ request, sessionId }) {
     const text = String(request || '').trim();
@@ -188,4 +203,4 @@ function homeworkPreamble(homework) {
 // Поля для result_meta хода (kind, files, chars, sent, work, reused) собирает
 // сам runTurn в SYSTEM/core/run-turn.js: отдельная функция ради шести полей
 // разошлась бы с ним по первой же правке формы.
-module.exports = { pickHomework, homeworkPreamble, clipReport, WORK_QUESTION: QUESTION };
+module.exports = { pickHomework, homeworkPreamble, bindSession, clipReport, WORK_QUESTION: QUESTION };

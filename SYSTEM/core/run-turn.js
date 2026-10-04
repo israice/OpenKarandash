@@ -26,7 +26,7 @@ function create(deps) {
     const {
         startExchange, setMessageMode, setCliSession, finishExchange,
         countToolSteps, listToolSteps, getSessionTitle,
-        recordThinking, setMessageText, appendRaw, clip,
+        recordThinking, setMessageText, appendRaw, clip, setMessageInputSent,
         turnJudgment, notifyTurnFinished, willHandOver, runs, map, live,
     } = deps;
 
@@ -142,6 +142,17 @@ function create(deps) {
             // позиция строки с вопросом человека — на неё драйвер дописывает то,
             // что реально ушло модели (input_sent), если это не сам prompt
             userPosition: null,
+            // Что реально ушло модели целиком: не только вопрос человека, но и
+            // преамбула хода (записки, приём, отчёт разведки, пересказ истории).
+            // Ложатся в поле input_sent строки вопроса — его показывают все три
+            // отображения (DOCS/decisions/039), а лента Sessions рисует его
+            // отдельной строкой сразу за репликой человека: видно, из чего
+            // собран ход, до того как начнутся шаги
+            noteInput(text) {
+                if (!ctx.session || !ctx.userPosition) return;
+                setMessageInputSent.run(String(text ?? ''), ctx.session, ctx.userPosition);
+                ctx.emit({ type: 'input', text: String(text ?? '') });
+            },
             // cliSessionId — id, который выдал сам CLI. Наш id сессии от него не зависит
             // (заведён в open() ещё до очереди), этот нужен только для «--resume» того же
             // CLI и потому живёт отдельно, в session_cli
@@ -156,6 +167,11 @@ function create(deps) {
         // показывает статусом, но без id ему нечего выделять в списке)
         ctx.session = sessionId || `${target.id}-${Date.now().toString(36)}`;
         run.sessionId = ctx.session;
+        // Отчёт разведки приходит на первом ходе сессии, когда у клиента ещё нет
+        // её id (id приходит первым событием потока — PROJECTS/Karandash/README.md),
+        // поэтому привязать карту не к чему: сервер заводит id здесь. Продолжение
+        // сессии приходит уже с id и без привязки карту не нашло бы
+        if (homework) require('./homework-hint.js').bindSession(ctx.session, homework);
         // Реестр узнаёт о ходе раньше, чем о нём узнала база, и узнаёт раньше
         // любой его записи: падение на старте (завести сессию, открыть поток)
         // оставляло сессию «идущей» без единого способа её остановить. Всё, что
