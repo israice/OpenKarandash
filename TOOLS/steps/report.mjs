@@ -157,6 +157,23 @@ function stepsSection() {
         const kind = id === SESSION_KIND.id ? SESSION_KIND : KINDS.find((k) => k.id === id);
         console.log(`    ${String(count).padStart(4)}×  ${id.padEnd(18)} ${kind?.what || ''}${kind?.soft ? '  [мягкий]' : ''}`);
     }
+
+    // Покрытие по исполнителям. После переезда корпуса на другого агента замер
+    // молча сузился бы до старых сессий, и видно это только тут — по счёту
+    // сессий и шагов каждого префикса рядом. Случай прошлого цикла ровно такой:
+    // инструмент качества терял все сессии pi и никто этого не замечал
+    const byAgent = new Map();
+    for (const [id, steps] of chosen) {
+        const agent = id.split('-').slice(0, 2).join('-');
+        if (!byAgent.has(agent)) byAgent.set(agent, { sessions: 0, steps: 0 });
+        const entry = byAgent.get(agent);
+        entry.sessions += 1;
+        entry.steps += steps.length;
+    }
+    console.log('\n  покрытие по исполнителям (окно):');
+    for (const [agent, entry] of [...byAgent].sort((a, b) => b[1].steps - a[1].steps)) {
+        console.log(`    ${agent.padEnd(20)} ${String(entry.sessions).padStart(3)} сессий, ${String(entry.steps).padStart(4)} шагов`);
+    }
 }
 
 // ---------- 3. отчёт разведки ----------
