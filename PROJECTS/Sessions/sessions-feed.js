@@ -134,6 +134,17 @@ function setStepOpen(step, open) {
     }
 }
 
+// Блок мыслей открывается той же гармошкой, что и шаги: открыт может быть
+// только один — раскрытый блок закрывает остальные блоки мыслей и раскрытый
+// шаг (список снимается до изменений, поэтому спрятанные не мешают обходу)
+function setThinkingOpen(block) {
+    for (const prev of state.list.querySelectorAll('.chat-message--thinking[open]')) {
+        if (prev !== block) prev.open = false;
+    }
+    const step = state.list.querySelector('.chat-message--tool.is-open');
+    if (step) setStepOpen(step, false);
+}
+
 // Строка шага: что агент сделал (Read index.html, Bash npm test).
 // text приходит уже склеенным «имя деталь» (toolLabel на сервере) — имя
 // инструмента выделяем цветным тегом, разбирая первое слово.
@@ -222,6 +233,11 @@ export function addThinking(text, before) {
 
         const body = document.createElement('div');
         body.className = 'chat-thinking-body';
+
+        // toggle, а не click: событие приходит и от раскрытия по Enter/пробелу
+        block.addEventListener('toggle', () => {
+            if (block.open) setThinkingOpen(block);
+        });
 
         block.append(head, body);
         if (before && before.parentNode === state.list) state.list.insertBefore(block, before);
