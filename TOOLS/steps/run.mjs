@@ -242,15 +242,27 @@ if (TURNS) {
         SELECT session_id, position, text FROM messages WHERE role = 'user'
     `).all();
     const reportRows = db.prepare(`
-        SELECT session_id, position, result_meta FROM messages WHERE result_meta LIKE '%"homework":%'
+        SELECT session_id, position, result_meta FROM messages
+        WHERE result_meta LIKE '%"homework":%' AND result_meta NOT LIKE '%"homework":null%'
     `).all();
 
-    console.log('сессия                       ход  шагов  жёстких  всего  отчёт в запрос');
+    // шаги до первой правки — сколько стоила разведка. Отчёт разведки должен её
+    // съедать, поэтому это величина, которой проверяется он сам: на данных
+    // 2026-10-04 разницы не вышло (см. решение 092) — отчёт делает оставшиеся
+    // шаги дешевле, а не короче
+    const WRITE_TOOLS = /^(write|edit|multiedit|patch)$/;
+    const reach = { withReport: [], without: [] };
+
+    console.log('сессия                       ход  шагов  жёстких  всего  до правки  отчёт в запрос');
     let sumSteps = 0;
     let sumHard = 0;
     let withReport = 0;
     let totalTurns = 0;
-    for (const [id, steps] of chosen) {
+    // шаги хранятся в порядке убывания времени (база отдаёт так), а «до первой
+    // правки» считается по возрастанию: иначе findIndex находит последнюю правку,
+    // и колонка показывает не то, что написано в заголовке
+    for (const [id, rawSteps] of chosen) {
+        const steps = rawSteps.slice().sort((a, b) => a.position - b.position);
         const marks = userRows.filter((row) => row.session_id === id).sort((a, b) => a.position - b.position);
         for (const [index, mark] of marks.entries()) {
             const from = mark.position;
@@ -268,12 +280,17 @@ if (TURNS) {
             sumHard += hardCount(found);
             totalTurns += 1;
             if (meta) withReport += 1;
-            console.log(`  ${id.padEnd(28)} ${String(index + 1).padStart(2)}  ${String(inTurn.length).padStart(5)}  ${String(hardCount(found)).padStart(7)}  ${String(waste).padStart(5)}  ${sent ? `${sent} симв.` : '—'}`);
+            const firstWrite = inTurn.findIndex((s) => WRITE_TOOLS.test(s.tool_name));
+            const before = firstWrite === -1 ? inTurn.length : firstWrite;
+            reach[meta ? 'withReport' : 'without'].push(before);
+            console.log(`  ${id.padEnd(28)} ${String(index + 1).padStart(2)}  ${String(inTurn.length).padStart(5)}  ${String(hardCount(found)).padStart(7)}  ${String(waste).padStart(5)}  ${String(before).padStart(8)}  ${sent ? `${sent} симв.` : '—'}`);
             console.log(`      ${String(mark.text || '').replace(/\s+/g, ' ').slice(0, 78)}`);
         }
     }
+    const avgOf = (list) => (list.length ? (list.reduce((a, b) => a + b, 0) / list.length).toFixed(1) : '—');
     console.log(`\nходов с шагами: ${totalTurns}, из них с отчётом: ${withReport}`);
     console.log(`шагов всего ${sumSteps}, на ход ${totalTurns ? (sumSteps / totalTurns).toFixed(1) : '—'}, жёстких ${sumHard}`);
+    console.log(`шагов до первой правки: с отчётом ${avgOf(reach.withReport)} (${reach.withReport.length} ходов), без отчёта ${avgOf(reach.without)} (${reach.without.length} ходов)`);
     db.close();
     process.exit(0);
 }
