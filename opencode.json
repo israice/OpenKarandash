@@ -1,1 +1,11 @@
-{ "$schema": "https://opencode.ai/config.json", "permission": "allow" }
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": "allow",
+  "mcp": {
+    "penpot": {
+      "type": "remote",
+      "url": ["http://localhost:4401/mcp"],
+      "enabled": true
+    }
+  }
+}

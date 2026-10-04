@@ -171,6 +171,16 @@
     display: none !important;
 }
 
+/* Пока вкладку не выбрали, не рисуем ни одной: разметка по умолчанию открывает
+   Home, и при перезагрузке он мелькал до того, как дошли отложенные скрипты.
+   Метку data-restored-view ставит скрипт в <head> (SYSTEM/index.html) ещё до
+   разбора тела, снимает её показ вкладки (SYSTEM/tabs.js) или страницы «+»
+   (SYSTEM/new-button.js). Селектор на html нужен, чтобы перебить .view--home и
+   прочие display: flex — по одному классу view их specificity не видать. */
+html[data-restored-view] .view {
+    display: none;
+}
+
 h1 {
     font-size: 3rem;
     font-weight: 600;

@@ -7,27 +7,20 @@
 // тот же отдельный безголовый Edge, что и SYSTEM/live-check.mjs: сервер отвечает
 // только локальным запросам, поэтому скрипт запускается node на Windows.
 //
-// Запуск одной командой: `npm run ui` (из WSL уходит в powershell сам).
-// Код выхода 1 — есть ошибки консоли или пустая вкладка, 3 — отсюда прогнать
-// нельзя (контейнер без доступа к серверу пользователя).
-import { spawn, spawnSync } from 'node:child_process';
+// Запуск одной командой: `npm run ui`. Код выхода 1 — есть ошибки консоли или
+// пустая вкладка, 3 — сервер пользователя не отвечает.
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-// из WSL сервер недоступен (403) — перезапускаем себя node на стороне Windows
-if (process.platform === 'linux') {
-    // не WSL, а, например, контейнер Hermes: ни powershell, ни локального доступа
-    // к серверу оттуда нет. Отдельный код выхода — «здесь прогнать нельзя»
-    if (spawnSync('which', ['powershell.exe', 'wslpath']).status !== 0) {
-        console.error('Прогон интерфейса отсюда невозможен: нужен хост пользователя (WSL или Windows).');
-        process.exit(3);
-    }
-    const win = spawnSync('wslpath', ['-w', fileURLToPath(import.meta.url)], { encoding: 'utf8' }).stdout.trim();
-    const run = spawnSync('powershell.exe', ['-NoProfile', '-Command', `node "${win}" ${process.argv.slice(2).join(' ')}`], { stdio: 'inherit', timeout: 300000 });
-    process.exit(run.status ?? 1);
+// сервер отвечает только локальным запросам, а сам скрипт гоняет безголовый Edge
+// по путям Windows — прогон возможен только на Windows-хосте пользователя
+if (process.platform !== 'win32') {
+    console.error('Прогон интерфейса возможен только на Windows: сервер отвечает локальным запросам, а браузер ищется по путям Windows.');
+    process.exit(3);
 }
 
 const PORT = 9333;

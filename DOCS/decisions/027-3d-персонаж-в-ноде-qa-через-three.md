@@ -6,7 +6,7 @@
 
 **Почему модуль не знает о `flow.js`.** Ноды QA клонируются из шаблона `#flowNodeQaTemplate` в разных местах `flow.js` (переключение пункта меню, восстановление графа). Вместо правок во всех этих местах модуль следит за страницей `MutationObserver` и сам вставляет канвас перед `.flow-node__avatar`, а при удалении ноды освобождает рендерер. Так правка персонажа не трогает граф, а его поломка не гасит вкладку (`DOCS/decisions/014`). Один общий цикл `requestAnimationFrame` обслуживает все ноды; спрятанные (другая вкладка, другой пункт Flow, `document.hidden`) не рендерятся, но угол докручивают.
 
-**Попутно.** Хук `.claude/hooks/syntax-check.js` гонял любой `.js` голым `node --check`, а `package.json` объявляет `commonjs` — любой ES-модуль (`SYSTEM/app.js`, `PROJECTS/Chat/chat.js`) он браковал. Теперь файл с `import`/`export` в начале строки разбирается через `--input-type=module`, а инлайновые `<script type="importmap">`/JSON пропускаются.
+**Попутно.** Хук `.claude/hooks/syntax-check.js` гонял любой `.js` голым `node --check`, а `package.json` объявляет `commonjs` — любой ES-модуль (`SYSTEM/app.js`, `PROJECTS/Sessions/chat.js`) он браковал. Теперь файл с `import`/`export` в начале строки разбирается через `--input-type=module`, а инлайновые `<script type="importmap">`/JSON пропускаются.
 
 **Чем платим.** `node_modules/three` — около 30 МБ на диске (в git не попадает, после клона нужен `npm install`); в браузер уезжают только `three.module.js` и два модуля загрузчика, примерно 1,3 МБ без сжатия, и только при открытии страницы. Каждая нода QA держит свой WebGL-контекст: у браузера их лимит около 16 на страницу, но нода QA одна.
 

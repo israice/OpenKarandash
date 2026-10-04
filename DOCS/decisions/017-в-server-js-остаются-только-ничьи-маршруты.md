@@ -16,7 +16,7 @@
 | `/api/obsidian/graph`, `/api/file/read`, `/api/file/write`, `/api/search` | `PROJECTS/Graph/graph-server.js` |
 | `/api/screenshot`, `/api/screenshot/screens`, `/api/screenshot/screen` | `PROJECTS/Karandash/karandash-server.js` (бывший `screenshot.js`) |
 | `/api/fragment/home-observation` + шаблон | `PROJECTS/Home/home-server.js` + `home-observation.eta` |
-| `/api/fragment/chat-sessions` + шаблон | `PROJECTS/Chat/chat-server.js` + `chat-sessions.eta` |
+| `/api/fragment/chat-sessions` + шаблон | `PROJECTS/Sessions/chat-server.js` + `chat-sessions.eta` |
 
 Вместе с маршрутами уехали и шаблоны: `SYSTEM/templates/` больше нет, `.eta` лежит рядом со своим `*-server.js`, а тот рисует его своим экземпляром `Eta` с `views: __dirname`. Имя фрагмента — имя файла шаблона, поэтому живая перезагрузка (`011`) теперь ловит любой `.eta`, где бы он ни лежал.
 

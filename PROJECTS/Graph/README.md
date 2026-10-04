@@ -34,7 +34,7 @@ The links are not invented from matching names. An edge appears only where the c
 | Kind | What becomes a node |
 | --- | --- |
 | `file` | Any file in the project folder |
-| `route` | A `urlPath === '/api/…'` declaration in server code |
+| `route` | A route declaration in server code — either `urlPath === '/api/…'` or a key of a route table, `'/api/…': handler` |
 | `section` | A `// ---------- … ----------` separator comment in a file of 200 lines or more |
 | `function` | A top-level function in such a large file |
 | `session` | A note about a past session from `vault/Sessions/` |
@@ -54,7 +54,7 @@ A session note is named `<date> <title> <id prefix>`, and the title is the user'
 | `/api/file/read` | A file's contents for the panel: text, size, the `binary` and `editable` flags |
 | `/api/file/write` | Saving an edit; vault notes and binary files are rejected |
 
-**How updates arrive.** The server polls the project files every 400 ms. Three seconds after the last edit it rebuilds the vault and the search index (`DATA/.index.db`), then sends the page a `map` SSE event. The page does not refetch on the spot — it just forgets the map it holds and takes a fresh one the next time a file is opened. While a request to Claude is in flight, the rebuild is deferred until it finishes.
+**How updates arrive.** The server polls the project files every 400 ms. Three seconds after the last edit it rebuilds the vault and the search index (`DATA/.index.db`), then sends the page a `map` SSE event. The page does not refetch on the spot — it just forgets the map it holds and takes a fresh one the next time a file is opened. While an agent's turn is in flight, the rebuild is deferred until it finishes.
 
 ## 📁 Files
 

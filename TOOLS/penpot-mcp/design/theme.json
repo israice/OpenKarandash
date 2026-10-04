@@ -1,0 +1,62 @@
+{
+  "name": "OpenKarandash dark",
+  "comment": "Единственный источник правды по цветам и типографике. helpers.js читает этот файл и собирает из него палитру (storage.design.C) и набор токенов cli-dropdown в Penpot. Правь здесь, а не в шагах: иначе значения разъезжаются между макетами.",
+  "color": {
+    "canvas": "#111318",
+    "surface": "#1A1D24",
+    "panel": "#181B21",
+    "panelTop": "#20242C",
+    "hairline": "#262A33",
+    "text": "#EEF2F8",
+    "textDim": "#9AA1AD",
+    "textMute": "#6C7480",
+    "accent": "#6EA8FE",
+    "accentDeep": "#2F4A75",
+    "accentWash": "#1B2634",
+    "hover": "#1F232B",
+    "ok": "#5BD6A0",
+    "warn": "#E8B45C"
+  },
+  "type": {
+    "family": "Inter",
+    "eyebrow": { "size": 11, "weight": 600, "tracking": 1.6 },
+    "title": { "size": 34, "weight": 600, "tracking": -0.4 },
+    "section": { "size": 11, "weight": 600, "tracking": 1.4 },
+    "groupTitle": { "size": 10.5, "weight": 600, "tracking": 1.2 },
+    "itemName": { "size": 13.5, "weight": 500 },
+    "itemNameActive": { "size": 13.5, "weight": 600 },
+    "itemSub": { "size": 11 },
+    "pillValue": { "size": 12.5, "weight": 400 },
+    "body": { "size": 13 },
+    "caption": { "size": 11.5 }
+  },
+  "radius": {
+    "menu": 18,
+    "card": 16,
+    "item": 12,
+    "field": 12,
+    "pill": 999,
+    "kbd": 6
+  },
+  "space": {
+    "1": 4,
+    "2": 8,
+    "3": 12,
+    "4": 16,
+    "5": 24,
+    "6": 32
+  },
+  "grid": {
+    "unit": 4,
+    "comment": "Всё, что можно, кратно 4: lint проверяет off-grid по этой единице."
+  },
+  "agents": {
+    "comment": "Цвета плиток агентов: и в макете, и в компоненте из одного места.",
+    "opencode": ["#8FC0FF", "#3B6FD4"],
+    "claude": ["#F0B48A", "#C4713F"],
+    "codex": ["#9BE8C0", "#43B583"],
+    "hermes": ["#C9B0FF", "#7E5BE0"],
+    "kilo": ["#FFD37A", "#DD9F31"],
+    "cline": ["#7FE3D4", "#2B9E90"]
+  }
+}

@@ -65,7 +65,7 @@ The toolbar at the top left (`.toolbar` with `aria-label="Actions"`) holds five 
 ## 🚧 Planned
 
 - **Statistics tiles.** The styles already contain a `.stat-tile--placeholder` stub — a dashed frame for future metrics; it is not used in the Home markup yet.
-- **Providers.** The card currently shows only the `claude` connection state — with no breakdown across several providers.
+- **Providers.** The card shows the connection state of the active provider — with no breakdown across several providers.
 - **The gear menu.** Two entries in `#settingsMenu` are still literally called "Placeholder_2"; only one works so far — "Settings".
 - **Side menu sections.** Clicking a `.side-nav__item` entry so far only logs `Section:` to the console.
 

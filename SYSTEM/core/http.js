@@ -32,24 +32,29 @@ function escapeHtml(text) {
     ));
 }
 
-function sendJson(res, payload, status = 200) {
-    const body = JSON.stringify(payload);
-    res.writeHead(status, {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Content-Length': Buffer.byteLength(body),
-        'Cache-Control': 'no-store',
-    });
+// Если заголовки уже ушли (поток хода NDJSON начат, а ошибка прилетела после),
+// второй раз их писать нельзя: Node бросает ERR_HTTP_HEADERS_SENT, и падение
+// внутри обработчика запроса убивает весь сервер — вкладка при этом видит
+// «Failed to fetch», а не ошибку хода. Поэтому поздний ответ просто дописываем
+// в уже открытый поток и закрываем его
+function sendBody(res, body, status, contentType) {
+    if (!res.headersSent && !res.writableEnded) {
+        res.writeHead(status, {
+            'Content-Type': contentType,
+            'Content-Length': Buffer.byteLength(body),
+            'Cache-Control': 'no-store',
+        });
+    }
+    if (res.writableEnded) return;
     res.end(body);
 }
 
+function sendJson(res, payload, status = 200) {
+    sendBody(res, JSON.stringify(payload), status, 'application/json; charset=utf-8');
+}
+
 function sendHtml(res, html, status = 200) {
-    const body = Buffer.from(html, 'utf8');
-    res.writeHead(status, {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Content-Length': body.length,
-        'Cache-Control': 'no-store',
-    });
-    res.end(body);
+    sendBody(res, Buffer.from(html, 'utf8'), status, 'text/html; charset=utf-8');
 }
 
 module.exports = { readJson, escapeHtml, sendJson, sendHtml };

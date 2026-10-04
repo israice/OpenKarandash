@@ -46,7 +46,7 @@ function untilMs(reason, nowMs) {
 
 // db — общий с сессиями handle (SYSTEM/core/sessions-db.js): те же WAL и
 // busy_timeout уже выставлены. Зависимости аргументами, как у createRoutes.
-// enabled — выключатель AGENT_FALLBACK (server.js): при нём память ни читается,
+// enabled — выключатель AGENT_FALLBACK (SYSTEM/cli/index.js): при нём память ни читается,
 // ни пишется, поведение возвращается к прежнему «работаю как попросили»
 function create({ db, now = () => new Date(), enabled = () => true }) {
     db.exec(`
@@ -111,7 +111,21 @@ function create({ db, now = () => new Date(), enabled = () => true }) {
         return list();
     }
 
-    return { record, cooled, list, clear, COOLDOWN_MS, LIMIT_RESET };
+    // Агент снова подключили — про забытую поломку пора забыть (071). Без этого
+    // запись not_connected переживала успешный connect и заставляла пульт до часа
+    // отбивать ходы сообщением «агент не подключён», хотя он подключён: чинится
+    // только руками через cooldowns/clear. Снимаем запись агента целиком и его
+    // моделей — подключение снимает и их поломку тоже.
+    const forgetAgent = db.prepare('DELETE FROM agent_cooldown WHERE agent = ?');
+
+    function forget(agent) {
+        if (!enabled()) return [];
+        prune();
+        forgetAgent.run(agent);
+        return list();
+    }
+
+    return { record, cooled, list, clear, forget, COOLDOWN_MS, LIMIT_RESET };
 }
 
 module.exports = { create };

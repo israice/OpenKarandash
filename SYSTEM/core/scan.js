@@ -1,12 +1,11 @@
-// Что не обходят те, кто ходит по дереву проекта: сторож файлов в server.js и
+// Что не обходят те, кто ходит по дереву проекта: сторож файлов в SYSTEM/core/watch.js и
 // сборщик карты в PROJECTS/Graph/graph-vault.js. Список общий, потому что
 // разъехавшиеся копии уже приводили к падению сторожа на чужом дереве.
 // Папка данных добавляется каждым из них к себе: её имя берётся из DATA_DIR
 // и не обязано совпадать с 'DATA'.
 
-// hermes/ — чужой submodule (12 тысяч файлов), hermes-home/ и logs/ — рантайм
-// Hermes-стека, worktrees — копии проекта у агентов: без этих исключений
+// logs/ — рантайм, worktrees — копии проекта у агентов: без этих исключений
 // сборка карты при старте длится минуты и выглядит как зависание сервера
-const SKIP_NAMES = ['node_modules', '.git', 'DATA', 'hermes', 'hermes-home', 'logs', '.worktrees', 'worktrees', 'jev-ultrafast'];
+const SKIP_NAMES = ['node_modules', '.git', 'DATA', 'logs', '.worktrees', 'worktrees'];
 
 module.exports = { SKIP_NAMES };

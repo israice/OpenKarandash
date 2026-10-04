@@ -86,10 +86,10 @@ function createRoutes() {
 }
 
 module.exports = {
-    DATA_DIR, // им пользуется server.js: и сторож файлов, и путь до базы сессий
+    DATA_DIR, // им пользуется server.js: путь до базы сессий и сторож файлов (SYSTEM/core/watch.js)
     VAULT_DIR,
     init,
     createRoutes,
     prepareVault,
-    projectFiles, // нужен сторожу файлов в server.js: состав папки проекта
+    projectFiles, // нужен сторожу файлов в SYSTEM/core/watch.js: состав папки проекта
 };

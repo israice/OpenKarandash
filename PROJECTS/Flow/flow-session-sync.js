@@ -1,7 +1,7 @@
 // Выпадающий список сессий слева в тулбаре Flow (см. #flowSessionSelect в SYSTEM/index.html):
 // строит граф нод текущего канваса из сообщений выбранной сессии (SYSTEM/app.js). Сама
 // сборка (белый текст — цепочка вправо, серый текст шагов — цепочка вниз под ним)
-// живёт в PROJECTS/Flow/flow.js, здесь сбор данных и вызов MissionFlow.buildFromSession,
+// живёт в PROJECTS/Flow/flow-session-build.js, здесь сбор данных и вызов MissionFlow.buildFromSession,
 // плюс живое обновление: если сессия сейчас выполняется, подключаемся к её потоку
 // (/api/sessions/attach) и перестраиваем граф по мере появления новых сообщений.
 (function () {
@@ -173,7 +173,7 @@
         await flowReady;
         await whenFlowViewVisible();
         // пока ждали готовности канваса, следование могло выключиться (человек
-        // успел выбрать сессию сам) или select — скрыться (см. «321» в flow.js):
+        // успел выбрать сессию сам) или select — скрыться (см. «321» в flow-nav.js):
         // молча перестраивать чужой канвас нельзя
         if (!followingLatest || select.hidden || select.value !== newest.id) return;
         syncFromSession(newest.id);
@@ -205,7 +205,7 @@
     // заново прямо сейчас. Раньше это делалось один раз за загрузку страницы, и
     // канвас, открытый переключением пункта, оставался пустым до тех пор, пока
     // сессию не выберут в списке руками. Обработчик вешаем на #flowNav после
-    // flow.js — к этому моменту активный пункт уже сменился (см. setActiveFlow)
+    // flow-nav.js — к этому моменту активный пункт уже сменился (см. setActiveFlow)
     document.getElementById('flowNav')?.addEventListener('click', (e) => {
         if (!e.target.closest('.side-nav__item') || e.target.closest('.side-nav__delete')) return;
         if (select.hidden || !select.value) return;

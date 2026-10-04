@@ -143,7 +143,7 @@ export function updateContextGauge(percent, window) {
         : `Context: ${percent}%`;
 }
 // окно контекста зависит только от модели и известно ещё до первого ответа
-// (см. contextWindowFor в server.js) — используем это, чтобы датчик показывал
+// (см. contextWindowFor в SYSTEM/core/sessions-db.js) — используем это, чтобы датчик показывал
 // реальное значение сразу при создании сессии, а не «—» весь первый ход
 export function contextWindowForModel(model) {
     return typeof model === 'string' && /haiku/i.test(model) ? 200000 : 1000000;

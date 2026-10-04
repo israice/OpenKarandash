@@ -1,4 +1,5 @@
-// Кнопка «+» (id newButton): по клику создаёт ещё одну кнопку по своему образцу
+// Кнопки «+» (id newButton в левой группе тулбара и newPageButton в группе
+// «Действия»): по клику создают ещё одну кнопку по образцу newButton
 // и настоящую папку в PROJECTS/ (см. /api/pages/create) — с README.md, чтобы
 // раздел попал в общий список карточек (PROJECTS/Book/book-tab.js) наравне
 // со встроенными, и с page.js + page.css — самим содержимым страницы. Список
@@ -46,7 +47,7 @@
     // сгенерированные страницы: SYSTEM/tabs.js зовёт hideAll внутри showView,
     // поэтому покрыты и программные переключения (MissionTabs.show из app.js)
     //
-    // rebuildPage зовёт живая перезагрузка (см. connect() в server.js) на правку
+    // rebuildPage зовёт живая перезагрузка (см. connect() в SYSTEM/core/watch.js) на правку
     // PROJECTS/<папка>/page.js. false — такой страницы здесь нет (её успели
     // переименовать или список ещё не пришёл), и звавший перезагружает всё целиком
     window.MissionPages = {
@@ -76,7 +77,7 @@
         page.__panel = panel;
 
         // стили страницы подключаем сразу, не дожидаясь открытия: тогда правка
-        // page.css подменяется на лету (css:… в server.js), а не перезагружает
+        // page.css подменяется на лету (css:… в SYSTEM/core/watch.js), а не перезагружает
         // страницу целиком из-за того, что <link> ещё нет в документе
         const css = document.createElement('link');
         css.rel = 'stylesheet';
@@ -96,7 +97,7 @@
         // папку переименование меняет вместе с заголовком (см. /api/pages/rename),
         // поэтому SYSTEM/toolbar-menu.js обновляет её здесь после переименования
         btn.dataset.folder = folder;
-        // иконка «+» уже занята кнопкой newButton — у сгенерированных страниц своя,
+        // иконка «+» уже занята кнопками «+» тулбара — у сгенерированных страниц своя,
         // по умолчанию номер страницы. Своя иконка кладётся в папку страницы файлом
         // page-icon.svg (третий файл страницы рядом с page.js и page.css): рисунок
         // живёт в папке той страницы, которой он и принадлежит, а этот файл знает
@@ -201,11 +202,18 @@
         openers.set(String(id), openPage);
     }
 
-    newButton.addEventListener('click', async () => {
+    // Завести страницу может любая кнопка с data-new-page: обе «+» в тулбаре
+    // (SYSTEM/index.html) ведут себя одинаково, а кнопка новой страницы в любом
+    // случае появится в левой группе рядом с newButton — он и есть её образец
+    async function createPage() {
         const title = `Page ${generatedPages.length + 1}`;
         const { id, folder } = await App.api('/api/pages/create', { title });
         addPageButton(title, id, folder);
-    });
+    }
+
+    for (const btn of document.querySelectorAll('.topbar [data-new-page]')) {
+        btn.addEventListener('click', createPage);
+    }
 
     (async function restore() {
         const { pages = [] } = await App.api('/api/pages', {});

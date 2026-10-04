@@ -2,11 +2,9 @@
 // Читает индекс, который собирает server.js — своего разбора здесь нет,
 // поэтому команда работает и без запущенного сервера.
 //
-// Если саму базу открыть нельзя, спрашивает запущенный сервер (/api/search).
-// Так бывает в контейнере Hermes: DATA/.index.db живёт в режиме WAL, а через
-// смонтированную с Windows папку SQLite отвечает «disk I/O error» — агент
-// тогда копировал базу и писал дампы руками, тратя на это десятки шагов.
-// Адрес сервера — OPENKARANDASH_URL, иначе localhost и host.docker.internal.
+// Если саму базу открыть нельзя, спрашивает запущенный сервер (/api/search):
+// DATA/.index.db живёт в режиме WAL, и при занятом файле SQLite отвечает
+// «disk I/O error». Адрес сервера — OPENKARANDASH_URL, иначе localhost.
 //
 //   node PROJECTS/Graph/search.js "живая перезагрузка"
 //   node PROJECTS/Graph/search.js --kind session "граф"
@@ -57,7 +55,7 @@ function searchLocal() {
 
 async function searchServer() {
     const port = process.env.PORT || 3001;
-    const bases = [process.env.OPENKARANDASH_URL, `http://127.0.0.1:${port}`, `http://host.docker.internal:${port}`].filter(Boolean);
+    const bases = [process.env.OPENKARANDASH_URL, `http://127.0.0.1:${port}`].filter(Boolean);
     let lastError;
     for (const base of bases) {
         try {

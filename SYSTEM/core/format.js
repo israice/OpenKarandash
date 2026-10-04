@@ -23,7 +23,7 @@ function formatTokens(n) {
 }
 
 // суммарное время работы сессии (сумма duration_ms по всем её ходам — см.
-// sumSessionUsage в server.js): это не «сколько сессия существует», а именно
+// sumSessionUsage в SYSTEM/core/sessions-db.js): это не «сколько сессия существует», а именно
 // сколько CLI реально считал по всем её интеракциям вместе
 function formatDuration(ms) {
     const totalSeconds = Math.round((Number(ms) || 0) / 1000);

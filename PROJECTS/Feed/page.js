@@ -22,7 +22,7 @@
 // В отличие от ленты в Chat, здесь каждый шаг — раскрывающаяся карточка-
 // аккордеон (раскрыта не больше одной сразу, новая открытая закрывает
 // предыдущую), и в теле карточки — вообще все поля, которые отдаёт
-// /api/sessions/messages (см. server.js listMessages/finishExchange):
+// /api/sessions/messages (см. listMessages/finishExchange в SYSTEM/core/sessions-db.js):
 // текст, toolInput/toolResult целиком, модель/effort, токены/кэш/стоимость/
 // длительность хода, stopReason, tool_use_id/parent_tool_use_id. Первая
 // карточка — сводка по самой сессии (contextPercent/sessionInfo/rateLimit/
@@ -47,7 +47,7 @@ function fmtEpoch(sec) { return new Date(sec * 1000).toLocaleString('ru-RU'); }
 function fmtShare(v) { return `${Math.round(v * 100)}%`; }
 function truncate(s, n) { return s && s.length > n ? `${s.slice(0, n)}…` : (s || '');}
 
-// toolInput приходит уже сериализованным в JSON (см. server.js recordStep) —
+// toolInput приходит уже сериализованным в JSON (см. recordStep в SYSTEM/core/sessions-db.js) —
 // распечатываем читаемо, если получится, иначе показываем как есть.
 // Обычный JSON.stringify(…, null, 2) экранирует переносы строк внутри значений
 // как «\n» — для многострочных полей вроде old_string/new_string (правки кода
@@ -100,7 +100,7 @@ function iconSvg(name) {
     return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 }
 
-// известные поля сообщения (см. listMessages в server.js) — подпись и то,
+// известные поля сообщения (см. listMessages в SYSTEM/core/sessions-db.js) — подпись и то,
 // как значение показать. Порядок здесь = порядок строк в карточке
 const MESSAGE_SPECS = [
     ['createdAt', 'Time', fmtTime],
@@ -343,8 +343,8 @@ export default function build(page, { panel, signal }) {
 
     // картинки из toolResultImages (скриншоты и т.п.) — до этой правки
     // toolResultText на сервере заменял их меткой «[image]», сами байты
-    // нигде не сохранялись; теперь server.js кладёт их в tool_result_images
-    // как JSON-массив data-URL (см. toolResultImages() в server.js)
+    // нигде не сохранялись; теперь сервер кладёт их в tool_result_images
+    // как JSON-массив data-URL (см. toolResultImages() в SYSTEM/core/sessions-db.js)
     function addImages(container, raw) {
         if (!raw) return;
         let images;
@@ -554,7 +554,7 @@ export default function build(page, { panel, signal }) {
         }
 
         // system/unknown/top_level — три уровня перехвата на сервере
-        // (server.js: recordSystemEvent/recordUnknownPart/recordTopLevelEvent):
+        // (SYSTEM/core/sessions-db.js: recordSystemEvent/recordUnknownPart/recordTopLevelEvent):
         // неразобранный подтип system-события, неразобранный тип части ответа,
         // и, наконец, вообще неразобранный верхнеуровневый event.type (например,
         // control_response/interrupt-хендшейк, который CLI заявляет в
@@ -568,7 +568,7 @@ export default function build(page, { panel, signal }) {
             };
             card({
                 icon: message.role === 'top_level' ? 'unknown' : message.role,
-                // у пометки хода (server.js recordNotice) имя источника — в toolName,
+                // у пометки хода (recordNotice в SYSTEM/core/sessions-db.js) имя источника — в toolName,
                 // а что произошло — в text: в заголовке нужны оба
                 title: [message.toolName, message.text !== message.toolName ? truncate(message.text, 120) : '']
                     .filter(Boolean).join(' — ') || titleByRole[message.role],
@@ -603,14 +603,14 @@ export default function build(page, { panel, signal }) {
             kv(body, false);
             addBlock(body, 'Text', message.text);
             // в Chat-режиме модели уходит не этот текст, а он же с приклеенной
-            // спереди CHAT_PREAMBLE (server.js) — показываем реально отправленное,
+            // спереди CHAT_PREAMBLE (SYSTEM/cli/outside-browser.js) — показываем реально отправленное,
             // если оно записано и отличается от того, что видно в чате
             if (message.inputSent && message.inputSent !== message.text) {
                 addBlock(body, 'Actually sent to the model (input_sent)', message.inputSent);
             }
             // всё, что событие result присылает сверх уже разложенных по колонкам
             // usage/cost/duration — тайминги, отказы в разрешении, статистика
-            // субагентов и т.д. (см. server.js, resultMeta) — целиком, одним JSON
+            // субагентов и т.д. (см. SYSTEM/core/run-turn.js, resultMeta) — целиком, одним JSON
             if (message.resultMeta) {
                 addBlock(body, 'Turn diagnostics (result_meta)', prettyJson(message.resultMeta));
             }
@@ -639,7 +639,7 @@ export default function build(page, { panel, signal }) {
         if (currentId && !sessions.some((session) => session.id === currentId)) currentId = null;
         // по умолчанию (пока пользователь ничего не выбрал сам) — самая
         // последняя созданная сессия, а не пустой плейсхолдер; sessions уже
-        // отсортированы по updated_at DESC (см. listSessions в server.js),
+        // отсортированы по updated_at DESC (см. listSessions в SYSTEM/core/sessions-db.js),
         // так что первая в списке и есть самая свежая
         if (!currentId && sessions.length > 0) currentId = sessions[0].id;
         renderOptions();

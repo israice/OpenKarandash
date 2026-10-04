@@ -64,7 +64,7 @@ function collectNotes(dir, base, acc = []) {
 //   .git — служебная база на тысячи объектов, содержимое проекта в ней дублируется
 //   DATA — то, что сервер произвёл сам: карта из vault уже в графе узлами,
 //   и заметки о заметках плодились бы с каждой пересборкой
-// список общий со сторожем файлов в server.js — см. SYSTEM/core/scan.js
+// список общий со сторожем файлов в SYSTEM/core/watch.js — см. SYSTEM/core/scan.js
 const scan = require('../../SYSTEM/core/scan.js');
 const MAP_SKIP = new Set([...scan.SKIP_NAMES, DATA_DIR]);
 
@@ -87,8 +87,12 @@ function projectFiles(dir = ROOT, acc = []) {
 // карта проекта в виде заметок Obsidian. рёбра берём только из якорных мест —
 // строковых литералов, атрибутов и wikilinks. свободный поиск имени файла в тексте
 // даёт слишком много ложных связей, поэтому от него отказались
-const API_REF = /['"`](\/api\/[a-z0-9/_-]+)['"`]/gi;      // и fetch('/api/…'), и api('/api/…'), и path: в хуках
-const API_ROUTE = /urlPath === '(\/api\/[a-z0-9/_-]+)'/g; // объявление роута в server.js
+const API_REF = /['"`](\/api\/[a-z0-9\/_-]+)['"`]/gi;      // и fetch('/api/…'), и api('/api/…'), и path: в хуках
+// объявление роута: и сравнением в разборщике адреса (urlPath === '/api/…'),
+// и ключом таблицы маршрутов ('/api/…': обработчик) — второй формой объявляют
+// и фичи, и ничьи маршруты ядра, поэтому обе равноправны: роут попадает в карту
+// независимо от того, в каком файле и какой формой он объявлен
+const API_ROUTE = /urlPath\s*===\s*'(\/api\/[a-z0-9\/_-]+)'|['"](\/api\/[a-z0-9\/_-]+)['"]\s*:/g;
 const HTML_REF = /(?:src|href)\s*=\s*["']([^"':#?]+)["']/gi;
 const MODULE_REF = /(?:require\(|from\s+|import\()\s*['"](\.[^'"]+)['"]/g;
 const SECTION = /^\s*\/\/ -{3,} (.+?) -{3,}\s*$/;
@@ -319,7 +323,7 @@ function syncProjectMap() {
         const text = readText(file);
         texts.set(file, text);
         units.set(file, parseUnits(file, text));
-        for (const match of text.matchAll(API_ROUTE)) routeImpl.set(match[1], file);
+        for (const match of text.matchAll(API_ROUTE)) routeImpl.set(match[1] || match[2], file);
     }
 
     // второй проход: заметки файлов со ссылками

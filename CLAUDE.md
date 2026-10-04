@@ -1,1 +1,0 @@
-читай CLAUDE.override.md

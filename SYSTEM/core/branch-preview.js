@@ -60,27 +60,14 @@ function readBranches(root) {
     }
     if (current) found.push(current);
 
-    // пометке prunable не верим: git ставит её и живой копии, заведённой из
-    // другой системы (сервер на Windows видит копию из WSL по пути /mnt/c/…
-    // и считает её удалённой). Живость решает наличие файлов по пути,
-    // переведённому в форму своей системы
+    // пометке prunable не верим: git ставит её и живой копии, если завели её другой
+    // системой (например, если копию завели в другой среде).
+    // Живость решает наличие файлов по указанному пути
     return found
-        .map((w) => ({ ...w, dir: localPath(w.dir) }))
         // главную копию показывать незачем — она и так открыта по «/»
         .filter((w) => w.branch && !samePath(w.dir, root))
         .filter((w) => fs.existsSync(path.join(w.dir, 'SYSTEM', 'index.html')))
         .map((w) => ({ branch: w.branch, dir: path.resolve(w.dir) }));
-}
-
-// путь рабочей копии в форме своей системы: git пишет его так, как видела
-// система, которая копию заводила. /mnt/c/x ↔ C:/x
-function localPath(dir) {
-    if (process.platform === 'win32') {
-        const m = dir.match(/^\/mnt\/([a-z])\/(.*)$/i);
-        return m ? `${m[1].toUpperCase()}:/${m[2]}` : dir;
-    }
-    const m = dir.match(/^([a-z]):[\\/](.*)$/i);
-    return m ? `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}` : dir;
 }
 
 function samePath(a, b) {

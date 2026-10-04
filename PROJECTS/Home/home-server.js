@@ -15,7 +15,7 @@ const eta = new Eta({ views: __dirname, cache: false });
 
 // sessions() отдаёт сводку по сессиям (заголовок уже почищен, running посчитан),
 // activeCount() — сколько ходов идёт прямо сейчас. Обе — из ядра: хранилище
-// сессий и реестр запусков живут в server.js
+// сессий и реестр запусков живут в SYSTEM/core (sessions-db.js, runs.js)
 function createRoutes({ sessions, activeCount, needsAttention }) {
     return {
         '/api/fragment/home-observation': (req, res) => {

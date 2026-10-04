@@ -3,7 +3,7 @@
 // целиком по hx-swap-oob (см. «Серверные фрагменты» в AGENTS.md).
 //
 // Кто из сессий выбран (aria-current), серверу не известно — это чинит браузер
-// сразу после подмены (sessions-panel.js). Само хранилище сессий — в server.js:
+// сразу после подмены (sessions-panel.js). Само хранилище сессий — в SYSTEM/core/sessions-db.js,
 // его читают и Flow, и Home, и страницы кнопки «+», поэтому оно ядро, а не
 // половина этой вкладки.
 //
@@ -18,7 +18,7 @@ const { formatTokens, formatDuration } = require('../../SYSTEM/core/format.js');
 const eta = new Eta({ views: __dirname, cache: false });
 
 // sessions() отдаёт сводку по сессиям из ядра: заголовок уже почищен, running
-// посчитан. usage(id) — сводка sumSessionUsage из server.js: суммарные токены и
+// посчитан. usage(id) — сводка sumSessionUsage из SYSTEM/core/sessions-db.js: суммарные токены и
 // суммарная длительность (duration_ms) по всем ходам сессии сразу, без
 // пересчёта по сообщениям
 function createRoutes({ sessions, usage, activeStartedAt }) {

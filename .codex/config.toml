@@ -1,7 +1,0 @@
-# Полные права агенту в этом проекте — решение владельца (DOCS/decisions/044):
-# Codex правит и запускает всё без запросов, как и остальные агенты проекта
-approval_policy = "never"
-sandbox_mode = "danger-full-access"
-
-[features]
-hooks = true

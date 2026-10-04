@@ -1,8 +1,6 @@
 .env
-.playwright-mcp
 /DATA/
 /node_modules/
-/.agents/
 
 # Hermes-стек (OpenKarandash-ykb): hermes — код hermes-agent, его не храним, а
 # клонируем/обновляем с github.com/NousResearch/hermes-agent при старте сервера
@@ -18,15 +16,13 @@ claude-bridge/__pycache__/
 /hermes-home/
 /logs/
 
-# Beads / Dolt files (added by bd init)
-.dolt/
 *.db
-.beads-credential-key
-.beads/proxieddb/
 
-# Beads task tracking (ephemeral)
-.beads/
-.mcp.json
+# Окружение Laya (TOOLS/laya): чужой код и чекпойнты, в git не храним —
+# ставится скриптом setup.ps1 (см. TOOLS/laya/README.md). HF-кэш чекпойнтов
+# тоже наружу не пускаем.
+/TOOLS/laya/.venv/
+/TOOLS/laya/hf-cache/
 
 # то, что pi заводит в папке профиля работника сам (ключи и его сессии)
 /PROJECTS/Flow/profiles/*/auth.json
@@ -34,6 +30,3 @@ claude-bridge/__pycache__/
 /PROJECTS/Flow/profiles/*/npm/
 /PROJECTS/Flow/profiles/*/git/
 
-# git worktree'ы агентов — сами по себе отдельные git-репозитории, не часть дерева
-/.worktrees/
-/.claude/worktrees/

@@ -4,16 +4,16 @@
 // раз и берёт нужные имена.
 //
 // Зависимости приходят аргументами, как у createRoutes(deps) у фич: корень
-// проекта, имя папки данных, разбор «какой CLI вёл сессию» (таблица AGENTS
-// осталась в server.js) и доступ к задачам Hermes. Тело функции не сдвинуто
-// вправо намеренно: так перенесённый текст совпадает с прежним построчно, и
-// его видно в `git diff --color-moved` без шума от отступов.
+// проекта, имя папки данных и разбор «какой CLI вёл сессию» (таблица AGENTS
+// осталась в server.js). Тело функции не сдвинуто вправо намеренно: так
+// перенесённый текст совпадает с прежним построчно, и его видно в
+// `git diff --color-moved` без шума от отступов.
 
 const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
-function open({ ROOT, DATA_DIR, agentNameByTarget, hermesTasks }) {
+function open({ ROOT, DATA_DIR, agentNameByTarget }) {
 // ---------- хранилище сессий (SQLite) ----------
 
 // база лежит в DATA, а эту папку слежение за файлами не обходит,
@@ -64,9 +64,9 @@ db.exec(`
         updated_at TEXT NOT NULL
     );
 
-    -- у каждого CLI своя история запусков: id сессии Claude в OpenCode не существует,
-    -- а у Windows-claude и WSL-claude разные папки историй. Поэтому наш id сессии
-    -- живёт в sessions, а id внутри конкретного CLI — здесь, по одному на цель.
+    -- у каждого CLI своя история запусков: id сессии одного CLI в другом не
+    -- существует. Поэтому наш id сессии живёт в sessions, а id внутри конкретного
+    -- CLI — здесь, по одному на цель.
     -- Так переключение исполнителя продолжает ту же переписку, а не упирается в запрет
     CREATE TABLE IF NOT EXISTS session_cli (
         session_id TEXT NOT NULL,
@@ -83,25 +83,11 @@ db.exec(`
         PRIMARY KEY (session_id, position)
     );
 
-    -- строки, которые заменила пересборка хода по истории Hermes
-    -- (DOCS/decisions/039 и 040). Журнал обязан только дописываться: разбор
-    -- истории даёт правильный порядок, но вместе с ним пропадало то, что мы
-    -- видели своими глазами во время хода. Теперь замещённое переезжает сюда
-    -- целиком, а не исчезает. replaced_at в ключе потому, что одну и ту же
-    -- позицию может заместить не одна пересборка
-    CREATE TABLE IF NOT EXISTS replaced_messages (
-        session_id TEXT NOT NULL,
-        position INTEGER NOT NULL,
-        replaced_at TEXT NOT NULL,
-        payload TEXT NOT NULL,
-        PRIMARY KEY (session_id, position, replaced_at)
-    );
-
-    -- остаток удалённого оркестратора Hermes (DOCS/decisions/007, отменено 015):
-    -- в них никто не пишет, а выглядят как журнал запусков. Настоящий журнал
-    -- вызовов инструментов ведёт сам Hermes — см. SYSTEM/core/hermes-tool-runs.js
+    -- остатки прежних слоёв (DOCS/decisions/007, 015, 077): в них никто не пишет,
+    -- а выглядят как рабочие таблицы. Чистятся один раз при открытии базы
     DROP TABLE IF EXISTS hermes_tasks;
     DROP TABLE IF EXISTS hermes_runs;
+    DROP TABLE IF EXISTS replaced_messages;
 `);
 
 // колонка добавлена уже после первых версий базы — CREATE TABLE IF NOT EXISTS
@@ -159,10 +145,9 @@ for (const [col, type] of [
     ['tool_use_id', 'TEXT'],
     ['parent_tool_use_id', 'TEXT'],
     ['stop_reason', 'TEXT'],
-    // режим хода (Chat/Action) — от него зависит доступный набор инструментов
-    // (CHAT_DENIED_TOOLS) и permission-mode CLI; input_sent — то, что реально
-    // ушло модели на stdin, если это отличается от text (в Chat перед вопросом
-    // приклеивается CHAT_PREAMBLE, см. askClaude)
+    // режим хода (Chat/Action) — от него зависит набор инструментов и флаги
+    // запуска CLI; input_sent — то, что реально ушло модели, если это отличается
+    // от text (в Chat перед вопросом приклеивается CHAT_PREAMBLE)
     ['mode', 'TEXT'],
     ['input_sent', 'TEXT'],
     // всё, что result присылает сверх duration_ms/total_cost_usd/usage (проверено
@@ -184,10 +169,9 @@ for (const [col, type] of [
     ['source', 'TEXT'],
     ['actor', 'TEXT'],
     ['event_type', 'TEXT'],
-    // id подзадачи и попытки внутри неё. Рождает их оркестратор, а не мы
-    // (DOCS/decisions/040: «завести» читается как «отразить»): сегодня
-    // единственный настоящий источник — дочерние сессии помощников Hermes,
-    // у строк вне графа задач поля пустые до этапа 9
+    // id подзадачи и попытки внутри неё — поля графа задач (DOCS/decisions/040:
+    // «завести» читается как «отразить»). Писать их некому: своего графа у нас
+    // нет, поэтому у строк они пустые, но лента их читает
     ['task_id', 'TEXT'],
     ['attempt_id', 'TEXT'],
     ['provider', 'TEXT'],
@@ -204,9 +188,8 @@ for (const [col, type] of [
     } catch { /* колонка уже есть */ }
 }
 
-// каким CLI начата сессия: у Windows-claude и WSL-claude свои хранилища истории
-// (~/.claude/projects/<путь проекта>, а путь к проекту у них разный), поэтому
-// «--resume» чужого id всегда возвращает ошибку — см. askClaude
+// каким CLI ведена сессия: у каждого CLI своё хранилище истории, поэтому
+// «--resume» чужого id всегда возвращает ошибку — см. resumeAndHandoff в SYSTEM/core/handoff.js
 try {
     db.exec('ALTER TABLE sessions ADD COLUMN target TEXT');
 } catch { /* колонка уже есть */ }
@@ -251,7 +234,6 @@ const setMessageInputSent = db.prepare('UPDATE messages SET input_sent = ? WHERE
 const setMessageResultMeta = db.prepare('UPDATE messages SET result_meta = ? WHERE session_id = ? AND position = ?');
 const setMessageExtraMeta = db.prepare('UPDATE messages SET extra_meta = ? WHERE session_id = ? AND position = ?');
 const setMessageOrigin = db.prepare('UPDATE messages SET source = ?, actor = ?, event_type = ?, provider = ? WHERE session_id = ? AND position = ?');
-const setMessageTaskIds = db.prepare('UPDATE messages SET task_id = ?, attempt_id = ? WHERE session_id = ? AND position = ?');
 const setMessageRaw = db.prepare('UPDATE messages SET raw = ? WHERE session_id = ? AND position = ?');
 const getMessageRaw = db.prepare('SELECT raw FROM messages WHERE session_id = ? AND position = ?');
 
@@ -260,44 +242,7 @@ const setSessionThumb = db.prepare('UPDATE sessions SET thumb = ? WHERE id = ?')
 const setSessionContext = db.prepare('UPDATE sessions SET context_percent = ?, context_window = ? WHERE id = ?');
 const setSessionInfo = db.prepare('UPDATE sessions SET session_info = ? WHERE id = ?');
 const setSessionRateLimit = db.prepare('UPDATE sessions SET rate_limit = ? WHERE id = ?');
-// курсор дотягивания истории Hermes (syncHermesHistory): докуда переписка его
-// сессии уже перенесена к нам. У сессий старше этого механизма отметок нет —
-// там порогом служит время последней нашей записи
-// Строки помощников (hermesChildSession) в курсор сессии не входят: id у
-// Hermes сквозные, и помощник, досчитавший позже, сдвинул бы курсор родителя
-// дальше его собственных ещё не перенесённых сообщений
-const hermesSyncCursor = db.prepare(`
-    SELECT MAX(CAST(json_extract(extra_meta, '$.hermesMessageId') AS INTEGER)) AS id
-    FROM messages WHERE session_id = ? AND json_extract(extra_meta, '$.hermesChildSession') IS NULL
-`);
-const hermesChildCursor = db.prepare(`
-    SELECT MAX(CAST(json_extract(extra_meta, '$.hermesMessageId') AS INTEGER)) AS id
-    FROM messages WHERE session_id = ? AND json_extract(extra_meta, '$.hermesChildSession') = ?
-`);
-// есть ли у сессии Hermes наша связь — в том числе у удалённой у нас сессии
-const hasCliSessionLink = db.prepare('SELECT 1 AS yes FROM session_cli WHERE cli_session_id = ? LIMIT 1');
-// пересборка хода Hermes: строки хода, записанные по потоку, уходят целиком
-const deleteMessagesFrom = db.prepare('DELETE FROM messages WHERE session_id = ? AND position >= ?');
-// то, что пересборка собирается заместить, — забираем целиком до удаления
-const selectMessagesFrom = db.prepare('SELECT * FROM messages WHERE session_id = ? AND position >= ? ORDER BY position');
-const archiveMessage = db.prepare('INSERT OR REPLACE INTO replaced_messages (session_id, position, replaced_at, payload) VALUES (?, ?, ?, ?)');
-const deleteArchiveBySession = db.prepare('DELETE FROM replaced_messages WHERE session_id = ?');
-const countArchive = db.prepare('SELECT COUNT(*) AS n FROM replaced_messages WHERE session_id = ?');
 
-// пересборка хода по истории Hermes меняет разобранный слой, но не имеет права
-// стирать наблюдение: то, что пришло потоком, мы видели своими глазами, а
-// история может оказаться короче (сжатие контекста) или лечь иначе. Поэтому
-// замещаемые строки переезжают в архив целиком, включая их сырое событие,
-// и только потом удаляются из ленты (DOCS/decisions/040)
-function archiveAndDeleteFrom(sessionId, fromPosition) {
-    const rows = selectMessagesFrom.all(sessionId, fromPosition);
-    if (rows.length) {
-        const at = new Date().toISOString();
-        for (const row of rows) archiveMessage.run(sessionId, row.position, at, JSON.stringify(row));
-    }
-    deleteMessagesFrom.run(sessionId, fromPosition);
-    return rows.length;
-}
 const setMessageCreatedAt = db.prepare('UPDATE messages SET created_at = ? WHERE session_id = ? AND position = ?');
 const lastMessageTime = db.prepare('SELECT MAX(created_at) AS at FROM messages WHERE session_id = ?');
 
@@ -438,13 +383,10 @@ function toolResultImages(content) {
     return images.length ? JSON.stringify(images) : null;
 }
 
-// очистка списка: база пустеет. файлы истории Claude CLI не трогаем — они не наши
+// очистка списка: база пустеет. файлы истории CLI на хосте не трогаем — они не наши,
+// и по уцелевшим связям сессия завелась бы заново, уже без нас
 function resetSessions() {
-    // архив замещённых строк — часть истории этих же сессий: очистка списка
-    // не должна оставлять от них хвост, который уже не с чем сопоставить
-    // и связи с сессиями CLI: по уцелевшей связи удалённая сессия заново
-    // втягивалась из истории Hermes — строками без записи в sessions
-    db.exec('DELETE FROM messages; DELETE FROM sessions; DELETE FROM replaced_messages; DELETE FROM session_cli;');
+    db.exec('DELETE FROM messages; DELETE FROM sessions; DELETE FROM session_cli;');
 }
 
 const deleteMessagesBySession = db.prepare('DELETE FROM messages WHERE session_id = ?');
@@ -453,7 +395,6 @@ const deleteCliLinksBySession = db.prepare('DELETE FROM session_cli WHERE sessio
 
 function deleteSession(id) {
     deleteMessagesBySession.run(id);
-    deleteArchiveBySession.run(id);
     deleteSessionById.run(id);
     // см. resetSessions: без этого открытие удалённой сессии по id возвращало её строки
     deleteCliLinksBySession.run(id);
@@ -463,15 +404,15 @@ function deleteSession(id) {
 
 // вопрос записываем сразу, как CLI сообщил id: сессия появляется в списке
 // в начале работы, а не после ответа. Возвращает позицию строки — вызывающий
-// код дописывает сюда же mode/input_sent (см. askClaude)
+// код дописывает сюда же mode/input_sent
 // ---------- Event Schema: кто прислал строку и что это было ----------
 // Одно место на все виды записи (DOCS/decisions/040): если заполнять поля
 // в каждой функции отдельно, они разойдутся при первой же правке.
 //
 // source и provider выводятся из цели сессии: id окружения начинается с имени
-// коннектора (agentNameByTarget), а сама цель и есть провайдер — wsl/windows
-// у прямого CLI. Старые строки остаются пустыми намеренно: пусто значит
-// «не знаем», а не «claude», и дозаполнять их задним числом мы не стали.
+// коннектора (agentNameByTarget), а сама цель и есть провайдер. Старые строки
+// остаются пустыми намеренно: пусто значит «не знаем», а не догадка, и
+// дозаполнять их задним числом мы не стали.
 function originForSession(sessionId) {
     const target = getSessionTarget.get(sessionId)?.target || null;
     return { source: target ? agentNameByTarget(target) : null, provider: target };
@@ -515,34 +456,6 @@ function appendRaw(sessionId, position, raw) {
 }
 
 // id подзадачи и попытки приходят от оркестратора — своих не выдумываем.
-// Пока графа задач нет, зовётся только оттуда, где источник настоящий
-// Номер попытки на строках помощника: task_id у них — дочерняя сессия Hermes,
-// а какая это по счёту попытка той же цели, знает журнал его поручений
-// (SYSTEM/core/hermes-tasks.js). Пишем `номер:id поручения` — номер для глаз,
-// id — чтобы найти запись у Hermes. Источник один, поэтому попытку видят сразу
-// Sessions, Feed и Flow: все три читают поле из базы
-const setAttemptByTask = db.prepare('UPDATE messages SET attempt_id = ? WHERE session_id = ? AND task_id = ? AND attempt_id IS NOT ?');
-const hasUnstampedTask = db.prepare('SELECT 1 FROM messages WHERE session_id = ? AND task_id IS NOT NULL AND attempt_id IS NULL LIMIT 1');
-function stampHermesAttempts(sessionId, hermesId) {
-    // журнал читается с копии базы Hermes — не трогаем его, пока нечего помечать
-    if (!hasUnstampedTask.get(sessionId)) return;
-    try {
-        for (const d of hermesTasks.readDelegations({ parent: hermesId })) {
-            if (!d.childSession) continue;
-            const value = `${d.attempt}:${d.delegationId}`;
-            setAttemptByTask.run(value, sessionId, d.childSession, value);
-        }
-    } catch (err) {
-        // журнал поручений — чужая база: её отсутствие или смена схемы не должны ронять ход
-        console.error(`hermes attempts unavailable for ${sessionId}: ${err.message}`);
-    }
-}
-
-function stampTask(sessionId, position, taskId, attemptId) {
-    if (!taskId && !attemptId) return;
-    setMessageTaskIds.run(taskId || null, attemptId || null, sessionId, position);
-}
-
 function startExchange(sessionId, question, target, model, effort) {
     upsertSession.run(sessionId, extractTitle(question, 300), new Date().toISOString(), target || null);
     const position = countMessages.get(sessionId).n;
@@ -584,7 +497,7 @@ function recordStep(sessionId, text, toolName, toolInput, toolUseId, parentToolU
     if (toolUseId || parentToolUseId) setMessageToolIds.run(toolUseId || null, parentToolUseId || null, sessionId, position);
     // caller — {"type":"direct"} у обычного вызова, отличает прямой вызов
     // от вызова изнутри субагента; не кладём в toolInput — Flow читает
-    // tool_input как есть (sessionFacts в PROJECTS/Flow/flow.js разбирает его
+    // tool_input как есть (sessionFacts в PROJECTS/Flow/flow-session-node.js разбирает его
     // как JSON вызова), и обёртка сломала бы вывод
     if (caller) setMessageExtraMeta.run(JSON.stringify({ caller }), sessionId, position);
     stampEvent(sessionId, position, 'tool.call', parentToolUseId ? 'subagent' : 'tool');
@@ -621,9 +534,8 @@ function recordHookResponse(sessionId, position, event) {
     appendRaw(sessionId, position, event);
 }
 
-// рассуждения модели (блоки thinking) — отдельной строкой в той же таблице, рядом с шагами
-// Возвращает позицию строки — дотягивание истории (syncHermesHistory) ставит
-// на неё отметку о происхождении, как и на остальные добранные строки
+// рассуждения модели (блоки thinking) — отдельной строкой в той же таблице, рядом со шагами
+// Возвращает позицию строки — на неё ссылается лента
 function recordThinking(sessionId, text, signature, raw) {
     const position = countMessages.get(sessionId).n;
     upsertMessage.run(sessionId, position, 'thinking', clip(text), new Date().toISOString(), null, null);
@@ -650,30 +562,27 @@ function recordAssistantText(sessionId, text, model, effort, parentToolUseId, ra
 }
 
 // событие хода, которое не слова человека и не ответ модели: сервер сам
-// переспросил модель, мост поправил её вызов, Hermes сжал контекст, помощнику
-// поставлена задача. Роль system — как у неразобранных системных событий CLI;
-// name — откуда пометка (tool_name), text — что произошло, словами
+// переспросил модель, помощнику поставлена задача. Роль system — как у
+// неразобранных системных событий CLI; name — откуда пометка (tool_name),
+// text — что произошло, словами
 function recordNotice(sessionId, name, text, parentToolUseId, raw) {
     const position = countMessages.get(sessionId).n;
     upsertMessage.run(sessionId, position, 'system', clip(text), new Date().toISOString(), null, null);
     setMessageToolCall.run(name || null, clip(JSON.stringify({ notice: name, text })), sessionId, position);
     if (parentToolUseId) setMessageToolIds.run(null, parentToolUseId, sessionId, position);
     // у пометки источник виден по её имени и не совпадает с целью сессии:
-    // ход ведёт Hermes, а поправил вызов мост или наш же сервер
+    // ход ведёт агент, а действие за него — наш сервер
     const origin = noticeOrigin(name, sessionId);
     stampEvent(sessionId, position, 'notice', origin.actor, origin);
     stampRaw(sessionId, position, raw);
     return position;
 }
 
-// откуда пришла пометка хода. Имена задаются на месте вызова recordNotice
-// (claude-bridge, server.retry-nudge, hermes.compaction — DOCS/decisions/039);
+// откуда пришла пометка хода. Имена задаются на месте вызова recordNotice;
 // незнакомое имя не выдумываем, а берём источником саму сессию
 function noticeOrigin(name, sessionId) {
     const prefix = String(name || '').split('.')[0];
-    if (prefix === 'claude-bridge') return { source: 'bridge', provider: null, actor: 'tool' };
     if (prefix === 'server') return { source: 'server', provider: null, actor: 'server' };
-    if (prefix === 'hermes') return { ...originForSession(sessionId), source: 'hermes', actor: 'orchestrator' };
     return { ...originForSession(sessionId), actor: null };
 }
 
@@ -766,7 +675,6 @@ return {
     setMessageResultMeta,
     setMessageExtraMeta,
     setMessageOrigin,
-    setMessageTaskIds,
     setMessageRaw,
     getMessageRaw,
     touchSession,
@@ -774,15 +682,6 @@ return {
     setSessionContext,
     setSessionInfo,
     setSessionRateLimit,
-    hermesSyncCursor,
-    hermesChildCursor,
-    hasCliSessionLink,
-    deleteMessagesFrom,
-    selectMessagesFrom,
-    archiveMessage,
-    deleteArchiveBySession,
-    countArchive,
-    archiveAndDeleteFrom,
     setMessageCreatedAt,
     lastMessageTime,
     getSessionMeta,
@@ -814,10 +713,6 @@ return {
     stampEvent,
     stampRaw,
     appendRaw,
-    setAttemptByTask,
-    hasUnstampedTask,
-    stampHermesAttempts,
-    stampTask,
     startExchange,
     extractTitle,
     sessionTitle,

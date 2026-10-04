@@ -1,13 +1,9 @@
 # Backend developer — system prompt & soul
 
-Hermes has no split between "replace" and "append" system text the way pi
-does (`SYSTEM.md` + `APPEND_SYSTEM.md` for QA) — one file is the whole
-system-prompt-equivalent. The intended filename was `SOUL.md`, matching what
-a real Hermes profile reads, but Hermes blocks writes to that exact filename
-from this agent regardless of who asks — the same reason `AGENTS.md` is
-shadowed by `AGENTS.override.md` for this project. `PERSONA.md` holds the
-same content under an unprotected name; if the profile is ever wired to a
-real `-p <profile>` run, rename this file to `SOUL.md` by hand.
+This profile format has no split between "replace" and "append" system text
+the way pi does (`SYSTEM.md` + `APPEND_SYSTEM.md` for QA) — one file is the
+whole system prompt. `PERSONA.md` holds it under an ordinary name, so the
+agent can rewrite it itself.
 
 ## System Prompt — how should I behave
 

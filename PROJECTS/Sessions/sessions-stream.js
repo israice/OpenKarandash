@@ -184,7 +184,12 @@ async function reloadFromStore(id, run) {
 export async function sendTurn(text, mode = 'Action') {
     const run = ++state.run;
 
-    // провайдер берём из строки шапки сессии — туда же уходит запрос
+    // Провайдер и модель — из строки выбора в шапке сессии, а она устроена тем же
+    // каскадом, что и настройки (SYSTEM/model-cascade.js). Это единственный
+    // источник: раньше модель бралась из состояния подключения (providerState.model),
+    // и после перезагрузки страницы или смены CLI в шапке ход уходил не туда, куда
+    // показывал выбор — то есть работали «другие модели» (решение владельца
+    // 2026-10-03).
     const providerId = getActiveProviderId();
     const provider = PROVIDERS.find((p) => p.id === providerId);
     const providerState = connections.get(providerId);
@@ -192,6 +197,7 @@ export async function sendTurn(text, mode = 'Action') {
         addMessage(`${provider ? provider.name : 'Provider'} is not connected. Open Settings and click "Connect".`, 'error');
         return;
     }
+    const model = getActiveModel();
 
     addMessage(text, 'user');
 
@@ -204,10 +210,9 @@ export async function sendTurn(text, mode = 'Action') {
     let reachedServer = false;
     // сервер забыл окружение и просит переподключиться — тогда повторяем ход
     let notConnected = false;
-    // подпись ответов — моделью, которой реально уйдёт этот ход
-    // (providerState.model уходит и в теле запроса), а не той, что случайно
-    // выбрана в шапке позже
-    const render = makeRenderer(status, providerState.model);
+    // подпись ответов — моделью, которой реально уйдёт этот ход (та же model,
+    // что уходит в теле запроса), а не той, что случайно выбрана в шапке позже
+    const render = makeRenderer(status, model);
 
     // агент из чата правит файлы проекта — автообновление подождёт, иначе
     // перезагрузка оборвёт чтение потока и ответ пропадёт
@@ -247,7 +252,7 @@ export async function sendTurn(text, mode = 'Action') {
 
                 // окно модели известно сразу — не ждём первого 'context' от CLI,
                 // чтобы датчик не висел на «—» весь первый ход новой сессии
-                updateContextGauge(0, contextWindowForModel(providerState.model));
+                updateContextGauge(0, contextWindowForModel(model));
 
                 if (state.pendingThumb) {
                     const thumb = state.pendingThumb;
@@ -278,7 +283,7 @@ export async function sendTurn(text, mode = 'Action') {
     const askOnce = () => streamAsk({
         agent: providerId,
         prompt: text,
-        model: providerState.model,
+        model,
         sessionId: state.sessionId,
         mode,
     }, handle);

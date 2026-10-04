@@ -1,5 +1,0 @@
-name: claude-bridge-provider
-kind: model-provider
-version: 0.1.0
-description: Claude via the local claude-bridge shim (host-side claude CLI / ACP)
-author: OpenKarandash

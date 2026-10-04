@@ -1,24 +1,20 @@
-# Настоящий конфиг Hermes-профиля бэкенд-разработчика (не заготовка для
+# Настоящий конфиг профиля бэкенд-разработчика (не заготовка для
 # человека, как и профиль QA — только тот устроен как каталог pi, а этот как
-# каталог самого Hermes). Формат — то же дерево ключей, что читает любой
-# профиль Hermes; про Hermes в Docker через claude-bridge — DOCS/decisions/029,
-# про то, почему у этого работника именно такая форма профиля, а не форма
-# pi, как у QA, — DOCS/decisions/033. Системный промпт-эквивалент лежит в
-# PERSONA.md, а не в SOUL.md: это имя файла Hermes запрещает агенту писать.
+# каталог самого профиля). Формат — дерево ключей, которое читает профиль
+# агента; почему у этого работника именно такая форма, а не форма pi, как у QA, —
+# Системный промпт лежит в PERSONA.md.
 #
 # Панели ноды Backend developer на канвасе Flow читают этот файл, но пока
-# только для показа человеку — реальный запуск (askHermes в server.js) свой
-# --profile ещё не принимает, см. README.md рядом.
+# только для показа человеку — запуск агента свой --profile не принимает,
+# см. README.md рядом.
 
 model:
-  default: claude-bridge-sonnet
-  provider: claude-bridge
-  base_url: http://localhost:8642
-  api_key: ${HERMES_BACKEND_API_KEY}
+  default: space-bunny-alpha
+  provider: openrouter
   context_length: 200000
   aliases:
-    fast: claude-bridge-haiku
-    smart: claude-bridge-opus
+    fast: space-bunny-alpha
+    smart: space-bunny-alpha
 
 agent:
   max_turns: 200
@@ -27,8 +23,7 @@ agent:
   verify_on_stop: true
 
 terminal:
-  backend: docker
-  cwd: /workspace
+  cwd: C:\0_PROJECTS\OpenKarandash
   timeout: 600
 
 compression:
@@ -45,8 +40,8 @@ display:
   pet: null
 
 # Разрешения бэкенд-разработчика — настоящий, не имитированный механизм
-# Hermes (в отличие от QA, у которого approvals вообще нет, только список
-# инструментов pi). smart — Hermes сам решает, когда спросить подтверждение,
+# профиля (в отличие от QA, у которого approvals вообще нет, только список
+# инструментов). smart — агент сам решает, когда спросить подтверждение,
 # manual — спрашивает всегда, off — никогда. У бэкенда smart, и в отличие
 # от QA (write/edit исключены на уровне инструментов) запись разрешена
 approvals:
@@ -66,8 +61,8 @@ security:
   website_blocklist: []
 
 delegation:
-  model: claude-bridge-sonnet
-  provider: claude-bridge
+  model: space-bunny-alpha
+  provider: openrouter
   max_concurrent_children: 2
   max_iterations: 6
   max_spawn_depth: 2
@@ -108,12 +103,6 @@ mcp:
     redis:
       command: npx
       args: ["-y", "mcp-server-redis"]
-    docker:
-      command: npx
-      args: ["-y", "mcp-server-docker"]
-    kubernetes:
-      command: npx
-      args: ["-y", "mcp-server-kubernetes"]
     http:
       command: npx
       args: ["-y", "@modelcontextprotocol/server-fetch"]

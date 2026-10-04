@@ -35,7 +35,7 @@ export function addSection(body, label, text, isError) {
     body.append(section);
 }
 
-// картинки результата: JSON-массив data-URL (toolResultImages в server.js)
+// картинки результата: JSON-массив data-URL (toolResultImages в SYSTEM/core/sessions-db.js)
 function addImages(body, raw) {
     let images;
     try { images = JSON.parse(raw || ''); } catch { return; }
@@ -63,7 +63,7 @@ function addImages(body, raw) {
 }
 
 // сводка остальных полей строки разобранными. Тот же набор, что секция
-// Metadata на ноде Flow (sessionMetadata в PROJECTS/Flow/flow.js) и блоки
+// Metadata на ноде Flow (sessionMetadata в PROJECTS/Flow/flow-session-node.js) и блоки
 // на странице Feed
 function rowMetadata(row) {
     const meta = {};

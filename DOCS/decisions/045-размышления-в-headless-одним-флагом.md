@@ -2,7 +2,7 @@
 
 ## Решение
 
-Коннектор Claude (`THINKING_ARGS` в `server.js`) и мост (`claude-bridge/cli_process.py`) запускают `claude -p` с `--thinking-display summarized`. Запрет читать собственную историю CLI (`~/.claude/projects/*/*.jsonl`, `README.md` и `PROJECTS/Chat/README.md`) остаётся в силе. PTY-обёртку не заводим.
+Коннектор Claude (`THINKING_ARGS` в `server.js`) и мост (`claude-bridge/cli_process.py`) запускают `claude -p` с `--thinking-display summarized`. Запрет читать собственную историю CLI (`~/.claude/projects/*/*.jsonl`, `README.md` и `PROJECTS/Sessions/README.md`) остаётся в силе. PTY-обёртку не заводим.
 
 ## Замер (2026-09-19, задача f59.5)
 

@@ -79,6 +79,10 @@ function appendAddOption(select) {
     option.value = ADD_OPTION.value;
     option.textContent = ADD_OPTION.label;
     option.disabled = true;
+    // класс — только ради выравнивания: раскрытый список браузер рисует по
+    // text-align каждого option'а, и Add в нём остаётся по центру, а пункты
+    // уровня уходят влево (SYSTEM/styles/model-cascade.css)
+    option.className = 'provider__option--add';
     select.append(option);
 }
 

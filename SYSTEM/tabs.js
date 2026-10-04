@@ -7,8 +7,26 @@
 
             // запоминаем последнее открытое место, чтобы после перезагрузки страницы
             // пользователь вернулся туда же. Вкладка пишется своим именем ('flow'),
-            // страница кнопки «+» — как 'page:<id>' (её открывает SYSTEM/new-button.js)
+            // страница кнопки «+» — как 'page:<id>' (её открывает SYSTEM/new-button.js).
+            // Пишет значение только переход по вкладке: восстановление не пишет вовсе
+            // (см. restored в showView)
             const LAST_VIEW_KEY = 'lastView';
+
+            // куда открываться, когда возвращаться некуда: сохранённого места нет
+            // (первый заход) или оно не открывается (вкладку переименовали, скрипт
+            // раздела не дошёл). Раньше здесь стояло 'home', и человек при обновлении
+            // получал именно ту страницу, на которую и не собирался
+            const DEFAULT_VIEW = 'chat';
+
+            // метка на <html>, которую ставит скрипт в <head> (SYSTEM/index.html):
+            // пока она стоит, SYSTEM/styles/views.css не рисует ни одной вкладки,
+            // чтобы при перезагрузке не мелькнул Home из разметки по умолчанию
+            const RESTORED_ATTR = 'data-restored-view';
+
+            // снять метку: вкладка показана, скрывать больше нечего
+            function endRestore() {
+                document.documentElement.removeAttribute(RESTORED_ATTR);
+            }
 
             function saveLastView(value) {
                 // localStorage может быть недоступен (приватный режим) — тогда просто не запоминаем
@@ -49,19 +67,28 @@
                 }
                 if (name === 'flow') MissionFlow.center();
                 if (name === 'book') MissionBookTab.show();
-                saveLastView(name);
+                // восстановление — не решение пользователя, поэтому своё значение
+                // lastView оно не переписывает. Иначе незнакомое имя вкладки (вкладку
+                // переименовали, скрипт раздела не дошёл) молча заменялось бы в
+                // localStorage на вкладку по умолчанию, и человек терял бы своё
+                // место навсегда, а не до следующей удачной загрузки
+                if (!restored) saveLastView(name);
+                // вкладка на экране — метку до первой отрисовки можно снимать
+                endRestore();
             }
 
             for (const btn of viewButtons) {
                 btn.addEventListener('click', () => showView(btn.dataset.view));
             }
 
-            // при самом первом заходе сохранённого места ещё нет — открываем Projects,
-            // а не Home, зашитый в разметке по умолчанию
-            const lastView = readLastView() || 'chat';
+            // при самом первом заходе сохранённого места ещё нет, и при негодном
+            // имени возвращаться тоже некуда — в обоих случаях открываем вкладку
+            // по умолчанию, а не Home, зашитый в разметку
+            const lastView = readLastView() || DEFAULT_VIEW;
             // страницы кнопки «+» приходят с сервера асинхронно, поэтому 'page:<id>'
             // восстанавливает уже сам new-button.js — здесь вкладку не трогаем
-            if (!lastView.startsWith('page:')) showView(App.VIEWS[lastView] ? lastView : 'home', true);
+            if (lastView.startsWith('page:')) endRestore();
+            else showView(App.VIEWS[lastView] ? lastView : DEFAULT_VIEW, true);
 
             // пункты боковых меню пока только сообщают о нажатии
             for (const nav of document.querySelectorAll('.side-nav')) {
@@ -71,5 +98,5 @@
                 });
             }
 
-    window.MissionTabs = { show: showView, LAST_VIEW_KEY, saveLastView, readLastView };
+    window.MissionTabs = { show: showView, endRestore, LAST_VIEW_KEY, RESTORED_ATTR, saveLastView, readLastView };
 })();

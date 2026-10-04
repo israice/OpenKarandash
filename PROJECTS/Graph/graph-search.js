@@ -226,7 +226,10 @@ const COMPACT_MIN_BYTES = 64 * 1024 * 1024;
 function compactSearchIndex() {
     try {
         if (fileSize(INDEX_FILE) < COMPACT_MIN_BYTES) return;
-        const { page_count: pages, freelist_count: free } = searchDb.prepare('PRAGMA page_count, freelist_count').get();
+        // по одному PRAGMA на запрос: несколько через запятую node:sqlite
+        // не разбирает («near ",": syntax error») — и жим молча не проходил
+        const { page_count: pages } = searchDb.prepare('PRAGMA page_count').get();
+        const { freelist_count: free } = searchDb.prepare('PRAGMA freelist_count').get();
         if (!pages || free * 2 < pages) return; // живого содержимого больше половины — не жмём
         searchDb.exec('VACUUM');
         console.log(`Compacted the search index to ${(fileSize(INDEX_FILE) / 1024 / 1024).toFixed(1)} MB`);

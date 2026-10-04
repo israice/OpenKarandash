@@ -97,7 +97,7 @@ If the tab was closed or refreshed by hand mid-work anyway, the CLI does not sto
 
 More than that, the refreshed page **reattaches to the work in progress**: `/api/sessions` marks such sessions with a `running` field, and `POST /api/sessions/attach` with a session id returns the stream of its remaining events — the same ones `/api/claude/ask` sends. The feed keeps filling live from where you left it. If the session has already finished, the answer comes back as ordinary JSON (`{"ok":true,"running":false}`) and the page simply shows the conversation from the database.
 
-Edits to `server.js` itself are also applied without a manual restart: the server runs in a child process, the parent watches the file and brings the child back up, and the tab reloads once the connection is restored. In the console it looks like this:
+Edits to the server's own files are also applied without a manual restart: the server runs in a child process, the parent (`SYSTEM/core/watchdog.js`) watches `server.js`, `SYSTEM/core/*`, `SYSTEM/cli/*` and every `*-server.js` and brings the child back up, and the tab reloads once the connection is restored. In the console it looks like this:
 
 ```
 server file changed — restarting the server...
@@ -148,9 +148,9 @@ Endpoints (all `POST`, local requests only):
 | `/api/claude/connect` | fixes the chosen environment |
 | `/api/claude/ask` | sends a request to the CLI and streams the work |
 
-Requests to the CLI run **strictly one at a time**: no more than one turn works in parallel. A new run waits until the ones already going have finished (`activeRuns`/`waitForTurn` in `server.js`); while it waits, the page shows "Queued". This guarantees there is no conflicting write to the same file from two sessions at once — no separate file locks and no PreToolUse hook are needed for it.
+Requests to the CLI run in parallel: each one starts right away, without waiting for the ones already going (`activeRuns` in `SYSTEM/core/runs.js` keeps the registry). The server does not arbitrate two agents writing the same file at once, so nothing here needs file locks or a PreToolUse hook.
 
-A second hook works alongside it — the PostToolUse `.claude/hooks/syntax-check.js`. After every `Edit`/`Write` it runs `node --check` and, if the code no longer parses, returns the error text straight into the session. The server already rejects such an edit during its self-restart (it keeps the previous version running), but it writes about it to its own console — the session never learns about the error and keeps working against broken code. The hook closes exactly that gap.
+The syntax side is covered by the machine check instead (`npm run check`, `eslint` + `node --check` on every changed file): the server already rejects an unparsable edit during its self-restart (it keeps the previous version running) but only writes about it to its own console, so a session must learn about a broken file from a check that runs before the commit, not from a hook.
 
 Both `.js` and inline `<script>` in `.html` are checked: the bulk of the code lives in `index.html`, and nothing insures it — the server's self-check covers only `server.js`. From `.html` the contents of a bare `<script>` tag are taken and everything else is replaced with empty lines, so the line number in the error is the line number in `index.html` itself. Scripts with attributes (`src`, `type="module"`) are skipped by the hook. So are other files.
 
@@ -193,7 +193,7 @@ The **Graph** tab shows the project map. There is nothing to configure: on start
 
 **What becomes a node.** A project file, a section inside a large file (by the `// ---------- … ----------` separator comments), a top-level function, an API route and a past Claude session.
 
-The map includes **everything that physically sits in the project folder** — including hidden files and things git ignores: `.env`, `.claude/settings.local.json`. There are exactly two exceptions, both unavoidable: `.git` (an internal database of thousands of objects, in which the project's contents are duplicated) and `DATA/` — everything the server produced itself: the vault is already present in the graph as nodes, and walking it again would breed notes about notes with every rebuild.
+The map includes **everything that physically sits in the project folder** — including hidden files and things git ignores: `.env`, `opencode.json`. There are exactly two exceptions, both unavoidable: `.git` (an internal database of thousands of objects, in which the project's contents are duplicated) and `DATA/` — everything the server produced itself: the vault is already present in the graph as nodes, and walking it again would breed notes about notes with every rebuild.
 
 **Where the links come from.** Only from anchor points, not from matching names: `/api/...` string literals (which is why you can see who calls which route), `src`/`href` in markup, `require`/`import`, function calls inside a file, `[[…]]` links in notes. Separately there is git history: files that change together, and when a file first appeared.
 
@@ -232,12 +232,13 @@ OBSIDIAN_VAULT="C:/path/to/vault" node server.js
 
 | Path | Purpose |
 | --- | --- |
-| `server.js` | A thin dispatcher: `.env`, static files, sessions, live CLI runs. Everything feature-specific lives next to the feature and is wired in through a route table |
-| `SYSTEM/` | The client shell: `index.html`, `app.js`, `tabs.js`, the toolbar and panel scripts, `core/`, `styles/`, `assets/` |
+| `server.js` | A thin entry point: `.env`, module wiring, route table, `listen`. Everything with a topic of its own lives in a module: `SYSTEM/core/` is the shared plumbing (`env`, `watchdog`, `watch`, `version`, `http-server`, `api`, `runs`, `run-turn`, `handoff`, `session-list`, `sessions-routes`, `agent-routes`, `sessions-db`), `SYSTEM/cli/` is the agent layer (connectors, process spawn, cooldown, handover, turns started outside the browser) |
+| `SYSTEM/` | The client shell: `index.html`, `app.js`, `tabs.js`, the toolbar and panel scripts, `core/` (server plumbing), `cli/` (CLI connectors), `styles/`, `assets/` |
 | `PROJECTS/<Section>/*.eta` | Templates for the server fragments that htmx pulls in — next to the feature that renders them |
 | `PROJECTS/<Section>/` | One folder per interface section — client, styles, the server half and its own README. A page created by the toolbar's «+» button is one of these too: its `page.js` *is* the page |
 | `DOCS/decisions/` | Why something in the project is done the way it is; a new decision goes here when the "why" is not visible from the code |
-| `AGENTS.md` / `CLAUDE.md` | The project rules for any agent, and the Claude Code specifics on top of them |
+| `AGENTS.md` | The project rules for the agent that works in this repo — OpenCode, the only one left (`DOCS/decisions/078`) |
+| `TOOLS/` | Helper scripts that belong to no section: the live-verification scenarios and the script that counts the next version and decision number |
 | `VERSION.md` | The version history; its last `DEV LOG` line is the single source of truth about the version |
 | `PLAN.md` | The plan for splitting the code into modules |
 | `DATA/` | Everything the server built itself: the vault (`vault/Project/`, `vault/Sessions/`), the `.index.db` search index, the `.sessions.db` session database (not tracked by git) |

@@ -19,10 +19,8 @@ const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
 // (ScriptContainedMaliciousContent) и скрипт блокируется целиком. Save(path,
 // ImageFormat.Jpeg) без EncoderParameters под ту же эвристику не попадает.
 // Ширину держим заметно больше старых 192px, чтобы миниатюру можно было
-// разобрать, не оставляя мыло. 'powershell.exe' с расширением, а не
-// 'powershell': под WSL это тот же самый Windows-хост, но interop ищет
-// исполняемый файл по точному имени с .exe — без расширения Linux не найдёт
-// его в PATH. На нативном Windows работает так же
+// разобрать, не оставляя мыло. Снимок снимает PowerShell — штатный снимок
+// экрана Windows, другого источника у нас нет
 const SCREENSHOT_WIDTH = 480;
 
 // список подключённых экранов — для настройки в Settings, откуда выбирают,
@@ -133,7 +131,7 @@ function captureScreenshot(screenIndex) {
 }
 
 // какой монитор снимать, хранится в .env (SCREENSHOT_SCREEN) — записать туда
-// умеет только server.js, поэтому setEnvValue приходит снаружи
+// умеет только SYSTEM/core/env.js, поэтому setEnvValue приходит снаружи
 function createRoutes({ setEnvValue }) {
     const currentScreen = () => Number(process.env.SCREENSHOT_SCREEN) || 0;
 
