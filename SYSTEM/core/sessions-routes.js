@@ -1,6 +1,7 @@
 // /api/sessions* — общее хранилище переписок: его читают и Chat, и Flow,
 // и страницы кнопки «+», поэтому маршруты живут в ядре, а не в одной папке
 // (DOCS/decisions/017). Обращения к самой базе — SYSTEM/core/sessions-db.js.
+const crypto = require('crypto');
 const { readJson, sendJson, sendImage } = require('./http.js');
 
 // Превью сессии пишется в базу готовой data-URL (скриншот системы либо клиентский
@@ -90,9 +91,12 @@ function createRoutes({ db, list, map, runs }) {
             // Content-Type из префикса, тело — распакованный base64
             const mime = dataUrl.slice('data:'.length, dataUrl.indexOf(';'));
             const bytes = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
-            // ETag — длина и хвост строки: хэш 40 КБ на каждый запрос дороже самой
-            // отдачи, а смена картинки меняет и длину, и хвост
-            const etag = `"${bytes.length}-${dataUrl.slice(-16)}"`;
+            // ETag — хэш самих байт: у «длины и хвоста строки» есть случай,
+            // когда две разные картинки дают один отпечаток, и браузер до
+            // протухания кэша показывал бы вторую вместо первой. Замер на живых
+            // превью (13 штук, 27 КБ в среднем): sha1 обходится в 14 мкс на
+            // картинку — против десятков миллисекунд на саму отдачу
+            const etag = `"${crypto.createHash('sha1').update(bytes).digest('base64')}"`;
             sendImage(res, bytes, mime, etag, req.headers['if-none-match']);
         },
 
