@@ -33,7 +33,7 @@ function create(deps) {
     // сколько отложенный перезапуск сервера ждёт письмо о конце хода (см. finally)
     const MAIL_WAIT_MS = 30000;
 
-    return async function runTurn({ target, prompt, sessionId, model, effort, mode, plan, hints, skill }, send, drive) {
+    return async function runTurn({ target, prompt, sessionId, model, effort, mode, plan, hints, skill, homework }, send, drive) {
         // startedAt — момент начала именно этого хода: по нему панель Sessions
         // тикает «живую» длительность активной сессии (см. runs.activeStartedAt
         // и /api/fragment/session-list), пока finishExchange не зафиксирует
@@ -218,12 +218,15 @@ function create(deps) {
                     // чему пороги перемеряются на живых данных: без записи их
                     // пришлось бы угадывать по памяти, а замер на двадцати одном
                     // запросе однажды устареет (DOCS/decisions/089)
-                    if (hints?.length || skill) {
+                    if (hints?.length || skill || homework) {
                         meta.resultMeta = {
                             ...meta.resultMeta,
                             suggestions: {
                                 notes: (hints || []).map((h) => ({ title: h.title, noul: h.noul, confidence: h.confidence ?? null })),
                                 skill: skill ? { title: skill.title, match: skill.match } : null,
+                                homework: homework
+                                    ? { kind: homework.kind, files: homework.files, chars: homework.chars, work: homework.work }
+                                    : null,
                             },
                         };
                     }

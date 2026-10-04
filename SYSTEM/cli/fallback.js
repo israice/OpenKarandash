@@ -111,6 +111,13 @@ function create({ agents, cooldowns, turnJudgment, fallbackOff }) {
                 model: params.model,
                 mode: params.mode,
                 hints: params.hints,
+                // приём из памяти работника переезжает вместе с запросом: он
+                // подобран под поручение человека, а не под исполнителя, и на
+                // подхвате следующему агенту он всё ещё о том же деле
+                skill: params.skill,
+                // отчёт разведки переезжает вместе с запросом по той же причине,
+                // что и приём: он собран под поручение человека, а не под исполнителя
+                homework: params.homework,
                 plan: params.plan,
             };
             state.current = spare.name;

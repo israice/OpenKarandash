@@ -109,12 +109,12 @@ function create({ runTurn, resumeAndHandoff, db }) {
         return stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean);
     }
 
-    async function ask({ prompt, model, sessionId, mode, hints, skill, plan }, send) {
+    async function ask({ prompt, model, sessionId, mode, hints, skill, homework, plan }, send) {
         if (!activeTarget) return send({ type: 'error', error: 'OpenCode is not connected' });
         const target = activeTarget;
         if (!prompt) return send({ type: 'error', error: 'Empty request' });
 
-        const { resumeId, handoff } = await resumeAndHandoff(sessionId, target.id, hints, skill, plan, prompt);
+        const { resumeId, handoff } = await resumeAndHandoff(sessionId, target.id, hints, skill, homework, plan, prompt);
         const args = ['run', handoff + prompt, '--format', 'json'];
         // Рассуждение модели CLI печатает отдельными событиями только с этим
         // флагом («show thinking blocks»): без него в поток уходят лишь текст
@@ -127,10 +127,11 @@ function create({ runTurn, resumeAndHandoff, db }) {
         // (см. память команды) — режим Chat/Action пока только помечает строки в базе
         // (mode-колонка), инструменты CLI на уровне флагов не ограничивает
 
-        // подсказки и приём едут в runTurn не ради текста запроса (он уже собран
-        // в handoff выше), а ради своих оценок: они ложатся в result_meta хода,
-        // и по ним пороги перемеряются на живых данных (DOCS/decisions/089)
-        return runTurn({ target, prompt, sessionId, model, mode, plan, hints, skill }, send, async (ctx) => {
+        // подсказки, приём и отчёт разведки едут в runTurn не ради текста запроса
+        // (он уже собран в handoff выше), а ради своих оценок: они ложатся в
+        // result_meta хода, и по ним пороги перемеряются на живых данных
+        // (DOCS/decisions/089, решение 092)
+        return runTurn({ target, prompt, sessionId, model, mode, plan, hints, skill, homework }, send, async (ctx) => {
             let cliSessionSeen = false;
             // callID вызова инструмента -> позиция строки шага: tool_use приходит дважды
             // на один callID (сперва running, потом completed), вторая запись только

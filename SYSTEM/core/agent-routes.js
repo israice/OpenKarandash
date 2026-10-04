@@ -5,6 +5,8 @@
 // добавляет ни одного маршрута. Различия коннекторов собраны в таблице CONNECTORS
 // (SYSTEM/cli/index.js).
 const { readJson, sendJson } = require('./http.js');
+const skillHints = require('./skill-hints.js');
+const homeworkHint = require('./homework-hint.js');
 
 // createRoutes({ agents, cooldowns, turnJudgment, runs })
 //
@@ -30,7 +32,16 @@ function createRoutes({ agents, cooldowns, turnJudgment, runs }) {
         '/api/agent/connect': async (req, res) => {
             const { agent, id } = await readJson(req);
             const adapter = byName(agent);
-            const target = adapter.targets().find((t) => t.id === id);
+            const targets = adapter.targets();
+            // id окружения приходит из localStorage вкладки, а он стареет: у
+            // коннектора переименовали цель, CLI переехал на другую машину, и
+            // вернувшийся после рестарта сервер отвечал «Unknown environment».
+            // Страница считала это неудачным восстановлением и писала
+            // «is not connected» при живо установленном CLI, хотя у OpenCode
+            // выбор один и гадать тут не о чем. Поэтому единственная цель
+            // принимается вместо сохранённого имени
+            const target = targets.find((t) => t.id === id)
+                || (targets.length === 1 ? targets[0] : null);
             if (!target) {
                 sendJson(res, { ok: false, error: `Unknown environment: ${id}` });
                 return;
@@ -99,11 +110,20 @@ function createRoutes({ agents, cooldowns, turnJudgment, runs }) {
             // событием в поток, а не исключением из обработчика: иначе вкладка
             // видела «Failed to fetch» вместо причины
             try {
-                // записки DOCS/decisions, обязательные к прочтению именно под этот
-                // запрос, — подбирает TypeSafe (DOCS/decisions/051). Ждём: подсказка
-                // должна уехать вместе с запросом, а не догонять его. Без ключа
-                // функция сразу отдаёт null, и ход идёт как раньше
-                body.hints = await pickHints(body.prompt);
+                // приём из памяти работника и домашняя работа — тем же способом
+                // и из того же места (skill-hints.js, homework-hint.js, решение 088).
+                // Все суждения независимы и едут вместе: подсказка обязана попасть
+                // в запрос, а не догонять его
+                const [hints, skill, homework] = await Promise.all([
+                    pickHints(body.prompt),
+                    skillHints.pickSkill({ request: body.prompt, agent: body.agent, profile: body.profile }).catch(() => null),
+                    // отчёт разведки собирает код по якорям из сообщения и едет в
+                    // запрос сам: агент на эту работу ходов тратить не должен
+                    homeworkHint.pickHomework({ request: body.prompt }).catch(() => null),
+                ]);
+                body.hints = hints;
+                body.skill = skill;
+                body.homework = homework;
                 await askWithFallback(body.agent, body, emit);
             } catch (err) {
                 emit({ type: 'error', error: err.message });

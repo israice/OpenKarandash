@@ -181,12 +181,33 @@ function kindOf(message) {
     return bestScore > 0 ? best : null;
 }
 
+// Место элемента в коде из строки «Code: SYSTEM/model-tag.js:39 (здесь создаётся),
+// SYSTEM/model-tag.css:6 (стиль)» — её добавляет Karandash, когда человек кликнул
+// по элементу (DOCS/decisions/091). Это готовая находка: файл и строки уже названы,
+// осталось их прочитать. Раньше та же работа делалась поиском по имени класса,
+// а имя класса у общего элемента уводило не туда
+const CODE_LINE = /Code:\s*([\s\S]*)/i;
+
+function placesOf(message) {
+    // без строки «Code:» в сообщении совпадения нет, и [''][1] — это undefined:
+    // падение случалось на любом поручении словами, где нет клика по элементу
+    const line = (String(message).match(CODE_LINE)?.[1] || '').split('\n')[0];
+    const out = [];
+    for (const m of line.matchAll(/([\w./-]+\.(?:js|mjs|cjs|html|eta|css)):(\d+)/g)) {
+        const file = m[1].replace(/^\.\//, '');
+        // стиль помечаем по самому файлу: слово «стиль» стоит в конце группы и
+        // ко всем её местам не относится
+        if (!out.some((p) => p.file === file)) out.push({ file, lines: [Number(m[2])], style: file.endsWith('.css') });
+    }
+    return out.slice(0, 3);
+}
+
 function anchorsOf(message) {
-    return { code: codeAnchors(message), phrases: phrases(message), kind: kindOf(message) };
+    return { code: codeAnchors(message), phrases: phrases(message), kind: kindOf(message), places: placesOf(message) };
 }
 
 // Правила типа задачи целиком не берём: они и так есть у агента на диске, а в
-// отчёте нужны указанием на файл и строки, где类型 задачи описан. Иначе отчёт
+// отчёте нужен указанием на файл и строки, где тип задачи описан. Иначе отчёт
 // раздуется и съест ровно тот выигрыш, ради которого делается.
 function rulesOf(kindId) {
     const kind = KINDS.find((k) => k.id === kindId);

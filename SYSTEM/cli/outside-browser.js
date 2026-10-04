@@ -9,6 +9,8 @@
 // create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFallback,
 //          turnJudgment, db, runs })
 function create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFallback, turnJudgment, db, runs }) {
+    const skillHints = require('../core/skill-hints.js');
+    const homeworkHint = require('../core/homework-hint.js');
     const { getSessionTitle, getSessionMeta, getLastTurnParams } = db;
     // имя разбора аргументов — как в соседних модулях слоя и как передаёт
     // SYSTEM/cli/index.js; короткое `judgment` сюда не доезжало (см. там же)
@@ -17,6 +19,19 @@ function create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFall
     // TypeSafe, не доехал модуль) ход идёт как раньше, просто без записок
     const pickHints = (text) => (typeof judgment.pickDecisionHints === 'function'
         ? judgment.pickDecisionHints(text).catch(() => null)
+        : Promise.resolve(null));
+    // приём из памяти работника — тем же путём, что и в пульте (DOCS/decisions/088):
+    // ход из Telegram ничем не отличается, иначе подсказка работала бы только на
+    // одной половине входов. Профиль берём по имени исполнителя, уже выбранного
+    // для этого хода
+    const pickSkill = (text, name) => (typeof skillHints.pickSkill === 'function'
+        ? skillHints.pickSkill({ request: text, agent: name }).catch(() => null)
+        : Promise.resolve(null));
+    // отчёт домашней работы — тем же путём, что и в пульте (homework-hint.js):
+    // ход из Telegram ничем не отличается, иначе разведка шла бы по старой
+    // дороге только на одной половине входов
+    const pickHomework = (text) => (typeof homeworkHint.pickHomework === 'function'
+        ? homeworkHint.pickHomework({ request: text }).catch(() => null)
         : Promise.resolve(null));
 
     // Кто поведёт ход не из браузера. Подключение живёт в памяти процесса, а сторож
@@ -67,10 +82,20 @@ function create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFall
         // отказ до старта хода (не подключён, пустой запрос) в базу не попадёт и
         // обратно сам не уедет — такой возвращаем ошибкой. Всё, что случилось уже
         // внутри хода, дописано в сессию и уйдёт в Telegram обычным путём
-        const hints = await pickHints(text);
+        const [hints, skill, homework] = await Promise.all([pickHints(text), pickSkill(text, name), pickHomework(text)]);
         const { failure, started } = await askWithFallback(
             name,
-            { prompt: text, sessionId, model: last.model || undefined, effort: last.effort || undefined, mode: mode || last.mode || undefined, hints, plan: true },
+            {
+                prompt: text,
+                sessionId,
+                model: last.model || undefined,
+                effort: last.effort || undefined,
+                mode: mode || last.mode || undefined,
+                hints,
+                skill,
+                homework,
+                plan: true,
+            },
             (event) => { if (event.type === 'plan' && note) note(`📋 План: ${event.text}`); },
         );
         if (failure && !started) throw new Error(failure);
@@ -86,7 +111,7 @@ function create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFall
         const like = likeSessionId && getSessionTitle.get(likeSessionId) ? likeSessionId : null;
         const { name, replaced } = await readyExecutor(like ? getSessionMeta.get(like)?.target : null, 'new session', note);
         const last = like ? (getLastTurnParams.get(like) || {}) : {};
-        const hints = await pickHints(text);
+        const [hints, skill, homework] = await Promise.all([pickHints(text), pickSkill(text, name), pickHomework(text)]);
         const { failure, started } = await askWithFallback(
             name,
             {
@@ -95,6 +120,8 @@ function create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFall
                 effort: (!replaced && last.effort) || undefined,
                 mode: mode || last.mode || undefined,
                 hints,
+                skill,
+                homework,
                 plan: true,
             },
             (event) => {
