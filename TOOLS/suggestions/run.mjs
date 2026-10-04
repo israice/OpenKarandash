@@ -14,12 +14,25 @@ const DETAIL = Number(process.argv[2] || 0);
 // живую базу не трогают, а проверить, что поле разбора читается, иначе нечем
 // (та же осторожность, что в памяти работника про копию миграций).
 const db = new DatabaseSync(process.env.SESSIONS_DB || path.join(ROOT, 'DATA', '.sessions.db'));
+// Поле result_meta лежит в строке ОТВЕТА агента, а не в строке запроса. Фильтр
+// по роли 'user' молча отсекал все ходы, и свода с v0.0.124 показывала ноль при
+// заполненной базе. Роль не фильтруем вовсе — ищем по самому полю.
 const rows = db.prepare(`
-    SELECT m.session_id, m.position, m.created_at, m.result_meta, m.text
-    FROM messages m
-    WHERE m.role = 'user' AND m.result_meta LIKE '%"suggestions"%'
-    ORDER BY m.created_at DESC
+    SELECT session_id, position, created_at, result_meta
+    FROM messages
+    WHERE result_meta LIKE '%"suggestions"%'
+    ORDER BY created_at DESC
 `).all();
+
+// Текст запроса хода — ближайшая строка роли user перед этой позицией: свой
+// текст у строки ответа это ответ агента, а в сводке нужен вопрос человека
+function requestBefore(sessionId, position) {
+    return db.prepare(`
+        SELECT text FROM messages
+        WHERE session_id = ? AND role = 'user' AND position < ?
+        ORDER BY position DESC LIMIT 1
+    `).get(sessionId, position)?.text || '';
+}
 
 const notes = new Map();   // заголовок → список оценок
 const skills = new Map();  // заголовок → список оценок
@@ -44,7 +57,7 @@ for (const row of rows) {
         skills.get(key).push({ match: sug.skill.match });
     }
     if (sug.homework) homework.push(sug.homework);
-    turns.push({ session: row.session_id, at: String(row.created_at || '').slice(0, 10), request: String(row.text || '').replace(/\s+/g, ' ').slice(0, 80), sug });
+    turns.push({ session: row.session_id, at: String(row.created_at || '').slice(0, 10), request: String(requestBefore(row.session_id, row.position) || '').replace(/\s+/g, ' ').slice(0, 80), sug });
 }
 
 if (!turns.length) {
