@@ -213,8 +213,12 @@ export function addThinking(text, before) {
         head.className = 'chat-thinking-head';
         const preview = document.createElement('span');
         preview.className = 'chat-thinking-preview';
-        head.append(makeTag(nested ? `\u21b3 ${THINKING_TAG}` : THINKING_TAG, THINKING_TAG),
-            document.createTextNode(' '), preview);
+        // у метки размышления свой серый цвет (chat-tag--muted в messages.css):
+        // она не действие, а рамка мысли, и оттенок от хэша здесь спорит с
+        // курсивом заголовка. Остальные теги остаются цветными по инструменту
+        const tag = makeTag(nested ? `\u21b3 ${THINKING_TAG}` : THINKING_TAG, THINKING_TAG);
+        tag.classList.add('chat-tag--muted');
+        head.append(tag, document.createTextNode(' '), preview);
 
         const body = document.createElement('div');
         body.className = 'chat-thinking-body';
@@ -266,7 +270,7 @@ export function thinkingText() {
 // служебным строкам она не нужна, и там model не передаётся вовсе.
 // before — вставить перед этой строкой, а не в конец: так ответ встаёт выше
 // строки ожидания, которая остаётся последней
-export function addMessage(text, kind, model, before) {
+export function addMessage(text, kind, model, before, cli) {
     // ответ или реплика человека закрывают блок мыслей
     closeThinking();
     const stick = isNearBottom();
@@ -288,7 +292,7 @@ export function addMessage(text, kind, model, before) {
     // своего тона у неё нет, плашка на фоне ленты читалась как отдельная
     // строка переписки. Без модели у ответа её не бывает — звать с пустым
     // значением незачем
-    const tag = window.ModelTag?.tag(model);
+    const tag = window.ModelTag?.tag(model, cli);
     if (tag) message.prepend(tag);
 
     place(message);
