@@ -208,7 +208,49 @@ function homeworkSection() {
     console.log('  чего эта сводка не доказывает: что ходы стали короче. Замер длины — в разделе выше.');
 }
 
-// ---------- 4. подбор записок ----------
+// ---------- 4. что реально ушло модели ----------
+//
+// Последнее непроверенное звено цепочки. Отчёт едет в `result_meta`, но там лежит
+// то, что сервер решил подложить; `input_sent` — то, что действительно ушло в
+// CLI. Пока эта строка пустая, «отчёт едет» доказано только прогонами, а не боем.
+// Пустая она у ходов, случившихся до того, как коннектор начал её писать, — так
+// что ноль здесь означает «нет таких ходов», а не «отчёт не доехал».
+function sentSection() {
+    console.log('\n== что реально ушло модели ==');
+    const rows = db.prepare(`
+        SELECT input_sent, text FROM messages
+        WHERE role = 'user' AND input_sent IS NOT NULL AND input_sent <> ''
+        ORDER BY created_at DESC LIMIT 40
+    `).all();
+    if (!rows.length) {
+        console.log('  строк input_sent в базе нет — ни один ход не записал, что ушло в CLI.');
+        console.log('  Это не значит, что преамбулы не ехали: она пишется в строке только');
+        console.log('  с того момента, как коннектор начал её записывать.');
+        return;
+    }
+    let withReport = 0;
+    let withMap = 0;
+    let share = 0;
+    for (const row of rows) {
+        const sent = String(row.input_sent);
+        const marker = sent.indexOf('[OpenKarandash] Домашняя работа');
+        const mapMarker = sent.indexOf('вот его карта');
+        if (marker >= 0) withReport += 1;
+        if (mapMarker >= 0) withMap += 1;
+        if (marker >= 0 || mapMarker >= 0) {
+            const cut = marker >= 0 ? marker : mapMarker;
+            share += cut / Math.max(sent.length, 1);
+        }
+    }
+    console.log(`  ходов с записью отправленного: ${rows.length}`);
+    console.log(`  из них с отчётом разведки в тексте: ${withReport}, с картой: ${withMap}`);
+    if (withReport + withMap) {
+        console.log(`  доля преамбулы в отправленном тексте: средняя ${Math.round((share / (withReport + withMap)) * 100)}%`);
+    }
+    console.log('  это единственное место, где видно, что подсказки доехали до CLI, а не только помечены в result_meta.');
+}
+
+// ---------- 5. подбор записок ----------
 
 function hintsSection() {
     console.log('\n== подбор записок и приёмов ==');
@@ -233,6 +275,7 @@ function hintsSection() {
 await serverSection();
 stepsSection();
 homeworkSection();
+sentSection();
 hintsSection();
 
 function readPort() {
