@@ -4,7 +4,8 @@
 
 .view--telegram {
     display: flex;
-    height: 100vh;
+    /* высота страницы — общая переменная (SYSTEM/styles/base.css) */
+    height: var(--page-height);
 }
 
 .telegram {

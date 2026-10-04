@@ -14,7 +14,7 @@
     flex-direction: column;
     align-items: stretch;
     justify-content: flex-start;
-    height: 100vh;
+    height: var(--page-height);
     padding: 72px 16px 16px;
 }
 
