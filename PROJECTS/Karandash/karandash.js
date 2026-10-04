@@ -121,92 +121,11 @@
     let karandashMode = false;
     let picked = null;
 
-    // человекочитаемое имя раздела — id корневого .view переводим в название,
-    // под которым пользователь знает вкладку в тулбаре приложения
-    const VIEW_NAMES = {
-        defaultView: 'Home',
-        flowView: 'Flow',
-        kanbanView: 'Kanban',
-        sessionsView: 'Sessions',
-    };
-
-    // ориентиры на пути к элементу — тулбары, боковые панели, модалки:
-    // по ним понятно, в каком блоке интерфейса элемент физически находится
-    const LANDMARKS = [
-        { selector: '[role="dialog"], .modal, .comment-popover', kind: 'modal dialog' },
-        { selector: '[role="toolbar"], .toolbar', kind: 'toolbar' },
-        { selector: '[role="tablist"]', kind: 'tab list' },
-        { selector: 'nav, .side-nav, aside', kind: 'side panel' },
-        { selector: 'header', kind: 'header' },
-        { selector: 'footer', kind: 'footer' },
-    ];
-
-    function landmarkKind(el) {
-        const found = LANDMARKS.find((l) => el.matches(l.selector));
-        return found ? found.kind : null;
-    }
-
-    // название ориентира берём из его же aria-label/title, а если их нет —
-    // из ближайшего заголовка внутри (панели настроек и модалки обычно так подписаны)
-    function landmarkLabel(el) {
-        const aria = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
-        if (aria) return aria;
-        const heading = el.querySelector(':scope > h1, :scope > h2, :scope > h3, :scope > [class$="__title"]');
-        const text = heading && heading.textContent.trim();
-        return text || null;
-    }
-
-    function findLandmarks(el) {
-        const landmarks = [];
-        let cur = el.parentElement;
-        while (cur && cur !== cur.ownerDocument.body && landmarks.length < 2) {
-            const kind = landmarkKind(cur);
-            if (kind) {
-                const label = landmarkLabel(cur);
-                landmarks.push(label ? `${kind} «${label}»` : kind);
-            }
-            cur = cur.parentElement;
-        }
-        return landmarks;
-    }
-
-    function viewName(el) {
-        // элемент из кадра сам про наши вкладки ничего не знает — раздел
-        // определяем по кадру, в котором он лежит
-        const anchor = hostFrame(el.ownerDocument) || el;
-        const view = anchor.closest('.view');
-        return view ? (VIEW_NAMES[view.id] || view.id) : null;
-    }
-
-    // подпись элемента для человека: то, как его видит пользователь, а не только селектор
-    function humanLabel(el) {
-        for (const attr of ['aria-label', 'title', 'placeholder', 'alt', 'name']) {
-            const v = el.getAttribute && el.getAttribute(attr);
-            if (v && v.trim()) return v.trim();
-        }
-        return null;
-    }
-
-    function describe(el) {
-        const id = el.id ? '#' + el.id : '';
-        const cls = typeof el.className === 'string' && el.className
-            ? '.' + el.className.trim().split(/\s+/).join('.')
-            : '';
-        const selector = el.tagName.toLowerCase() + id + cls;
-
-        const label = humanLabel(el);
-        // элемент из кадра: подписываем, в каком именно, — иначе по одному
-        // селектору не понять, что он не из нашей разметки
-        const host = hostFrame(el.ownerDocument);
-        const inFrame = host ? `embedded ${host.title || 'frame'}` : null;
-        const where = [viewName(el), inFrame, ...findLandmarks(el)].filter(Boolean).join(' → ');
-
-        const parts = [];
-        if (label) parts.push(`«${label}»`);
-        parts.push(selector);
-        if (where) parts.push(`— section ${where}`);
-        return parts.join(' ');
-    }
+    // Описание элемента для задачи живёт в соседнем файле element-desc.js: это
+    // самостоятельная работа (подпись, путь по предкам, ориентиры), а режим
+    // наведения её только вызывает. Здесь — только приём элемента кадра, о
+    // котором описание ничего не знает.
+    const describeElement = (el) => window.KarandashDesc.describe(el, hostFrame(el.ownerDocument));
 
     // ---------- спуск в свои кадры ----------
     //
@@ -334,7 +253,7 @@
         picked = el;
         frame.classList.add('hover-frame--picked');
         drawFrame(el);
-        popoverTarget.textContent = describe(el);
+        popoverTarget.textContent = describeElement(el);
         field.value = '';
         setCommentMode('Action'); // каждое новое открытие начинается с режима по умолчанию
         popover.hidden = false;
@@ -491,7 +410,7 @@
         // у контейнеров в textContent лежит всё их содержимое — такой «текст элемента»
         // только зашумляет вопрос, поэтому берём его лишь у коротких элементов
         const text = (el.textContent || '').trim().replace(/\s+/g, ' ');
-        const lines = [`UI element: ${describe(el)}`];
+        const lines = [`UI element: ${describeElement(el)}`];
         if (text && text.length <= 120) lines.push(`Element text: ${text}`);
         lines.push(`Comment: ${comment}`);
         return lines.join('\n');

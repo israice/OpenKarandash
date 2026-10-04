@@ -41,12 +41,16 @@ The result is a short loop: you see a problem in the interface → you point at 
 
 ## 🔧 How it works
 
-**The selector.** The `describe(el)` function builds a string from the tag name, the `#id` (if there is one) and every class joined by dots — for example `button.icon-button.toolbar__item`. The same string is shown in the comment window header and goes into the prompt.
+**The selector.** `window.KarandashDesc.describe(el, hostFrame)` builds a string from the tag name, the `#id` (if there is one) and every class joined by dots — for example `button.icon-button.toolbar__item` — then adds the path to the ancestors (`in div.msg-bubble`), the number among identical siblings (`(2 of 3)`) and the section (`— section chatView`). The same string is shown in the comment window header and goes into the prompt.
+
+The path and the number are not decoration. A class alone often points at a dozen identical elements — the model tag is one `span.model-tag` across Sessions, Feed and Flow by design (`DOCS/decisions/039`) — and the collector throws such a name away as too common (`TOOLS/homework/README.md`). The ancestors and the number are what narrow the search back down to a single place. Only permanent classes go into the path: a class about state (`is-open`) has no line of its own in the code.
+
+All of it lives in `PROJECTS/Karandash/element-desc.js`; `karandash.js` only calls it and knows nothing about how the description is built.
 
 **The prompt.** `buildCommentPrompt` assembles up to three lines:
 
 ```
-UI element: <selector>
+UI element: <selector> in <ancestors> (<nth> of <total>) — section <view>
 Element text: <text, if it is no longer than 120 characters>
 Comment: <what you wrote>
 ```
@@ -70,6 +74,7 @@ The whole Karandash button lives in this folder — client, styles and the serve
 | File | What is in it |
 |---|---|
 | `PROJECTS/Karandash/karandash.js` | The entire mode: its own markup (button, frame, comment window), cursor tracking, wheel-based raising, prompt assembly, screenshot capture |
+| `PROJECTS/Karandash/element-desc.js` | How an element is described for the task: label, selector, path to the ancestors, number among identical siblings, section. Publishes `window.KarandashDesc` |
 | `PROJECTS/Karandash/karandash.css` | Styles for `body.karandash-mode`, `.hover-frame`, `.comment-popover` and its parts |
 | `PROJECTS/Karandash/karandash-server.js` | The server half: its routes (`createRoutes`) plus `captureScreenshot()`: PowerShell plus `System.Drawing`, `SCREENSHOT_WIDTH`, a JPEG `data:` URL |
 

@@ -45,6 +45,12 @@ const TOO_WIDE = 12;
 function rgAnchors(code) {
     const out = [];
     const wide = [];
+    // файлы широких якорей не выбрасываем, а помним: сам якорь слишком общий,
+    // чтобы вести по нему, но три самых «горячих» файла из него ведут туда же
+    // (замерено: клик по плашке модели давал якорь `model-tag` в 13 местах, и
+    // отчёт выходил пустым, хотя править надо было два файла — model-tag.js и
+    // model-tag.css, оба с этим именем)
+    const wideFiles = [];
     for (const anchor of code) {
         const args = ['-n', '--no-heading', '-c'];
         for (const g of GLOBS) args.push('-g', g);
@@ -56,12 +62,16 @@ function rgAnchors(code) {
             .map(([, file, n]) => ({ file: file.replace(/^\.\//, '').replace(/\\/g, '/'), n: Number(n) }));
         const total = counts.reduce((sum, c) => sum + c.n, 0);
         if (!total) continue;
-        if (total > TOO_WIDE) { wide.push(`${anchor} (${total})`); continue; }
+        if (total > TOO_WIDE) {
+            wide.push(`${anchor} (${total})`);
+            for (const c of counts) wideFiles.push({ file: c.file, n: c.n, anchor });
+            continue;
+        }
         out.push({ anchor, counts, total });
     }
     // узкие якоря первыми: по ним и начинается отчёт
     out.sort((a, b) => a.total - b.total);
-    return { anchors: out, wide };
+    return { anchors: out, wide, wideFiles };
 }
 
 // содержимое найденного: конкретные строки с номерами
@@ -107,19 +117,73 @@ function section(title, body) {
     return body && body.trim() ? `## ${title}\n${body.trim()}\n` : '';
 }
 
+// Где элемент создаётся — самая ценная находка из широкого якоря: строка
+// вида `span.className = 'model-tag'` или `classList.add('model-tag')` встречается
+// ровно один раз на весь проект, тогда как само имя класса — тринадцать. Поэтому
+// такие файлы идут первыми, а уже потом остальные по частоте (замерено на клике
+// по плашке модели: первым в отчёт попадал SYSTEM/model-tag.js, где строится
+// разметка, и лишь за ним — стиль и разметка вкладок).
+function rankHotFiles(wideFiles) {
+    const byFile = new Map();
+    for (const w of wideFiles) if (!byFile.has(w.file)) byFile.set(w.file, w);
+    const out = [];
+    for (const { file, n, anchor } of byFile.values()) {
+        const args = ['-n', '--no-heading'];
+        for (const g of GLOBS) args.push('-g', g);
+        for (const dir of IGNORE) args.push('-g', `!${dir}`);
+        // имя класса рядом с присваиванием или добавлением класса: точка в конце
+        // обязательна, иначе rg читает стандартный ввод вместо репозитория
+        const q = anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        args.push(`(className\\s*=|classList\\.(add|toggle)\\()[^\\n]{0,40}${q}`, '.');
+        // признак ставим по совпадению именно в этом файле: общее «нашлось
+        // где-то» пометило бы все файлы разом и перестало различать их
+        // ключ файла из rg -c несёт ведущий ./, а строки из rg -n — нет: сравниваем
+        // по одному и тому же виду пути, иначе признак не совпадёт никогда
+        const key = file.replace(/^\.\//, '');
+        const made = run('rg', args).split('\n')
+            .some((l) => l.replace(/^\.\\/, '').replace(/\\/g, '/').startsWith(key + ':'));
+        out.push({ file, n, anchor, made });
+    }
+    return out.sort((a, b) => (b.made - a.made) || (b.n - a.n));
+}
+
 function collect(message, opts = {}) {
     const { code, phrases, kind } = anchorsOf(message);
     const parts = [];
     parts.push(`# Домашняя работа по задаче\n\nТип задачи: ${kind ? kind.id : 'не опознан'}.`);
 
-    const { anchors, wide } = rgAnchors(code);
+    const seenFiles = new Set();
 
-    // Ни одного якоря, который нашёлся узко, — значит от собранного отчёта
-    // толку нет: человек описал место словами («сперва Home, потом та
-    // страница»), а в коде это `defaultView`/`lastView`, которых в сообщении
-    // нет. Молча отдавать пустой отчёт хуже, чем сказать прямо: модель начнёт
-    // разведку с нуля, но хотя бы не поверит, что искать больше негде.
-    if (!anchors.length) {
+    const { anchors, wide, wideFiles } = rgAnchors(code);
+
+    // Широкий якорь сам по себе в отчёт не годится, но файлы из него — годятся:
+    // берём те, где имя встречается чаще всего, и читаем вокруг попаданий. Так
+    // клик по общему классу (`model-tag`, `btn`, `message`) перестаёт давать
+    // пустой отчёт и прямо называет файлы, где этот класс создаётся и где он
+    // описан словами.
+    //
+    // Только когда точных якорей нет: при них отчёт и так точный, а широкие
+    // файлы лишь добавляют шум — на задаче про вторую кнопку «+» в отчёт попал
+    // посторонний PROJECTS/Page 3/page.js по слову icon-button (замерено).
+    const hotFiles = anchors.length ? [] : rankHotFiles(wideFiles).slice(0, opts.hotFiles ?? 4);
+    for (const { file, n, anchor, made } of hotFiles) {
+        const full = path.join(ROOT, file);
+        let lines;
+        try { lines = fs.readFileSync(full, 'utf8').split('\n'); } catch { continue; }
+        const ats = (hitsByFile(rgDetail(anchor)).get(file) || []).slice(0, 3);
+        const chunks = ats.map((at) => windowAround(lines, at - 1)).join('\n...\n');
+        parts.push(section(`Файл ${file} (${lines.length} строк) — имя «${anchor}», вхождений: ${n}; строки ${ats.join(', ')}`
+            + (made ? ' — здесь элемент создаётся' : ''),
+        chunks));
+        seenFiles.add(file);
+    }
+
+    // Ни одного якоря, который нашёлся узко, и ни одного файла из широких —
+    // значит от отчёта толку нет: человек описал место словами («сперва Home,
+    // потом та страница»), а в коде это `defaultView`/`lastView`, которых в
+    // сообщении нет. Молча отдавать пустой отчёт хуже, чем сказать прямо: модель
+    // начнёт разведку с нуля, но хотя бы не поверит, что искать больше негде.
+    if (!anchors.length && !hotFiles.length) {
         parts.push(section('Отчёт пустой — и это факт',
             [
                 code.length
@@ -131,7 +195,6 @@ function collect(message, opts = {}) {
     }
 
     // точные попадания по символам — самое ценное, идёт первым
-    const seenFiles = new Set();
     for (const { anchor, counts } of anchors) {
         const detail = hitsByFile(rgDetail(anchor));
         for (const [file, ats] of detail) {
