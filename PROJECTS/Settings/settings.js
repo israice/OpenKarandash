@@ -397,15 +397,14 @@
         // Порядок выбора модели при подключении. Первым идёт выбор человека из
         // витрины или шапки сессии (App.saveModelChoice, переживает перезагрузку
         // страницы) — если CLI такую модель знает, она и остаётся. Иначе дефолт
-        // проекта: Space Bunny Alpha через OpenRouter, как решил владелец. Модели
-        // приходят от CLI списком, поэтому ищем её по имени; если и её нет
-        // (CLI другого аккаунта) — падаем на бесплатную, как раньше: первой в
-        // списке обычно идёт платная, а человеку нужен free-вариант
+        // проекта: Space Bunny Alpha через OpenRouter, как решил владелец.
+        // Модели opencode/* в этом списке платные и без ключа zen отвечают 401
+        // (проверено живьём), поэтому на них падать нельзя: ни на «бесплатную»
+        // с этим именем, ни на opencode/big-pickle, ни на первую строку списка.
+        // Совсем нет знакомой модели — тогда уже первая, но это крайний случай
         const wanted = App.modelOf('opencode');
         provider.defaultModel = provider.models.find((m) => m === wanted)
             || provider.models.find((m) => m === App.DEFAULT_AGENT_MODEL)
-            || provider.models.find((m) => /-free$/i.test(m) || /:free$/i.test(m))
-            || provider.models.find((m) => m === 'opencode/big-pickle')
             || provider.models[0]
             || App.DEFAULT_AGENT_MODEL;
 
