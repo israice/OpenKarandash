@@ -28,9 +28,13 @@ const vsAt = vsIdx >= 0 ? argv[vsIdx + 1] : null;
 const pairIdx = argv.indexOf('--pair');
 const PAIR = pairIdx >= 0 ? [argv[pairIdx + 1], argv[pairIdx + 2]].filter(Boolean) : null;
 const taken = new Set([vsIdx, vsIdx + 1, pairIdx, pairIdx + 1, pairIdx + 2].filter((i) => i >= 0));
-const plain = argv.filter((_, i) => !taken.has(i));
+const plain = argv.filter((a, i) => !taken.has(i) && a !== '--turns');
 const COUNT = Number.isFinite(Number(plain[0])) && Number(plain[0]) > 0 ? Number(plain[0]) : 8;
 const ONLY = plain[1] || null;
+// --turns: разбор по ходам, а не по сессиям. Нужен там, где сравнивают ходы одной
+// сессии между собой — например, первый ход с отчётом и продолжение с картой:
+// в сводке по сессиям они слиты, и разница не видна
+const TURNS = argv.includes('--turns');
 
 // waste-kinds.js — CommonJS, как весь серверный код проекта
 const require = createRequire(import.meta.url);
@@ -226,6 +230,52 @@ if (PAIR?.length === 2) {
         }
         console.log('');
     }
+}
+
+// ---- разбор по ходам ----
+//
+// Сессия может содержать несколько ходов, и сводка по ней их сливает: первый ход
+// с отчётом и продолжение с картой в одной строке. Здесь виден каждый ход
+// отдельно вместе с тем, уехал ли в него отчёт и сколько символов он занял
+if (TURNS) {
+    const userRows = db.prepare(`
+        SELECT session_id, position, text FROM messages WHERE role = 'user'
+    `).all();
+    const reportRows = db.prepare(`
+        SELECT session_id, position, result_meta FROM messages WHERE result_meta LIKE '%"homework":%'
+    `).all();
+
+    console.log('сессия                       ход  шагов  жёстких  всего  отчёт в запрос');
+    let sumSteps = 0;
+    let sumHard = 0;
+    let withReport = 0;
+    let totalTurns = 0;
+    for (const [id, steps] of chosen) {
+        const marks = userRows.filter((row) => row.session_id === id).sort((a, b) => a.position - b.position);
+        for (const [index, mark] of marks.entries()) {
+            const from = mark.position;
+            const to = marks[index + 1]?.position ?? Number.POSITIVE_INFINITY;
+            const inTurn = steps.filter((s) => s.position > from && s.position < to);
+            if (!inTurn.length) continue;
+            const meta = reportRows.find((row) => row.session_id === id && row.position > from && row.position < to);
+            let sent = null;
+            if (meta) {
+                try { sent = JSON.parse(meta.result_meta)?.suggestions?.homework?.sent ?? null; } catch { sent = null; }
+            }
+            const found = classify(inTurn, { reportAttached: Boolean(meta) });
+            const waste = [...found.values()].reduce((n, p) => n + p.length, 0);
+            sumSteps += inTurn.length;
+            sumHard += hardCount(found);
+            totalTurns += 1;
+            if (meta) withReport += 1;
+            console.log(`  ${id.padEnd(28)} ${String(index + 1).padStart(2)}  ${String(inTurn.length).padStart(5)}  ${String(hardCount(found)).padStart(7)}  ${String(waste).padStart(5)}  ${sent ? `${sent} симв.` : '—'}`);
+            console.log(`      ${String(mark.text || '').replace(/\s+/g, ' ').slice(0, 78)}`);
+        }
+    }
+    console.log(`\nходов с шагами: ${totalTurns}, из них с отчётом: ${withReport}`);
+    console.log(`шагов всего ${sumSteps}, на ход ${totalTurns ? (sumSteps / totalTurns).toFixed(1) : '—'}, жёстких ${sumHard}`);
+    db.close();
+    process.exit(0);
 }
 
 const all2 = totalsOf(sessions);
