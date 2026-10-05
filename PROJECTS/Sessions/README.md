@@ -2,7 +2,7 @@
 
 **Talk to a locally installed agent right in the browser: every step is visible and nothing is lost on reload.**
 
-A section of the Mission Control interface. The toolbar button is `chatButton` (label "Sessions"), the screen is `#chatView`, and everything about it lives in `PROJECTS/Sessions/`: the entry point `sessions.js`, its own markup in `sessions-view.js`, styles in `sessions.css`, and the parts next to them. In `SYSTEM/index.html` there is only an anchor — `<div id="chatAnchor">`, the spot the view is inserted into.
+A section of the Mission Control interface. The toolbar button is `chatButton` (label "Sessions"), the screen is `#chatView`, and everything about it lives in `PROJECTS/Sessions/`: the entry point `sessions.js`, its own markup in `session-view.eta` (rendered into the page by the server, `{{SESSION_VIEW}}`), styles in `sessions.css`, and the parts next to them. In `SYSTEM/index.html` only the container exists — `#chatView` with the `{{SESSION_VIEW}}` placeholder.
 
 The file names used to say `chat` and nothing else did — that was the section's former name, and it outlived the rename. Now the name matches the folder, the button and the screen id.
 
@@ -82,7 +82,7 @@ The section is split by concern, so that a change in one thing does not touch th
 
 | File | What is in it |
 | --- | --- |
-| `sessions-view.js` | the markup of the tab — panel, feed, composer, file-editor panel. Runs before `app.js`, which looks up `#chatView` on start |
+| `session-view.eta` | the markup of the tab — panel, feed, composer, file-editor panel. Rendered into the page by the server (`{{SESSION_VIEW}}`, see SYSTEM/core/version.js) and also served as `/api/fragment/session-view` |
 | `sessions.js` | the entry point: send modes, the composer, panel handlers, restoring the connection and the last session on load. A module right after `app.js`, so it imports the core from there and adds its own functions to `window.App` |
 | `sessions-state.js` | the section's shared mutable state in one object (`export const state`) plus `PENDING_SESSION_ID`; imports nothing |
 | `sessions-panel.js` | The Sessions panel: the list, selection and deletion, drafts, the "running" indicator, composer busy state, the live duration counter, the re-hook after htmx swaps the list. Also `copySessionRef` — what the copy button puts on the clipboard |

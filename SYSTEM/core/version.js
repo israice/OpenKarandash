@@ -9,6 +9,7 @@ const { escapeHtml } = require('./http.js');
 // http-server.js: предпросмотр ветки должен показать то же меню, а он заходит
 // в renderPage мимо первого. Сам шаблон и его маршрут — SYSTEM/topbar-server.js
 const topbar = require('../topbar-server.js');
+const sessionsServer = require('../../PROJECTS/Sessions/sessions-server.js');
 
 // корень проекта на два уровня выше: модуль лежит в SYSTEM/core
 const ROOT = path.join(__dirname, '..', '..');
@@ -45,7 +46,8 @@ function renderPage(html, tail) {
     const page = html
         .replace('{{APP_VERSION}}', currentVersion())
         .replace('{{VERSION_LIST}}', versionHistory())
-        .replace('{{TOPBAR}}', () => topbar.render());
+        .replace('{{TOPBAR}}', () => topbar.render())
+        .replace('{{SESSION_VIEW}}', () => sessionsServer.renderView());
     if (!tail) return page;
     return page.includes('</body>') ? page.replace('</body>', `${tail}</body>`) : page + tail;
 }

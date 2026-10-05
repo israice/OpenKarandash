@@ -23,6 +23,10 @@ const eta = new Eta({ views: __dirname, cache: false });
 // пересчёта по сообщениям
 function createRoutes({ sessions, usage, activeStartedAt }) {
     return {
+        '/api/fragment/session-view': (req, res) => {
+            sendHtml(res, eta.render('session-view', {}));
+        },
+
         '/api/fragment/session-list': (req, res) => {
             const list = sessions().map((session) => {
                 const u = usage(session.id) || {};
@@ -62,4 +66,4 @@ function createRoutes({ sessions, usage, activeStartedAt }) {
     };
 }
 
-module.exports = { createRoutes };
+module.exports = { createRoutes, renderView: () => eta.render('session-view', {}) };

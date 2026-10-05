@@ -6,13 +6,15 @@
 
 ---
 
-## MIGRATION PROGRESS (2026-10-06, v0.0.161)
+## MIGRATION PROGRESS (2026-10-06, v0.0.161–v0.0.162)
 
-**Выполнена миграция 1:** разметка вкладки Flow переехала из `SYSTEM/index.html` в `PROJECTS/Flow/flow.eta` (маршрут `/api/fragment/flow`, контейнер `#flowBody` с `hx-get`/`hx-swap="innerHTML"` в index.html). `flow.js` и `flow-session-sync.js` ждут `#flowCanvas`/`#flowNav` (опрос 50 мс, потолок 10 с). Проверки: `node --check` чист, `npm run check` EXIT=0 (4 файла >400 строк — прежнее предупреждение), `npm run ui` без замечаний (flow: 9673 элементов), живой `SYSTEM/live-check.mjs`: `#flowCanvas` ✅, `#flowNav` ✅, у `#flowSessionSelect` 14 пунктов, `data-booting` снят. Версия: v0.0.161, записка `DOCS/decisions/104`.
+**Выполнена миграция 2 (v0.0.162):** разметка вкладки Sessions переехала из `PROJECTS/Sessions/sessions-view.js` в `PROJECTS/Sessions/session-view.eta`; сервер рендерит её на месте заглушки `{{SESSION_VIEW}}` в renderPage (SYSTEM/core/version.js) и маршрутом `/api/fragment/session-view`. `sessions-view.js` удалён. Проверки: npm run check EXIT=0, npm run ui без замечаний, live-check — #sessionsPanel/#sessionList/#chatComposer на месте (13 пунктов списка), заслон boot снят. Заметка: DOCS/decisions/105. Урок: заглушку `{{SESSION_VIEW}}` нельзя писать в HTML-комментарии страницы — replace подставляет первое вхождение, поэтому литерал в комментарии поглощал подстановку (поломлено и поправлено 2026-10-05).
 
-**Следующая миграция (та же очередь, `DOCS/целевая-архитектура.md` п.3):** остальные компоненты — лента Sessions/Feed (сейчас разметку вкладки строит `PROJECTS/Sessions/sessions-view.js` в JS), Kanban, Settings-подвкладка Sandglass и т.п.; та же целевая схема: `<компонент>.eta` + `/api/fragment/<компонент>` + один контейнер.
+**Выполнена миграция 1 (v0.0.161):** разметка вкладки Flow переехала из `SYSTEM/index.html` в `PROJECTS/Flow/flow.eta` (маршрут `/api/fragment/flow`, контейнер `#flowBody` с `hx-get`/`hx-swap="innerHTML"` в index.html). `flow.js` и `flow-session-sync.js` ждут `#flowCanvas`/`#flowNav` (опрос 50 мс, потолок 10 с). Проверки: `node --check` чист, `npm run check` EXIT=0 (4 файла >400 строк — прежнее предупреждение), `npm run ui` без замечаний (flow: 9673 элементов), живой `SYSTEM/live-check.mjs`: `#flowCanvas` ✅, `#flowNav` ✅, у `#flowSessionSelect` 14 пунктов, `data-booting` снят. Версия: v0.0.161, записка `DOCS/decisions/104`.
 
-**Открытые незакоммиченные артефакты от предыдущей сессии (не часть этой миграции, в коммит не входят):** `package.json`/`package-lock.json` — добавлены `robotjs@0.9.1` и `screenshot-desktop@1.15.6` без завершённого кода (предполагаемая незавершённая миграция замены PowerShell-скриншота); `AGENTS.md`/`AGENTS.override.md` модифицированы; `AUDIT_TARGET_ARCHITECTURE.md`, `AUDIT_VERIFICATION.md`, `CURRENT_TARGET_DIFF.md` — untracked; `PROJECTS/Flow/flow.eta` станет tracked в этом коммите.
+**Следующая миграция (та же очередь, `DOCS/целевая-архитектура.md` п.3):** остальные компоненты — Kanban, Telegram/telegram.js, Book/book-tab.js, settings-markup.js: разметку вкладок сейчас строят клиентские JS; цель та же — `<компонент>.eta` + `/api/fragment/<компонент>` + один контейнер в index.html.
+
+**Открытые незакоммиченные артефакты от предыдущей сессии (не часть этих миграций, в коммит не входят):** `package.json`/`package-lock.json` — добавлены `robotjs@0.9.1` и `screenshot-desktop@1.15.6` без завершённого кода (предполагаемая незавершённая миграция замены PowerShell-скриншота); `AGENTS.md`/`AGENTS.override.md` модифицированы; `AUDIT_TARGET_ARCHITECTURE.md`, `AUDIT_VERIFICATION.md`, `CURRENT_TARGET_DIFF.md` — untracked. Док-правки в PROJECTS/Sessions/README.md, DOCS/agents/клиент.md и комментариев book-tab.js/telegram.js/sessions.js входят в миграцию 2 и закоммичены.
 
 ---
 

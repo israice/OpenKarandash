@@ -21,8 +21,9 @@
     <link rel="stylesheet" href="SYSTEM/styles/mode-switch.css">
     <!-- Кнопка Karandash живёт целиком в PROJECTS/Karandash: и стили, и скрипт. -->
     <link rel="stylesheet" href="PROJECTS/Karandash/karandash.css">
-    <!-- Вкладка Sessions живёт целиком в PROJECTS/Sessions: разметку строит
-         sessions-view.js, стили лежат рядом. -->
+    <!-- Вкладка Sessions живёт целиком в PROJECTS/Sessions: серверная половина
+         рендерит session-view.eta в страницу на месте одноимённой заглушки
+         (renderPage, как верхнее меню — DOCS/decisions/005), стили лежат рядом. -->
     <link rel="stylesheet" href="PROJECTS/Sessions/sessions.css">
     <!-- Редактор файла живёт целиком в PROJECTS/Graph: стили, скрипт и серверная половина. -->
     <link rel="stylesheet" href="PROJECTS/Graph/file-editor.css">
@@ -124,14 +125,10 @@
     <!-- Вкладка Book разметки в этом файле не имеет: и панель со списком
          разделов, и панель README справа строит PROJECTS/Book/book-tab.js. -->
 
-    <!-- Вкладка Sessions разметки в этом файле не имеет: и панель со списком
-         сессий, и лента с композером строит PROJECTS/Sessions/sessions-view.js,
-         стили лежат рядом (sessions.css). Здесь только якорь вставки: разделы
-         стоят подряд в body, и вставляться надо на своё место, а не в конец.
-         Якорь один на всех и лежит в разметке страницы, а не внутри чужого
-         файла: вкладку переименовали — и молчащий выход здесь уже ронял всё
-         переключение вкладок, а не только нас. -->
-    <div id="chatAnchor" hidden></div>
+    <!-- Вкладка Sessions целиком живёт в PROJECTS/Sessions: разметка —
+         session-view.eta, сервер подставляет её в страницу на месте заглушки
+         (renderPage, как верхнее меню — DOCS/decisions/005), стили лежат рядом. -->
+    <div class="view view--sessions" id="chatView" hidden>{{SESSION_VIEW}}</div>
 
     <div class="shot-lightbox" id="shotLightbox" hidden>
         <img id="shotLightboxImg" src="" alt="">
@@ -196,10 +193,6 @@
     <script src="PROJECTS/Settings/settings.js" data-hot-src="PROJECTS/Settings/settings.js" defer></script>
     <!-- 3D-рендер песочных часов вкладки Sandglass: ES-модуль (import three), поэтому type="module" -->
     <script src="PROJECTS/Settings/settings-sandglass.js" data-hot-src="PROJECTS/Settings/settings-sandglass.js" type="module"></script>
-    <!-- Разметку вкладки Sessions строит sessions-view.js — раньше app.js: тот на
-         старте ищет #chatView для App.VIEWS. Разметка разделов, чей скрипт сам
-         её вставляет (Book, Telegram, Sessions), обязана прийти раньше ядра. -->
-    <script src="PROJECTS/Sessions/sessions-view.js" data-hot-src="PROJECTS/Sessions/sessions-view.js" defer></script>
     <!-- book-tab.js раньше app.js: тот на старте ищет #bookView в DOM -->
     <script src="PROJECTS/Book/book-tab.js" data-hot-src="PROJECTS/Book/book-tab.js" defer></script>
     <!-- telegram.js раньше app.js: тот на старте ищет #telegramView в DOM -->
@@ -207,7 +200,7 @@
     <!-- ядро и вкладка Sessions — модули (DOCS/decisions/022): app.js импортирует
          SYSTEM/providers.js, sessions.js — свои ./sessions-*.js. Модульные скрипты
          без async выполняются в порядке документа наравне с defer, поэтому цепочка
-         sessions-view.js → app.js → sessions.js → остальные файлы сохраняется -->
+         app.js → sessions.js → остальные файлы сохраняется -->
     <!-- общий механизм: пометку суждения рисуют все три отображения ленты -->
     <script src="SYSTEM/judgment-badge.js" data-hot-src="SYSTEM/judgment-badge.js" defer></script>
     <!-- тег модели над ответом — тем же порядком, до всех потребителей -->
