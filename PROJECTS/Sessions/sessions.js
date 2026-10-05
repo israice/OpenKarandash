@@ -12,11 +12,11 @@
 import { state } from './sessions-state.js';
 import { api, confirmModal, openShotLightbox, restoreServerConnection } from '../../SYSTEM/app.js';
 import {
-    connections, saveAllProviderStates, saveActiveProvider,
-    loadActiveProvider, DEFAULT_AGENT, loadOpenCodeState,
+    connections, saveAllProviderStates, saveActiveProvider, loadProviderState,
+    loadActiveProvider, loadPiState,
 } from '../../SYSTEM/providers.js';
 import {
-    DRAFT_PREFIX, setSessionId, saveDraft, clearDraft, copyId,
+    DRAFT_PREFIX, setSessionId, saveDraft, clearDraft, copySessionRef,
     loadSessions, startNewSession, remove, initPanel,
 } from './sessions-panel.js';
 import { openSession, sendTurn } from './sessions-stream.js';
@@ -151,7 +151,11 @@ function bindPanel() {
 
         const copy = e.target.closest('.session-copy');
         if (copy) {
-            copyId(copy.dataset.copyId).then(() => {
+            // копируется указатель, а не id: заголовок нужен, чтобы человек узнал
+            // свою сессию, команда — чтобы адрес открывался сразу (решение 099)
+            const row = copy.closest('.session-row');
+            const title = row?.querySelector('.session-item__title')?.textContent || '';
+            copySessionRef(copy.dataset.copyId, title).then(() => {
                 copy.classList.remove('session-copy--copied');
                 void copy.offsetWidth; // рестарт анимации при повторном клике подряд
                 copy.classList.add('session-copy--copied');
@@ -200,25 +204,33 @@ async function restoreOnLoad() {
     // остальные даже не читаем — иначе первый по списку вставал над чатом
     // вместо последнего выбранного
     const activeId = loadActiveProvider();
-    const saved = { opencode: loadOpenCodeState() };
+    const saved = { pi: loadPiState() };
+    // Состояние выбранного CLI читаем под его именем: ключ выводится из слова
+    // (SYSTEM/providers.js), и заранее известны только дефолтные записи. Так
+    // подключение kilo или omp переживает перезагрузку страницы наравне с pi
+    if (activeId && activeId !== 'pi') saved[activeId] = loadProviderState(activeId);
 
     if (activeId && saved[activeId]?.installId) {
         connections.set(activeId, saved[activeId]);
         await restoreServerConnection(activeId); // сервер мог быть перезапущен — вернём ему окружение
     } else if (!activeId) {
         // выбора ещё не было (свежескачанный проект) или он потерян: поднимаем
-        // сохранённое подключение, активным станет подключённый провайдер —
-        // дальше эксклюзивный режим уже не даст раздвоения
-        if (saved.opencode?.installId) {
-            connections.set('opencode', saved.opencode);
-            restoreServerConnection('opencode');
-            saveActiveProvider(DEFAULT_AGENT);
+        // сохранённое подключение и делаем активным тот CLI, чьё оно и есть.
+        // Раньше здесь активным писался DEFAULT_AGENT — слово из кода, а не
+        // то, чьё подключение подняли, поэтому строка выбора показывала одно,
+        // а ход уходил к другому CLI
+        if (saved.pi?.installId) {
+            connections.set('pi', saved.pi);
+            restoreServerConnection('pi');
+            saveActiveProvider('pi');
         }
     } else {
         // active есть, но его installId потерян (чистка localStorage вручную,
-        // смена окружения) — чужого не подхватываем, остаёмся без подключения:
-        // молчаливое воскрешение тут и было багом
-        saveActiveProvider(null);
+        // смена окружения) — чужого не подхватываем. Сам выбор CLI при этом
+        // остаётся: он и есть источник истины о том, кем пойдёт ход, а
+        // подключение ход восстановит сам (ensureConnected). Раньше здесь
+        // выбор затирался, и следующий ход уходил не туда, куда показывала
+        // строка выбора
     }
 
     // список сессий готов сразу при загрузке страницы

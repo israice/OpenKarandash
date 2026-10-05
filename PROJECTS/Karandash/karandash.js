@@ -402,31 +402,33 @@
         }
     }
 
-    // из комментария собираем вопрос: что за элемент и что о нём написал пользователь
-    function buildCommentPrompt(el, comment) {
-        // у контейнеров в textContent лежит всё их содержимое — такой «текст элемента»
-        // только зашумляет вопрос, поэтому берём его лишь у коротких элементов
-        const text = (el.textContent || '').trim().replace(/\s+/g, ' ');
-        const lines = [`UI element: ${describeElement(el)}`];
-        if (text && text.length <= 120) lines.push(`Element text: ${text}`);
-        lines.push(`Comment: ${comment}`);
-        return lines.join('\n');
-    }
+    // Сборку запроса делает соседний comment-prompt.js: каждая строка в нём
+    // приезжает своим файлом (описание, место в коде, текущий вид), и держать
+    // этот список здесь значит растить файл режима (DOCS/decisions/022)
 
     commentSave.addEventListener('click', async () => {
         const comment = field.value.trim();
         if (!comment || !picked || commentSave.disabled) return;
 
-        // блокируем повторный клик на время захвата — иначе второй клик мог бы
+        // блокируем повторный клик на время двух запросов — иначе второй клик мог бы
         // запустить переход в чат раньше, чем первый снимок успеет отработать
         commentSave.disabled = true;
-        const prompt = buildCommentPrompt(picked, comment);
         const mode = commentMode.dataset.active; // Chat — обсудить место, Action — внести правку
 
-        // окно комментария закрывается сразу, а рамка на элементе остаётся —
-        // так в скриншот попадает выбранный элемент, но не сам попап
+        // окно комментария закрываем сразу, а рамка на элементе остаётся — так в
+        // снимок попадает выбранный элемент, но не сам попап
         popover.hidden = true;
-        const thumb = await captureThumb();
+
+        // место в коде и снимок экрана идут вместе: оба запроса к серверу, оба
+        // нужны до ухода в чат
+        const [place, thumb] = await Promise.all([
+            window.KarandashCode.locate(picked),
+            captureThumb(),
+        ]);
+        const prompt = window.KarandashPrompt.build(picked, comment, place, hostFrame(picked.ownerDocument));
+
+        // рамка на элементе остаётся до самого ухода — так в скриншот попадает
+        // выбранный элемент, а не сам попап
         commentSave.disabled = false;
 
         exitKarandash(); // снимает рамку и выходит из режима Karandash

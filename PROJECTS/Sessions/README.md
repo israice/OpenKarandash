@@ -8,7 +8,7 @@ The file names used to say `chat` and nothing else did — that was the section'
 
 ## 🧭 What this is
 
-The tab where you talk to the locally installed CLI (**OpenCode**, `DOCS/decisions/074`). You write a question, the server launches the connector you picked in the header, and the answer does not arrive as one lump at the end but as a **stream of events**: first the session id, then every tool call (`read app.js`, `bash git status`), then the text. The whole conversation goes into SQLite, so you can come back to it at any time.
+The tab where you talk to the locally installed CLI (**pi**, `DOCS/decisions/074`, `094`). You write a question, the server launches the connector you picked in the header, and the answer does not arrive as one lump at the end but as a **stream of events**: first the session id, then every tool call (`read app.js`, `bash git status`), then the text. The whole conversation goes into SQLite, so you can come back to it at any time.
 
 On the left is the **Sessions** panel with every conversation started from this interface. The interface-section cards (the README of each section) live in a separate top-menu tab — **Book** (`PROJECTS/Book/book-tab.js`).
 
@@ -17,21 +17,21 @@ On the left is the **Sessions** panel with every conversation started from this 
 - **A live stream of steps.** Every tool call is its own row in the feed, and you see what the agent reads, edits and runs before it even formulates an answer. Steps are written to the database and stay visible when the session is reopened.
 - **Continuing a conversation.** Clicking a session in the panel opens its history and continues that exact one: the next question goes to the CLI with `--resume <id>`, so the model remembers the context.
 - **Reattaching to work in progress.** If you closed or refreshed the tab in the middle of a request, the CLI does not stop. `/api/sessions` marks such sessions with `running`, and `POST /api/sessions/attach` returns the stream of remaining events: the feed keeps filling from where you left it.
-- **Two send modes.** `Action` lets the agent work for real — it edits files. `Chat` is discussion without consequences: a "change nothing" preamble goes with the question, and the mode is written into the session row. OpenCode has no verified flags that would limit its tools per request, so the restraint of `Chat` rests on the wording (`DOCS/decisions/074`).
+- **Two send modes.** `Action` lets the agent work for real — it edits files. `Chat` is discussion without consequences: the mode is written into the session row, and pi's own `--tools read,grep,find,ls` leaves the agent only the reading tools, so the restraint of `Chat` is enforced by the CLI and not only by the wording (`DOCS/decisions/093`).
 - **Markdown in answers.** Headings, lists, links, inline code and ``` blocks are rendered as HTML — an answer reads like a document rather than a wall of `pre-wrap`.
-- **Model on the fly.** The header of an open session carries the same four dropdowns as Settings — **CLI / Gateway / Provider / Model** — built by the same code (`SYSTEM/model-cascade.js`) and writing to the same saved choice. A change applies to the next message in the same session, appears at once in Settings, and is still there after a page reload. Only connected CLIs are listed here: the turn goes to the chosen one, and it cannot go to one that is not connected.
+- **Model on the fly.** The header of an open session carries the same four dropdowns as Settings — **CLI / Gateway / Provider / Model** — built by the same code (`SYSTEM/model-cascade.js`) and writing to the same saved choice. A change applies to the next message in the same session, appears at once in Settings, and is still there after a page reload. Only connected CLIs are listed here: the turn goes to the chosen one, and it cannot go to one that is not connected. The CLI level lists the agents from OpenRouter's "CLI agents" page (`SYSTEM/cli-agents.js`) plus a disabled **Add** row, not the project's own providers — the real agent appears in that list under its own name (`pi`) and stays real because that name is a provider id.
 - **Stop without side effects.** The `Send` button turns into `Stop` while a session is running and kills that session's process specifically — switch to another session and the state is recomputed.
 - **Everything the server knows is visible.** Under each reply and each tool step there is a collapsed `Details` block with the model, token spend, Event Schema fields and the raw event — the same set the other two views show (`DOCS/decisions/039`).
 - **A panel sized to taste.** The Sessions panel can be dragged by its right edge (minimum 210 px, maximum half the window); the width is remembered in `localStorage`.
 
 ## 🚀 How to use it
 
-1. **Connect OpenCode.** Settings → the OpenCode provider → "Connect". The server looks for the CLI on this machine.
+1. **Connect pi.** Settings → the pi provider → "Connect". The server looks for the CLI on this machine.
 2. **Open the Sessions tab** and write a question in the field at the bottom. The field grows with the text; send with **Ctrl+Enter** (Cmd+Enter on a Mac) or the `Send` button.
 3. **Pick a mode:** `Action` to act, `Chat` to discuss. `Action` is on by default.
 4. **Watch the work unfold** — steps appear in the feed as calls happen, and the answer is appended right away.
 5. **Switch between sessions** by clicking in the panel on the left. The last one you opened is reopened on reload; if it is gone, the most recent session is opened instead, and if the database is still empty the tab comes up with a blank sheet for a new session. Clicking the selected row again (or `+ New`) starts a separate history — a draft appears in the list immediately. The bin icon deletes one session, `Reset All` deletes them all.
-6. **Copy the session id** with the copy button that appears on the row — what gets copied is the CLI's real `session_id`.
+6. **Copy a link to the session** with the copy button on the row — what gets copied is not the bare id but the id, the session title and the command that prints the whole conversation: `node TOOLS/sessions/read.mjs <id>`. An id on its own opens nothing outside the interface, so pasting it into a conversation left the reader hunting for where such sessions are kept (`DOCS/decisions/099`).
 
 ## ⚠️ Before you start
 
@@ -85,7 +85,7 @@ The section is split by concern, so that a change in one thing does not touch th
 | `sessions-view.js` | the markup of the tab — panel, feed, composer, file-editor panel. Runs before `app.js`, which looks up `#chatView` on start |
 | `sessions.js` | the entry point: send modes, the composer, panel handlers, restoring the connection and the last session on load. A module right after `app.js`, so it imports the core from there and adds its own functions to `window.App` |
 | `sessions-state.js` | the section's shared mutable state in one object (`export const state`) plus `PENDING_SESSION_ID`; imports nothing |
-| `sessions-panel.js` | the Sessions panel: the list, selection and deletion, drafts, the "running" indicator, composer busy state, the live duration counter, and the re-hook after htmx swaps the list |
+| `sessions-panel.js` | The Sessions panel: the list, selection and deletion, drafts, the "running" indicator, composer busy state, the live duration counter, the re-hook after htmx swaps the list. Also `copySessionRef` — what the copy button puts on the clipboard |
 | `sessions-feed.js` | drawing rows into the feed: markdown, replies, tool steps and thoughts, the waiting row with its clock, scroll and accordion rules |
 | `sessions-details.js` | the fullness of a session row: field summary, raw event, result images, the step body and the `Details` block under a reply |
 | `sessions-history.js` | a row from the database → the feed: one role → one kind, plus "this turn was not finished" |

@@ -12,7 +12,7 @@ import { api, confirmModal } from '../../SYSTEM/app.js';
 import {
     saveAllProviderStates, updateContextGauge,
 } from '../../SYSTEM/providers.js';
-import { renderSessionBarControls } from '../../SYSTEM/model-cascade.js';
+import { renderSessionBarControls } from '../../SYSTEM/session-model-bar.js';
 import { addPending } from './sessions-feed.js';
 
 // ---------- текущая сессия и черновик ----------
@@ -24,6 +24,7 @@ export function setSessionId(id) {
     // список сессий рисует сервер, поэтому aria-current — единственное, что
     // знает только браузер
     syncSelection();
+    syncDraftRow();
     loadDraft(id);
     state.input.focus();
 }
@@ -82,12 +83,12 @@ export async function loadSessions() {
     }
 }
 
-// Черновик новой сессии: показывается в списке сразу, до первого сообщения, и
-// исчезает сам, когда список перерисуется с реальными данными с сервера
-export function insertDraftRow() {
+// Черновик новой сессии: строка списка на время между кликом New и первым
+// сообщением. Ставится начисто, поэтому звать можно сколько угодно — старая
+// строка убирается, а пустой базе вместо «No sessions yet» встаёт черновик
+function insertDraftRow() {
     state.sessionList.querySelector('.session-item--placeholder')?.closest('li').remove();
     state.sessionList.querySelector('.session-empty')?.remove();
-    syncSelection();
 
     const item = document.createElement('li');
     const btn = document.createElement('button');
@@ -105,16 +106,36 @@ export function insertDraftRow() {
     applyRunningIndicator();
 }
 
-// Повторный клик по выбранной сессии снимает выбор — лента возвращается к
-// пустому виду с подсказкой
-export function deselect() {
+// Плейсхолдер новой сессии живёт в списке до первого сообщения, а список
+// рисует сервер и подменяет целиком каждые пять секунд (и сразу по
+// sessions-changed): без досборки строки после подмены черновик исчезал через
+// пару секунд после клика New — лента пуста, выбрать нечего, и кнопка выглядела
+// сломанной. Правило одно: пока сессия не названа, черновик обязан быть в
+// списке. Зовется и из setSessionId, и после каждой подмены htmx
+function syncDraftRow() {
+    const draft = state.sessionList.querySelector('.session-item--placeholder');
+    if (state.sessionId !== null) {
+        draft?.closest('li').remove();
+    } else if (!draft) {
+        syncSelection();
+        insertDraftRow();
+    }
+}
+
+// Чистый лист для новой сессии: снимаем выбор, чистим ленту и сразу
+// показываем в списке черновик — реальная сессия появится из первого же
+// сообщения. Общий вход и для кнопки New, и для повторного клика по
+// выбранной строке, и для пустой базы: состояния «сессия не выбрана» у
+// вкладки не бывает вовсе, лента всегда принадлежит какой-то сессии или
+// черновику
+export function startNewSession() {
     MissionFiles?.closeFilePanel(); // могла быть открыта панель редактирования файла
-    setSessionId(null);
+    setSessionId(null); // отсюда же в списке встаёт черновик (syncDraftRow)
     saveAllProviderStates();
     state.run += 1;
     state.list.innerHTML = '';
-    state.empty.hidden = false;
     updateContextGauge(null);
+    state.input.focus();
 }
 
 // Удаление сессии из базы. Если удалили открытую — лента чистится, иначе
@@ -132,24 +153,33 @@ export async function remove(id) {
 
     clearDraft(id);
 
-    if (id === state.sessionId) deselect();
+    if (id === state.sessionId) startNewSession();
 
     await loadSessions();
 }
 
-// Копирование id сессии. navigator.clipboard недоступен вне secure context
-// (например, при заходе на сервер по LAN-адресу без https) — тогда пробуем
-// старый execCommand('copy') через временный textarea
-export function copyId(id) {
-    if (navigator.clipboard && window.isSecureContext) {
-        return navigator.clipboard.writeText(id).catch(() => copyIdFallback(id));
-    }
-    return copyIdFallback(id);
+// Копирование указателя на сессию. Копируется не голый id: id вне интерфейса
+// ничего не значит, и получатель начинает искать, где такие сессии лежат.
+// Поэтому копируется адрес, который открывается одной командой, — сам заголовок
+// рядом, потому что по нему человек узнаёт свою сессию в списке (DOCS/decisions/099).
+export function copySessionRef(id, title) {
+    return copyText([
+        `Сессия OpenKarandash: ${id}`,
+        title ? `— «${String(title).trim().slice(0, 80)}»` : null,
+        `Прочитать целиком: node TOOLS/sessions/read.mjs ${id}`,
+    ].filter(Boolean).join('\n'));
 }
 
-function copyIdFallback(id) {
+export function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text).catch(() => copyIdFallback(text));
+    }
+    return copyIdFallback(text);
+}
+
+function copyIdFallback(text) {
     const textarea = document.createElement('textarea');
-    textarea.value = id;
+    textarea.value = text;
     textarea.style.position = 'fixed';
     textarea.style.opacity = '0';
     document.body.appendChild(textarea);
@@ -289,6 +319,7 @@ export function initPanel() {
         state.sessionList = e.target;
         state.sessionList.scrollTop = scrollBeforeSwap;
         syncSelection();
+        syncDraftRow();
         applyRunningIndicator();
     });
 }

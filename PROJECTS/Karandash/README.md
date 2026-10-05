@@ -47,15 +47,21 @@ The path and the number are not decoration. A class alone often points at a doze
 
 All of it lives in `PROJECTS/Karandash/element-desc.js`; `karandash.js` only calls it and knows nothing about how the description is built.
 
-**The prompt.** `buildCommentPrompt` assembles up to three lines:
+**The prompt.** `buildCommentPrompt` assembles up to five lines:
 
 ```
 UI element: <selector> in <ancestors> (<nth> of <total>) — section <view>
+Code: <file>:<lines> (where it is created), <style file>:<lines> (the style)
+Current look: <width>×<height>, background <…>, text colour <…>, font <…>, padding <…>, radius <…>, border <…>
 Element text: <text, if it is no longer than 120 characters>
 Comment: <what you wrote>
 ```
 
-The text is taken only from short elements: for containers, `textContent` holds all of their content, and such an "element text" would only add noise to the task.
+Three of these lines come from neighbours, and `karandash.js` only assembles them: the place in the code from `element-code.js` (`Code:`), the numbers from `element-style.js` (`Current look:`), the text from `element-desc.js`. Each line replaces a detour the agent would otherwise make on its own — the file it has to open, the stylesheet it has to read, the live check it has to run to learn the current values (`DOCS/decisions/099`).
+
+`Current look:` is skipped for a hidden element: without a layout pass it would report a zero size as if it were real. Values equal to the defaults are left out too — a zero radius or an inherited text colour says nothing and only makes the line longer.
+
+The element text is taken only from short elements: for containers, `textContent` holds all of their content, and such an "element text" would only add noise to the task.
 
 **The screenshot.** `POST /api/screenshot` — the shot is taken by the server: a `canvas` in the browser sees only the tab, not the whole screen. On the `server.js` side this is PowerShell plus `System.Drawing`: a shot of the entire virtual screen, downscaled to `SCREENSHOT_WIDTH` and turned into a JPEG `data:` URL. If it fails, `null` is returned and the session simply keeps a placeholder. The "Save" button is disabled during the capture so a second click cannot overtake the first shot.
 
@@ -75,6 +81,9 @@ The whole Karandash button lives in this folder — client, styles and the serve
 |---|---|
 | `PROJECTS/Karandash/karandash.js` | The entire mode: its own markup (button, frame, comment window), cursor tracking, wheel-based raising, prompt assembly, screenshot capture |
 | `PROJECTS/Karandash/element-desc.js` | How an element is described for the task: label, selector, path to the ancestors, number among identical siblings, section. Publishes `window.KarandashDesc` |
+| `PROJECTS/Karandash/element-code.js` | Where the selected element lives in the code: asks the hook index for the files and lines where it is created and where it is styled. Publishes `window.KarandashCode` |
+| `PROJECTS/Karandash/element-style.js` | How the element looks right now: its size and the values the browser computed for it. Publishes `window.KarandashStyle` |
+| `PROJECTS/Karandash/comment-prompt.js` | Assembles the request out of the lines the neighbours produced. Publishes `window.KarandashPrompt` |
 | `PROJECTS/Karandash/karandash.css` | Styles for `body.karandash-mode`, `.hover-frame`, `.comment-popover` and its parts |
 | `PROJECTS/Karandash/karandash-server.js` | The server half: its routes (`createRoutes`) plus `captureScreenshot()`: PowerShell plus `System.Drawing`, `SCREENSHOT_WIDTH`, a JPEG `data:` URL |
 

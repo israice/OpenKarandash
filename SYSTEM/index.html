@@ -833,6 +833,12 @@
     <script src="PROJECTS/Kanban/kanban.js" data-hot-src="PROJECTS/Kanban/kanban.js" defer></script>
     <!-- описание элемента идёт раньше режима: тот его вызывает при клике -->
     <script src="PROJECTS/Karandash/element-desc.js" data-hot-src="PROJECTS/Karandash/element-desc.js" defer></script>
+    <!-- место элемента в коде: спрашивает индекс, поэтому тоже до режима -->
+    <script src="PROJECTS/Karandash/element-code.js" data-hot-src="PROJECTS/Karandash/element-code.js" defer></script>
+    <!-- вычисленные стили элемента: тоже до режима, он зовёт их при отправке -->
+    <script src="PROJECTS/Karandash/element-style.js" data-hot-src="PROJECTS/Karandash/element-style.js" defer></script>
+    <!-- сборка запроса: нужна и element-desc, и element-style, поэтому позже обоих -->
+    <script src="PROJECTS/Karandash/comment-prompt.js" data-hot-src="PROJECTS/Karandash/comment-prompt.js" defer></script>
     <script src="PROJECTS/Karandash/karandash.js" data-hot-src="PROJECTS/Karandash/karandash.js" defer></script>
     <script src="SYSTEM/tabs.js" data-hot-src="SYSTEM/tabs.js" defer></script>
     <script src="SYSTEM/new-button.js" data-hot-src="SYSTEM/new-button.js" defer></script>
