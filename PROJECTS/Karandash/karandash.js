@@ -426,7 +426,6 @@
             captureThumb(),
         ]);
         const prompt = window.KarandashPrompt.build(picked, comment, place, hostFrame(picked.ownerDocument));
-
         // рамка на элементе остаётся до самого ухода — так в скриншот попадает
         // выбранный элемент, а не сам попап
         commentSave.disabled = false;

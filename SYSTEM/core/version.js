@@ -5,6 +5,10 @@
 const fs = require('fs');
 const path = require('path');
 const { escapeHtml } = require('./http.js');
+// верхнее меню страницы — тоже подстановка, и по той же причине здесь, а не в
+// http-server.js: предпросмотр ветки должен показать то же меню, а он заходит
+// в renderPage мимо первого. Сам шаблон и его маршрут — SYSTEM/topbar-server.js
+const topbar = require('../topbar-server.js');
 
 // корень проекта на два уровня выше: модуль лежит в SYSTEM/core
 const ROOT = path.join(__dirname, '..', '..');
@@ -34,10 +38,14 @@ function versionHistory() {
 
 // подстановки страницы и хвост перед </body>: одинаковы для главной копии и для
 // предпросмотра ветки, поэтому живут одной функцией, а не двумя похожими
+// ({{TOPBAR}} — разметка верхнего меню, SYSTEM/topbar.eta). Замена через функцию,
+// а не строкой: в разметке меню есть «$», а строка замены в replace() считает
+// «$&» и «$'» своей подстановкой
 function renderPage(html, tail) {
     const page = html
         .replace('{{APP_VERSION}}', currentVersion())
-        .replace('{{VERSION_LIST}}', versionHistory());
+        .replace('{{VERSION_LIST}}', versionHistory())
+        .replace('{{TOPBAR}}', () => topbar.render());
     if (!tail) return page;
     return page.includes('</body>') ? page.replace('</body>', `${tail}</body>`) : page + tail;
 }

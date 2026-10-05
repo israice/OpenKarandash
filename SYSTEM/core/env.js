@@ -33,8 +33,6 @@ PORT=3001
 SCREENSHOT_SCREEN=0
 # Host dependencies checked/installed by the watchdog (git, python); 0 turns it off
 HOST_DEPS=1
-# When an agent fails mid-work (provider error, limit, missing model) the next connected agent takes the work over; 0 turns it off
-AGENT_FALLBACK=1
 
 # Telegram bridge: the bot token and the ids of the users allowed to talk to it
 # (comma separated). Both are filled from Settings in the interface

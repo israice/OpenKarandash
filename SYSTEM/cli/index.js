@@ -1,4 +1,4 @@
-// Агентский слой: кого зовём, кого временно не зовём и что делаем, когда
+// Агентский слой: кого зовём, кем это помнится и что делаем, когда
 // исполнитель оборвался.
 //
 // Один контракт на все CLI (DOCS/decisions/017): коннектор отличается от соседнего
@@ -7,34 +7,38 @@
 // стоит, а новый коннектор добавляется строкой в таблице CONNECTORS, а не копией
 // роутов.
 //
-// Агент по умолчанию — тот, чьим коннектором идёт ход, когда сессия ничего не
+// Коннектор тут один на всех — any.js, — и он работает с любым словом, каким
+// назовут CLI (SYSTEM/cli-agents.js: список приходит с сайта и меняется).
+// Таблица CONNECTORS поэтому не перечисляет CLI, а хранит уже созданные
+// коннекторы: по имени, которое человек выбрал в строке выбора сессии.
+// Один коннектор на слово — тоже граница: состояние подключения и кулдаун
+// принадлежат именно этому CLI, и общий коннектор на всех смешал бы их между
+// собой. Слово, для которого коннектора ещё нет, создаётся на лету и попадает
+// в таблицу, поэтому подключить и позвать можно любое имя из списка.
+//
+// Агент по умолчанию — тот, чей коннектор ведёт ход, когда сессия ничего не
 // говорит о своём CLI: пустой target или target удалённого коннектора
-// (DOCS/decisions/075, 078 — в проекте остался только OpenCode)
-const opencode = require('./opencode.js');
+// (DOCS/decisions/075, 078, 094 — в проекте остался только pi)
+const any = require('./any.js');
 const cooldown = require('./cooldown.js');
-const fallback = require('./fallback.js');
 const outsideBrowser = require('./outside-browser.js');
 
-const DEFAULT_AGENT = 'opencode';
+const DEFAULT_AGENT = 'pi';
 
-// коннекторы и их порядок. Здесь же читается выключатель подхвата: он касается и
-// памяти о недоступных, и самой цепочки смены исполнителя — читать его в двух
-// модулях значило бы завести две правды об одном флаге
-const FALLBACK_OFF = process.env.AGENT_FALLBACK === '0';
+// Слаг CLI → его имя, наполняется созданием коннектора. Живёт на уровне модуля
+// ради одного потребителя: слой базы (sessions-db.js) открывается раньше
+// коннекторов и зовёт agentNameByTarget при записи каждой строки, поэтому
+// функция должна быть доступна и до create()
+const namesBySlug = new Map();
 
-const CONNECTORS = {
-    opencode: (deps) => opencode.create(deps),
-};
-
-// Какой CLI вёл сессию, видно по её target: id окружений коннектора начинаются
-// с его имени. Старые сессии удалённых коннекторов (claude/pi/codex) отдают
-// DEFAULT_AGENT — их target никто не узнает, а история читается целиком.
-// Чистая функция строки: ею пользуется и слой базы (sessions-db.js), который
-// подключается раньше коннекторов
+// Какой CLI вёл сессию, видно по её target: id цели коннектора начинается с
+// его слиги (SYSTEM/cli/any.js). Сессии удалённых коннекторов (opencode-windows)
+// отдают DEFAULT_AGENT — их target никто не узнает, а история читается целиком.
+// Чистая функция строки: ею пользуется и слой базы, который подключается раньше
+// коннекторов
 function agentNameByTarget(targetId) {
     if (!targetId) return DEFAULT_AGENT;
-    const name = String(targetId).split('-')[0];
-    return CONNECTORS[name] ? name : DEFAULT_AGENT;
+    return namesBySlug.get(String(targetId).split('-')[0]) || DEFAULT_AGENT;
 }
 
 // create({ db, dbFns, runTurn, handoff, turnJudgment, telegramLetters, runs }):
@@ -46,40 +50,59 @@ function agentNameByTarget(targetId) {
 //   telegramLetters — слова для человека о поломке (telegram-letters-server.js)
 //   runs       — реестр идущих ходов: «сервер уже уходит» знаем только он
 //
-// turnJudgment берём под тем именем, каким его передаёт server.js. С прошлым
-// именем judgment в разборе аргументов он был undefined во всём этом слое:
-// первым делом падал ход на turnJudgment.classifyFailure (SYSTEM/cli/fallback.js),
-// и вместе с ним уезжало всё остальное суждение. Ровно та же ошибка была и в
-// agent-routes.js — см. комментарий там.
+// turnJudgment берём под тем именем, каким его передаёт server.js: с прошлым
+// именем judgment в разборе аргументов он был undefined во всём этом слое,
+// и суждение уезжало вместе с ходом.
 //
 // Сборка слоя целиком, а не только таблица коннекторов, потому что части связаны
-// одной логикой: подхват исполнителя ходит и по подключениям, и по кулдаунам, а
-// ход не из браузера — по тому же подхвату. Разложить это по файлам можно было бы,
-// но тогда каждая часть брала бы половину соседней через require.
+// одной логикой: ход начинается здесь и идёт в коннектор по имени, а память о
+// поломке — рядом с ним. Разложить это по файлам можно было бы, но тогда каждая
+// часть брала бы половину соседней через require.
 function create({ db, dbFns, runTurn, handoff, turnJudgment, telegramLetters, runs }) {
+    const deps = { runTurn, resumeAndHandoff: handoff.resumeAndHandoff, db: dbFns };
     const agents = {};
-    for (const [name, connect] of Object.entries(CONNECTORS)) {
-        agents[name] = connect({ runTurn, resumeAndHandoff: handoff.resumeAndHandoff, db: dbFns });
-    }
 
     function byName(name) {
-        const agent = agents[name];
-        if (!agent) throw new Error(`Unknown agent: ${name}`);
-        return agent;
+        const key = String(name || '').trim();
+        if (!agents[key]) {
+            agents[key] = any.create(deps, key);
+            namesBySlug.set(agents[key].slug, key);
+        }
+        return agents[key];
     }
 
-    // Поломка ложится в базу, и следующий выбор исполнителя знает «кто сегодня
-    // недоступен и до какого времени», не повторяя ошибку. Память выключается тем же
-    // AGENT_FALLBACK=0, что и весь подхват: ноль значит «работаем как попросили,
-    // без самодеятельности пульта»
-    const cooldowns = cooldown.create({ db, enabled: () => !FALLBACK_OFF, reasonText: telegramLetters.reasonText });
+    // Память о недоступных исполнителях (DOCS/decisions/071). Записывается поломкой
+    // и больше ничего не решает: кого звать — решает человек в строке выбора
+    const cooldowns = cooldown.create({ db, reasonText: telegramLetters.reasonText });
 
-    const chain = fallback.create({
-        agents,
-        cooldowns,
-        turnJudgment,
-        fallbackOff: FALLBACK_OFF,
-    });
+    // Ход ведёт тот, кого назвали в строке выбора над сессией, и ровно один раз
+    // (DOCS/decisions/097). Подхвата нет: раньше сломанного исполнителя сменял
+    // первый подключённый, и тот получал модель мёртвого — «kilo/stealth/
+    // space-bunny-alpha» уходило в pi, который такого пути не знает, и ход падал
+    // с «Model not found». Слово из уровня CLI уходит в CLI буквально тем же
+    // словом: сломалось — человек видит настоящую ошибку и решает сам.
+    //
+    // started — завелся ли ход вообще (отказ до старта в базу не попадает, и без
+    // этого признака отказ не отличить от ответа); failure — ошибка того, кого
+    // звали. Разбором причины занимается run-turn сам, здесь она нужна только
+    // для памяти о недоступных
+    async function ask(name, params, onEvent) {
+        let failure = null;
+        let started = false;
+        await byName(name).ask(params, (event) => {
+            if (event.type === 'session') started = true;
+            if (event.type === 'error') failure = event.error;
+            onEvent(event);
+        });
+        if (failure) {
+            const known = turnJudgment && typeof turnJudgment.knownFailure === 'function'
+                ? turnJudgment.knownFailure(failure)
+                : null;
+            cooldowns.record(name, null, known?.reason);
+            return { failure, started };
+        }
+        return { failure: null, started: true };
+    }
 
     // ход, начатый не из браузера: ответ человека в Telegram продолжает ту же
     // сессию или заводит новую
@@ -87,8 +110,7 @@ function create({ db, dbFns, runTurn, handoff, turnJudgment, telegramLetters, ru
         agents,
         agentByName: byName,
         agentNameByTarget,
-        cooldowns,
-        askWithFallback: chain.askWithFallback,
+        ask,
         turnJudgment,
         db: dbFns,
         runs,
@@ -99,12 +121,13 @@ function create({ db, dbFns, runTurn, handoff, turnJudgment, telegramLetters, ru
         cooldowns,
         byName,
         agentNameByTarget,
-        askWithFallback: chain.askWithFallback,
-        willHandOver: chain.willHandOver,
+        ask,
         // ответ человека в личке / новая работа оттуда же
         askOutsideBrowser: outside.ask,
         startOutsideBrowser: outside.startNew,
     };
 }
 
+// Наружу отдаётся и разбор цели сессии: его зовёт слой базы (server.js), и он
+// открывается раньше, чем коннекторы созданы
 module.exports = { create, agentNameByTarget, DEFAULT_AGENT };

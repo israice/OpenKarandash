@@ -9,6 +9,11 @@
 // (DOCS/decisions/087). Теперь приходит «SYSTEM/model-tag.js:120» — сразу
 // файл и строка (DOCS/decisions/091).
 //
+// Названного файла мало, поэтому ответ несёт ещё и контекст места: секцию файла,
+// в которой строки живут, остальные файлы фичи и то, кто ссылается на этот файл
+// (DOCS/decisions/100). Без этого агент открывает файл целиком и идёт читать
+// соседей по папке — то есть делает руками то, что индекс уже знает.
+//
 // Ответ может не прийти: сервер только что поднялся и индекс ещё не собран.
 // Это не поломка — вопрос уходит без строки «Code», ровно как раньше.
 (function () {
@@ -35,9 +40,11 @@
         return [...made, ...styled].slice(0, MAX_PLACES);
     }
 
+    // возвращаем пару, а не строку: строка `Code:` и контекст места попадают в
+    // вопрос разными строками, и собирать их должен тот, кто задаёт его форму
     async function locate(el) {
         const names = window.KarandashDesc.hooksOf(el);
-        if (!names.length) return '';
+        if (!names.length) return { place: '', context: null };
         try {
             const res = await fetch('/api/karandash/element', {
                 method: 'POST',
@@ -45,10 +52,15 @@
                 body: JSON.stringify({ names }),
             });
             const data = await res.json();
-            if (!data.ok || !data.places || !data.places.length) return '';
-            return pick(data.places).map(where).join(', ');
+            if (!data.ok || !data.places || !data.places.length) return { place: '', context: null };
+            const chosen = pick(data.places);
+            // контекст берём у первого места — того, где элемент создаётся: у
+            // CSS-файла своей фичи нет, и соседи по его папке к задаче не относятся
+            const lead = chosen.find((p) => p.kind !== 'style') || chosen[0];
+            return { place: chosen.map(where).join(', '), context: lead?.context || null };
         } catch {
-            return ''; // сервер не ответил — вопрос уйдёт без места, как раньше
+            // сервер не ответил — вопрос уйдёт без места, как раньше
+            return { place: '', context: null };
         }
     }
 

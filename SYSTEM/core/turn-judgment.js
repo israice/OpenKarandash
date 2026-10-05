@@ -23,7 +23,15 @@ const { THRESHOLDS, TEXT_LIMIT, PROMPT_LIMIT } = require('./judgment-config.js')
 //   inbox-judgment.js    — сообщение из Telegram и ответ на опрос
 //   failure-judgment.js  — причина поломки хода
 //   work-judgment.js     — переписка для нового агента, приём для памяти, дифф ветки
-const { pickDecisionHints, hintPreamble } = require('./decision-hints.js');
+const { pickDecisionHints: pickHints, hintPreamble } = require('./decision-hints.js');
+
+// Подбор записок с порогом уверенности из одного места. Порог живёт в
+// judgment-config.js, а этот файл decision-hints.js не может импортировать сам:
+// тот требует его, и цикл замкнулся бы. Поэтому гард подставляет обёртка —
+// вызывающие (/api/agent/ask и телеграм-мост) знают только её (DOCS/decisions/089)
+function pickDecisionHints(request) {
+    return pickHints(request, THRESHOLDS.hintConfidence);
+}
 const { classifyInbox, matchPollReply } = require('./inbox-judgment.js');
 const { classifyFailure, knownFailure } = require('./failure-judgment.js');
 const { pickRelevantTurns, judgeSkill, judgeBranch } = require('./work-judgment.js');

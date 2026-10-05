@@ -1,4 +1,4 @@
-// Состояние подключения к провайдеру (OpenCode): список провайдеров и моделей,
+// Состояние подключения к провайдеру (pi): список провайдеров и моделей,
 // подключения, сохранение и восстановление в localStorage, датчик контекста.
 // Вынесено из SYSTEM/app.js (DOCS/decisions/022); наружу это по-прежнему уходит
 // через window.App (его собирает app.js), внутри вкладки Sessions — импортом
@@ -15,38 +15,78 @@ import { state as sessionsState } from '../PROJECTS/Sessions/sessions-state.js';
 
 // список моделей — заготовка под реальные данные провайдеров
 //
-// Агент и модель по умолчанию (решение владельца): OpenCode с Space Bunny Alpha
-// через OpenRouter. Список моделей у OpenCode приходит от CLI при подключении,
-// поэтому имя дефолтной модели живёт здесь одной строкой — и connectOpenCode
-// в settings.js выбирает её из ответа CLI, если CLI её знает.
-export const DEFAULT_AGENT = 'opencode';
-export const DEFAULT_AGENT_MODEL = 'openrouter/stealth/space-bunny-alpha';
+// Список провайдеров — не перечисление, а одна известная по умолчанию запись.
+// Выбор CLI в строке сессии (SYSTEM/model-cascade.js) приходит списком с
+// сайта, и имя в нём может быть любым, поэтому провайдер на каждое имя
+// заводится по требованию (providerById ниже). Само подключение и модели
+// хранятся под ключом этого имени, так что переключение CLI в шапке не трогает
+// состояние остальных.
+//
+// Конкретной модели в коде нет нигде: модель выбирают в строке над сессией, и
+// её выбирает человек (см. SYSTEM/session-model-bar.js). Поле defaultModel у
+// провайдера тоже убрано — раньше оно было вторым местом, где живёт модель
+// (дефолт проекта плюс подстановка по каталогу при Connect), и выбор человека
+// из шапки перебивался им на каждом подключении
+export const DEFAULT_AGENT = 'OpenClaw';
 
 export const PROVIDERS = [
     {
-        id: 'opencode',
-        name: 'OpenCode',
+        id: 'OpenClaw',
+        name: 'OpenClaw',
         note: 'local and third-party models',
         paid: false,
         // список моделей заранее не хардкодим — CLI отдаёт его сам
-        // (`opencode models`) при подключении, см. connectOpenCode в settings.js,
-        // который наполняет этот массив по факту ответа сервера
+        // (`openclaw models list --all --json`) при подключении, см.
+        // connectAgent в PROJECTS/Settings/settings-providers.js, который
+        // наполняет этот массив по факту ответа сервера
         models: [],
-        // агент и модель по умолчанию проекта: OpenCode на Space Bunny Alpha
-        // через OpenRouter (см. DEFAULT_AGENT_MODEL выше)
-        defaultModel: DEFAULT_AGENT_MODEL,
     },
 ];
-// В списке один провайдер — OpenCode: строки выбора агента в шапке сессии и
-// списка провайдеров в Settings остаются (по одному варианту выбора не видно,
-// а место на будущее нужно), но новых агентов владелец больше не заводит —
-// решение 2026-10-01 (DOCS/decisions/075). Новых агентов владелец больше не
-// заводит; Hermes с Docker убран из проекта целиком (DOCS/decisions/077)
+
+// index для быстрых поисков: PROVIDERS наполняется ещё и подключениями
+// (registerProvider), поэтому карта строится отдельно от самого массива
+const byProviderId = new Map(PROVIDERS.map((provider) => [provider.id, provider]));
+
+// Провайдер по имени CLI: у слов из списка сайта собственного провайдера в
+// проекте нет, а каскад выбора и подключение обязаны иметь где взять их
+// состояние. Поэтому запись заводится по требованию и НЕ попадает в PROVIDERS:
+// список провайдеров перечисляет подключённые и добавленные, а не все слова,
+// которые человек когда-либо видел в выпадающем списке. В PROVIDERS запись
+// добавляет connectAgent (PROJECTS/Settings/settings-providers.js) — тогда
+// карточка CLI появляется в настройках вместе с подключением.
+export function providerById(id) {
+    const key = String(id || '');
+    if (!key) return null;
+    let provider = byProviderId.get(key);
+    if (!provider) {
+        provider = { id: key, name: key, note: '', paid: false, models: [] };
+        byProviderId.set(key, provider);
+    }
+    return provider;
+}
+
+// Запись, заведённая по требованию, становится видимой в списке провайдеров:
+// вызывается при подключении CLI, и только тогда
+export function registerProvider(id) {
+    const provider = providerById(id);
+    if (provider && !PROVIDERS.includes(provider)) PROVIDERS.push(provider);
+    return provider;
+}
 
 // подключение переживает перезагрузку страницы: id окружения, модель и
 // сессию CLI держим в localStorage, само окружение восстанавливаем на сервере.
-// свой ключ на каждого провайдера — чтобы они подключались независимо
-const STORE_KEYS = { opencode: 'noname.opencode' };
+// свой ключ на каждого провайдера — чтобы они подключались независимо, и
+// переключение CLI в шапке не трогало состояние того, кого человек убрал
+const STORE_KEYS = { pi: 'noname.pi' };
+
+// Ключ по имени CLI. Имена приходят списком с сайта и заранее не известны,
+// поэтому ключ выводится из имени, а не ищется в таблице: у kilo и omp своего
+// ключа в таблице не было бы, и их подключение не переживало бы перезагрузку
+// страницы. Слаг — тот же, что у цели на сервере (SYSTEM/cli/any.js), поэтому
+// два «kilo» с разным написанием не разъедутся по разным ключам
+const slugOf = (name) => String(name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+const storeKey = (providerId) => STORE_KEYS[providerId] || `noname.cli.${slugOf(providerId)}`;
 
 // Активный провайдер — один на всех: выбор в Settings перебивает остальных
 // (DOCS/decisions/043: ход ведёт выбранный агент). Ключ переживает reload
@@ -65,7 +105,9 @@ export function saveActiveProvider(providerId) {
 export function loadActiveProvider() {
     try {
         const id = JSON.parse(localStorage.getItem(ACTIVE_KEY) || 'null');
-        return typeof id === 'string' && STORE_KEYS[id] ? id : null;
+        // имя может быть любым (список CLI приходит с сайта), поэтому проверяем
+        // не таблицу ключей, а то, что это непустое слово
+        return typeof id === 'string' && id.trim() ? id : null;
     } catch {
         return null;
     }
@@ -74,10 +116,10 @@ export function loadActiveProvider() {
 // Активация исключающая: выбранный остаётся один, остальные забываются и
 // на клиенте, и в localStorage. Вызывать после успешного connect
 export function activateExclusive(providerId) {
-    for (const id of Object.keys(STORE_KEYS)) {
+    for (const id of [...connections.keys()]) {
         if (id === providerId) continue;
         connections.delete(id);
-        try { localStorage.removeItem(STORE_KEYS[id]); } catch { /* приватный режим */ }
+        try { localStorage.removeItem(storeKey(id)); } catch { /* приватный режим */ }
     }
     saveActiveProvider(providerId);
 }
@@ -85,8 +127,7 @@ export function activateExclusive(providerId) {
 // общий помощник сохранения/восстановления состояния провайдера —
 // все провайдеры работают через него одинаково, каждый под своим ключом
 export function saveProviderState(providerId) {
-    const key = STORE_KEYS[providerId];
-    if (!key) return;
+    const key = storeKey(providerId);
     const state = connections.get(providerId);
     try {
         if (!state) localStorage.removeItem(key);
@@ -97,36 +138,99 @@ export function saveProviderState(providerId) {
 }
 
 export function loadProviderState(providerId) {
-    const key = STORE_KEYS[providerId];
-    if (!key) return null;
     try {
-        return JSON.parse(localStorage.getItem(key) || 'null');
+        return JSON.parse(localStorage.getItem(storeKey(providerId)) || 'null');
     } catch {
         return null;
     }
 }
 
-export function loadOpenCodeState() { return loadProviderState('opencode'); }
+// ---------- выбор уровней каскада: шлюз / поставщик / модель / глубина ----------
+//
+// Хранится здесь, рядом с подключением, потому что это выбор человека,
+// переживающий перезагрузку страницы, и читают его и каскад
+// (SYSTEM/model-cascade.js), и восстановление сессии.
+//
+// Ключ один на всех, а не на каждый CLI: уровни — это «последнее, что человек
+// поставил», и он должен быть виден у любого CLI из списка. Смена CLI в шапке
+// не должна приносить свой набор шлюзов и поставщиков — иначе переключил CLI и
+// получил другие значения. Поэтому выбор один, а привычное «у каждого своё»
+// здесь означало бы ровно то расхождение, ради которого всё затевалось.
+//
+// Уровни помнятся по отдельности, а не одной склеенной строкой модели: человек
+// меняет их по одному («поставил Anthropic, Gateway оставь openrouter»), и
+// при следующем выборе CLI остальные два уровня обязаны остаться прежними
+const LEVELS_KEY = 'noname.levels';
+
+export function saveLevelChoice(levels) {
+    try {
+        // Дописываем уровень к уже сохранённому, а не заменяем всё: уровни
+        // приходят по одному (смена модели не должна стирать effort, смена
+        // effort — уровни пути), иначе каждая из них затирала бы соседнюю
+        localStorage.setItem(LEVELS_KEY, JSON.stringify({ ...loadLevelChoice(), ...levels }));
+    } catch {
+        // приватный режим или запрет на хранилище — работаем без сохранения
+    }
+}
+
+// Глубина размышления (пятый уровень каскада, SYSTEM/model-effort.js) — часть
+// того же выбора человека, поэтому лежит в том же ключе, а не в своём: строка
+// стоит в трёх местах, и effort должен показываться у них одинаковым
+export function saveEffortChoice(effort) {
+    saveLevelChoice({ effort: effort || null });
+}
+
+export function loadEffortChoice() {
+    return loadLevelChoice().effort || null;
+}
+
+export function loadLevelChoice() {
+    try {
+        const levels = JSON.parse(localStorage.getItem(LEVELS_KEY) || 'null');
+        return levels && typeof levels === 'object' ? levels : {};
+    } catch {
+        return {};
+    }
+}
+
+// Состояние pi для вкладки Sessions. Ключ агента сменился вместе с CLI
+// (DOCS/decisions/094), а сохранённое подключение осталось под старым именем —
+// иначе после перезагрузки страницы провайдер читался бы как неподключённый, а
+// строка выбора в шапке Sessions (она рисуется только при подключённом
+// провайдере, см. renderSessionBarControls в model-cascade.js) пропадала бы до
+// нажатия Connect. Поэтому старый ключ читается один раз и сразу забывается.
+// id окружения при этом чужой (opencode-windows), но connect-cli это допускает:
+// единственную найденную цель он принимает вместо сохранённого имени и
+// возвращает серверу её настоящий id.
+const LEGACY_STATE_KEYS = { pi: 'noname.opencode' };
+
+export function loadPiState() {
+    const current = loadProviderState('pi');
+    if (current) return current;
+    try {
+        const legacy = JSON.parse(localStorage.getItem(LEGACY_STATE_KEYS.pi) || 'null');
+        if (!legacy) return null;
+        localStorage.removeItem(LEGACY_STATE_KEYS.pi);
+        return legacy;
+    } catch {
+        return null;
+    }
+}
 
 // используется во всех местах, где сохранение зависит не от конкретного
 // провайдера, а от смены текущей сессии (chatSessionId) — сохраняем состояние
 // всех провайдеров, лишний вызов на неподключённого просто удалит его ключ
 export function saveAllProviderStates() {
-    for (const id of Object.keys(STORE_KEYS)) saveProviderState(id);
+    for (const id of [...connections.keys()]) saveProviderState(id);
 }
 
 export const connections = new Map();
 
-// провайдер по умолчанию — сохранённый активный, если он ещё подключён;
-// иначе первый подключённый в этом порядке (OpenCode — решение владельца).
-// Без учёта active reload всегда возвращал первый по списку — баг «над чатом
-// не тот, кого выбрали»
-const DEFAULT_ORDER = [DEFAULT_AGENT];
-export function defaultProviderId() {
-    const active = loadActiveProvider();
-    if (active && connections.has(active)) return active;
-    return DEFAULT_ORDER.find((id) => connections.has(id)) || active || DEFAULT_AGENT;
-}
+// Провайдера по умолчанию здесь больше нет. Он был вторым ответом на вопрос
+// «кем пойдёт ход» — подставным словом из кода, если человек ничего не
+// выбирал, — и строка выбора в шапке показывала одно, а ход уходил к другому
+// CLI. Единственный ответ теперь у строки над сессией (getActiveProviderId в
+// SYSTEM/session-model-bar.js), и хода без выбора не бывает вовсе
 
 // окно показываем в человекочитаемом виде (1M / 200K), а не сырым числом токенов
 export function formatContextWindow(window) {

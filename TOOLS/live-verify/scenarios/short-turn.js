@@ -3,31 +3,33 @@
 // tool / thinking / text должна отвечать строка; потеря здесь — потеря в Sessions, Feed и Flow.
 //
 // Параметры:
-//   agent=<имя>     opencode (по умолчанию) — агент с бесплатными моделями
-//   target=<id>     окружение для connect; без него — первое найденное (см. connect-cli.js)
-//   model=<id>      модель; без неё — первая бесплатная из ответа connect
+//   model=<id>      модель; без неё — та, что выбрана у человека в интерфейсе
 //   prompt=<текст>  что спросить; к началу дописывается метка, по ней же работает уборка
-//   mode=Chat|Action  по умолчанию Chat; у OpenCode это режим
-//                   инструментов НЕ ограничивает (SYSTEM/cli/opencode.js, ask): там
-//                   безвредность хода держится на самом вопросе — не проси ничего править
+//   mode=Chat|Action  по умолчанию Chat; у pi это режим
+//                   инструментов НЕ ограничивает в Action, а в Chat оставляет
+//                   читающие (SYSTEM/cli/pi.js, ask): там безвредность хода
+//                   держится на самом вопросе — не проси ничего править
 //   session=<id>    продолжить существующую сессию вместо новой
 //   timeout=<сек>   сколько ждать ход (по умолчанию 240); вышло — ход останавливается /api/agent/stop
-//   paid=1          разрешить модель без признака free (и ход агентом, у которого
-//                   бесплатных моделей нет) — только когда проверяется именно этот
-//                   путь и дешевле его не вызвать
 //   cleanup=1       хода не начинать: удалить пробные сессии (заголовок с метки), кроме идущих
 //
 // Результат: id сессии — с ним дальше three-views.js session=<id>, а в конце cleanup=1.
 //
+// Модель и CLI — те же, что у человека в интерфейсе, и сценарий не имеет права
+// подставлять свои: он проверяет проект в его рабочем состоянии. Раньше он брал
+// первую «бесплатную» модель из списка CLI (opencode/big-pickle, это opencode zen),
+// а ключ у человека на openrouter — ход падал в 401 при полностью исправном проекте.
+// Отсюда же исчезла проверка «не тратить деньги»: модель теперь та, на которой
+// человек и так работает, и короткий пробный ход стоит ему ровно столько же,
+// сколько любой его собственный.
+//
 // Что сценарий меняет: заводит сессию (видна пользователю в списке, пока её не уберёт cleanup=1);
-// без model= зовёт /api/agent/connect и этим переключает активное окружение агента на сервере
-// (см. connect-cli.js); ответ завершившегося хода сервер шлёт пользователю в Telegram, если мост
+// ответ завершившегося хода сервер шлёт пользователю в Telegram, если мост
 // настроен (notifyTurnFinished в SYSTEM/core/run-turn.js) — поэтому ход один и короткий, не пачкой.
 async function scenario(P) {
     const MARK = '[live-verify]';
     const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
     const postJson = async (url, body) => (await post(url, body)).json();
-    const isFree = (m) => /(:free|-free|\/free)$/i.test(m) || m === 'opencode/big-pickle';
 
     if (P.cleanup) {
         const { sessions = [] } = await postJson('/api/sessions');
@@ -37,31 +39,29 @@ async function scenario(P) {
         return { ok: deleted.every((d) => d.ok), deleted };
     }
 
-    const agent = P.agent || 'opencode';
-    const paid = P.paid === '1';
-    if (agent !== 'opencode' && !paid) {
-        return { ok: false, error: `Пробный ход — только OpenCode или бесплатной моделью. agent=${agent} тратит деньги пользователя: paid=1, если проверяется именно этот путь` };
+    const agent = P.agent || 'pi';
+
+    // Модель — та, на которой человек работает прямо сейчас: sendTurn берёт
+    // ровно её (App.getActiveModel — тот же порядок, что и в шапке сессии),
+    // и сценарий обязан проверять тот же путь. Явный model= перекрывает выбор
+    let model = P.model || null;
+    let modelSource = model ? 'model= в параметрах' : '';
+    if (!model) {
+        model = await App.getActiveModel?.() || null;
+        modelSource = model ? 'выбор в интерфейсе' : 'в интерфейсе не выбрана';
     }
 
-    // connect нужен ради списка моделей; с готовой моделью сначала пробуем без него —
-    // так не переключается окружение, которое выбрал пользователь
-    let model = P.model || null;
+    // connect нужен только если сервер забыл окружение после перезапуска:
+    // лезть в него заранее нельзя — это переключает активное окружение агента
+    // на то, что выбрал сценарий, а не человек
     let connected = null;
     const connect = async () => {
-        let target = P.target;
-        if (!target) target = ((await postJson('/api/agent/detect', { agent })).installs || [])[0]?.id;
+        const target = P.target || ((await postJson('/api/agent/detect', { agent })).installs || [])[0]?.id;
         if (!target) return { ok: false, error: `Окружение ${agent} не найдено` };
         const result = await postJson('/api/agent/connect', { agent, id: target });
         if (result.ok) connected = { id: result.id, version: result.version };
         return result;
     };
-    if (!model && agent === 'opencode') {
-        const result = await connect();
-        if (!result.ok) return { ok: false, error: result.error };
-        model = (result.models || []).find(isFree) || null;
-        if (!model) return { ok: false, error: 'Бесплатной модели в списке нет', connected, models: (result.models || []).slice(0, 20) };
-    }
-    if (model && !isFree(model) && !paid) return { ok: false, error: `Модель ${model} не похожа на бесплатную; paid=1, если это намеренно` };
 
     const prompt = `${MARK} ${P.prompt || 'Ответь одним словом: ок. Ничего не читай и не запускай.'}`;
     const request = { agent, mode: P.mode || 'Chat', prompt, ...(model ? { model } : {}), ...(P.session ? { sessionId: P.session } : {}) };
@@ -106,7 +106,7 @@ async function scenario(P) {
 
     let live = await turn();
     // сервер теряет выбранное окружение при перезапуске: подключаем и пробуем ещё раз
-    if (!live.sid && !connected && ['opencode', 'pi'].includes(agent) && live.errors.some((e) => /not connected/i.test(e))) {
+    if (!live.sid && !connected && agent === 'pi' && live.errors.some((e) => /not connected/i.test(e))) {
         const result = await connect();
         if (!result.ok) return { ok: false, error: result.error };
         live = await turn();
@@ -122,7 +122,7 @@ async function scenario(P) {
 
     return {
         ok: !live.errors.length && !live.timedOut && Boolean(live.answer) && !missingInDb.length,
-        session: live.sid, agent, model, mode: request.mode, connected,
+        session: live.sid, agent, model, modelSource, mode: request.mode, connected,
         live: { ...live, answer: live.answer.slice(0, 300) },
         db: { rows: db.length, roles },
         missingInDb,

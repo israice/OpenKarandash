@@ -1,6 +1,11 @@
 // Панель вкладок: показывает один вид и подсвечивает активную кнопку.
 // Ядро (app.js) переключает вкладку через MissionTabs.show, а сами вкладки
 // живут отдельными файлами — PROJECTS/Flow/flow.js, PROJECTS/Kanban/kanban.js.
+//
+// Вкладка по умолчанию и восстановление последней открытой (внизу файла)
+// ждут DOMContentLoaded: ядро window.App собирает SYSTEM/app.js, а он
+// грузится модулем и попадает в очередь выполнения по факту загрузки, а не
+// в порядке тегов — на старте этого файла App.VIEWS может ещё не быть.
 (function () {
             const viewButtons = [...document.querySelectorAll('.toolbar [data-view]')];
             const flowZoomPanel = document.getElementById('flowZoomPanel');
@@ -81,14 +86,23 @@
                 btn.addEventListener('click', () => showView(btn.dataset.view));
             }
 
-            // при самом первом заходе сохранённого места ещё нет, и при негодном
-            // имени возвращаться тоже некуда — в обоих случаях открываем вкладку
-            // по умолчанию, а не разметку, в которой вкладка не выбрана вовсе
-            const lastView = readLastView() || DEFAULT_VIEW;
-            // страницы кнопки «+» приходят с сервера асинхронно, поэтому 'page:<id>'
-            // восстанавливает уже сам new-button.js — здесь вкладку не трогаем
-            if (lastView.startsWith('page:')) endRestore();
-            else showView(App.VIEWS[lastView] ? lastView : DEFAULT_VIEW, true);
+    // Восстановление вкладки — после DOMContentLoaded, а не сразу: ядро
+    // window.App собирает SYSTEM/app.js, а он грузится модулем, и модуль
+    // попадает в очередь выполнения по факту загрузки, а не в порядке тегов.
+    // На старте этого файла App.VIEWS мог ещё не существовать, и тогда
+    // showView падал, вкладка не открывалась, а метка data-restored-view
+    // снималась только страховочным обработчиком на load (SYSTEM/index.html) —
+    // интерфейс молча показывал пустое место вместо того, где человек был.
+    document.addEventListener('DOMContentLoaded', function () {
+        // при самом первом заходе сохранённого места ещё нет, и при негодном
+        // имени возвращаться тоже некуда — в обоих случаях открываем вкладку
+        // по умолчанию, а не разметку, в которой вкладка не выбрана вовсе
+        const lastView = readLastView() || DEFAULT_VIEW;
+        // страницы кнопки «+» приходят с сервера асинхронно, поэтому 'page:<id>'
+        // восстанавливает уже сам new-button.js — здесь вкладку не трогаем
+        if (lastView.startsWith('page:')) endRestore();
+        else showView(App.VIEWS[lastView] ? lastView : DEFAULT_VIEW, true);
+    });
 
             // пункты боковых меню пока только сообщают о нажатии
             for (const nav of document.querySelectorAll('.side-nav')) {

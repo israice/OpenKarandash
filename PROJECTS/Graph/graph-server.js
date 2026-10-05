@@ -18,6 +18,10 @@ const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
 const vault = require('./graph-vault.js');
 const { rebuildSearchIndex, compactSearchIndex, searchProjectRanked } = require('./graph-search.js');
 const { MAX_EDIT_BYTES, readProjectFile, writeProjectFile } = require('./graph-files.js');
+// контекст места держит копию карты (PROJECTS/Graph/graph-context.js): клик по
+// элементу не должен ждать её сборки, но и после пересборки карты копия обязана
+// стать новой — иначе агент получит ссылки на файлы, которых уже нет
+const context = require('./graph-context.js');
 
 const { DATA_DIR, VAULT_DIR, VAULT, MAP_DIR, SESSION_DIR, state } = vault;
 const { projectFiles, syncProjectMap, syncSessionNotes, dropStaleNotes, buildVaultGraph } = vault;
@@ -46,6 +50,7 @@ function prepareVault() {
         syncSessionNotes();
         dropStaleNotes(path.join(VAULT, MAP_DIR)); // карта: файл исчез — заметка тоже
         dropStaleNotes(path.join(VAULT, SESSION_DIR)); // сессию удалили из списка — и заметку
+        context.forgetGraph(); // копия карты в graph-context.js стала устаревшей
     } catch (error) {
         console.error(`Failed to build the project map in the vault: ${error.message}`);
     }

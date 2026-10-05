@@ -42,7 +42,6 @@
             <div class="chat-session-bar" id="chatSessionBar" hidden></div>
 
             <div class="chat-messages" id="chatMessages">
-                <p class="chat-empty" id="chatEmpty">No session selected — write a message or pick one on the left.</p>
                 <div class="chat-list" id="chatList"></div>
             </div>
 

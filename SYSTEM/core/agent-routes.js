@@ -16,7 +16,7 @@ const homeworkHint = require('./homework-hint.js');
 // api.js, тот отвечал JSON поверх отправленных заголовков, процесс падал по
 // ERR_HTTP_HEADERS_SENT, и вкладка получала «Failed to fetch» вместо хода
 function createRoutes({ agents, cooldowns, turnJudgment, runs }) {
-    const { byName, askWithFallback } = agents;
+    const { byName, ask } = agents;
     // подсказки — украшение хода, а не его условие: без суждения или без ключа
     // TypeSafe ход идёт как раньше
     const pickHints = (prompt) => (turnJudgment && turnJudgment.pickDecisionHints
@@ -37,7 +37,7 @@ function createRoutes({ agents, cooldowns, turnJudgment, runs }) {
             // коннектора переименовали цель, CLI переехал на другую машину, и
             // вернувшийся после рестарта сервер отвечал «Unknown environment».
             // Страница считала это неудачным восстановлением и писала
-            // «is not connected» при живо установленном CLI, хотя у OpenCode
+            // «is not connected» при живо установленном CLI, хотя у pi
             // выбор один и гадать тут не о чем. Поэтому единственная цель
             // принимается вместо сохранённого имени
             const target = targets.find((t) => t.id === id)
@@ -62,9 +62,9 @@ function createRoutes({ agents, cooldowns, turnJudgment, runs }) {
             sendJson(res, { ok: true, stopped: runs.stop(sessionId || null) });
         },
 
-        // память о недоступных исполнителях (DOCS/decisions/071): посмотреть,
-        // кого и до какого времени пульт сейчас не берёт, и сбросить, когда
-        // лимит обновился раньше срока или пометка больше не нужна
+        // память о поломках исполнителей (DOCS/decisions/071): посмотреть,
+        // кто и когда ломался, и сбросить, когда лимит обновился раньше срока
+        // или пометка больше не нужна
         '/api/agent/cooldowns': async (req, res) => {
             sendJson(res, { ok: true, cooldowns: cooldowns.list() });
         },
@@ -103,12 +103,11 @@ function createRoutes({ agents, cooldowns, turnJudgment, runs }) {
             // записки DOCS/decisions, обязательные к прочтению именно под этот
             // запрос, — подбирает TypeSafe (DOCS/decisions/051). Ждём: подсказка
             // должна уехать вместе с запросом, а не догонять его. Без ключа
-            // функция сразу отдаёт null, и ход идёт как раньше
-            // сломавшегося исполнителя сменяет следующий подключённый; его события
-            // идут в этот же поток — для страницы это продолжение той же работы.
-            // Всё, что падает здесь, уже после writeHead, поэтому ошибка уходит
-            // событием в поток, а не исключением из обработчика: иначе вкладка
-            // видела «Failed to fetch» вместо причины
+            // функция сразу отдаёт null, и ход идёт как есть.
+            // Ход ведёт тот CLI, что пришёл в body.agent, — тот, что выбран в
+            // строке над сессией. Всё, что падает здесь, уже после writeHead,
+            // поэтому ошибка уходит событием в поток, а не исключением из
+            // обработчика: иначе вкладка видела «Failed to fetch» вместо причины
             try {
                 // приём из памяти работника и домашняя работа — тем же способом
                 // и из того же места (skill-hints.js, homework-hint.js, решение 088).
@@ -126,7 +125,7 @@ function createRoutes({ agents, cooldowns, turnJudgment, runs }) {
                 body.hints = hints;
                 body.skill = skill;
                 body.homework = homework;
-                await askWithFallback(body.agent, body, emit);
+                await ask(body.agent, body, emit);
             } catch (err) {
                 emit({ type: 'error', error: err.message });
             }

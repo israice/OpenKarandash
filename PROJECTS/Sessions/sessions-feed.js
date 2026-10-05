@@ -201,6 +201,10 @@ let openThinking = null;
 // субагента приходит с «↳ » в начале (renderStored в sessions-history.js так же
 // помечает шаги вложенного хода) — у шага эта метка уезжает в тег, здесь тоже
 const THINKING_TAG = 'thinking';
+
+// метка строки промпта — та же серая, что у мыслей: это не действие агента,
+// а то, что ушло в CLI. Название по-английски, как и у остальных тегов ленты
+const INPUT_TAG = 'prompt';
 const NESTED = /^\u21b3\s+/;
 
 // абзац мысли — кусок между пустыми строками, как их пишет модель. Тот же
@@ -267,6 +271,44 @@ export function addThinking(text, before) {
 // Блок мыслей закончен: следующая мысль встанет своим блоком. Зовут его
 // addStep (действие) и addMessage (ответ или реплика человека) — там мысли
 // и заканчиваются по смыслу; сам блок остаётся в ленте свёрнутым
+// ---------- промпт хода ----------
+
+// Промпт, который реально ушёл модели: не только вопрос человека, но и
+// преамбула хода целиком (записки решений, приём из памяти работника, отчёт
+// разведки, пересказ истории). В ленте он стоит своей строкой сразу за
+// вопросом человека — иначе промпт не виден вовсе, а по нему судят, чего
+// агент не понял. Свёрнут по подобию блока мыслей: текста много, а читают
+// его при разборе хода
+export function addInput(text, before) {
+    const stick = isNearBottom();
+    const block = document.createElement('details');
+    block.className = 'chat-message chat-message--input';
+
+    const head = document.createElement('summary');
+    head.className = 'chat-input-head';
+    const tag = makeTag(INPUT_TAG, INPUT_TAG);
+    tag.classList.add('chat-tag--muted');
+    const preview = document.createElement('span');
+    preview.className = 'chat-thinking-preview';
+    const body = document.createElement('div');
+    body.className = 'chat-input-body';
+    block.append(head, body);
+    head.append(tag, document.createTextNode(' '), preview);
+
+    // первые строки — заголовок блока в тексте промпта ([OpenKarandash] …),
+    // по ним видно, что преамбула есть; тело промпта достаётся целиком
+    const lines = String(text || '').split('\n');
+    const first = (lines.find((line) => line.trim()) || '').trim();
+    preview.textContent = first.length > 120 ? `${first.slice(0, 120)}…` : first;
+    head.title = preview.textContent;
+    body.textContent = text || '';
+
+    if (before && before.parentNode === state.list) state.list.insertBefore(block, before);
+    else state.list.append(block);
+    if (stick) scrollToBottom();
+    return block;
+}
+
 export function closeThinking() {
     openThinking = null;
 }

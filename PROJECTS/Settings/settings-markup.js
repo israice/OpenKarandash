@@ -61,9 +61,7 @@ window.SettingsMarkup = (function () {
                 <h2 class="modal__title" id="settingsModalTitle">Settings</h2>
             </div>
             <div class="settings-tab-content" id="settingsTabProviders" role="tabpanel">
-                <p class="modal__hint">Connect an AI provider to pick a default model.</p>
-                <!-- витрина выбора модели: четыре уровня одним каскадом (createModelCascade) -->
-                <div class="provider" id="defaultProviderRow"></div>
+                <p class="modal__hint">Connect an AI CLI here, then pick who and which model to run with in the bar above a session.</p>
                 <ul class="provider-list" id="providerList"></ul>
                 <div class="provider screenshot-screen" id="screenshotScreenRow" hidden>
                     <span class="provider__model-label">Screen for Karandash screenshots:</span>

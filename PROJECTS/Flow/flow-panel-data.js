@@ -162,7 +162,7 @@
         const BACKEND_PERMISSIONS_STATE_KEY = 'flowBackendPermissions';
         const BACKEND_MODEL = [
             { id: 'model', label: 'What do I think with', hint: 'config.yaml → model.default', value: 'claude-bridge-sonnet — enough reasoning for real server code, not the cheapest option.' },
-            { id: 'provider', label: 'Provider', hint: 'config.yaml → model.provider / base_url', value: 'OpenCode CLI on the same machine, launched by the server itself.' },
+            { id: 'provider', label: 'Provider', hint: 'config.yaml → model.provider / base_url', value: 'pi CLI on the same machine, launched by the server itself.' },
             { id: 'why', label: 'Why this one', hint: 'What this model is better at than the others for my tasks', value: 'Backend work is mostly one careful change at a time — a stronger model beats many cheap retries.' },
             { id: 'fallback', label: 'Fallback', hint: 'What I switch to when this one is unavailable or too expensive', value: 'model.aliases: fast → claude-bridge-haiku for small edits, smart → claude-bridge-opus for the hardest ones.' },
         ];

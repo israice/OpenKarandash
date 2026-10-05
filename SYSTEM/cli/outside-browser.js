@@ -6,9 +6,11 @@
 //
 // Модуль ни о Telegram не знает: его зовёт телеграм-мост (PROJECTS/Settings/
 // telegram-server.js) и просит начать ход или продолжить сессию.
-// create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFallback,
+// Исполнитель, модель и режим — те же, что у сессии: подхвата нет, работа не
+// уходит к другому CLI (DOCS/decisions/097)
+// create({ agents, agentByName, agentNameByTarget, ask,
 //          turnJudgment, db, runs })
-function create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFallback, turnJudgment, db, runs }) {
+function create({ agentByName, agentNameByTarget, ask, turnJudgment, db, runs }) {
     const skillHints = require('../core/skill-hints.js');
     const homeworkHint = require('../core/homework-hint.js');
     const { getSessionTitle, getSessionMeta, getLastTurnParams } = db;
@@ -41,8 +43,12 @@ function create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFall
     // человека из Telegram упирался в «pi is not connected», хотя pi стоял на месте.
     // Поэтому сначала возвращаем подключение сами — тем же путём, что
     // /api/agent/connect: запуск версии доказывает, что CLI жив
-    async function readyExecutor(sessionTarget, label, note) {
-        let name = agentNameByTarget(sessionTarget);
+    //
+    // Свой CLI так и не поднялся — работа не идёт никуда: подхвата больше нет
+    // (DOCS/decisions/097), чужой исполнитель работал бы не той моделью и молча,
+    // а ход не сделанный виден в ленте ошибкой с его именем
+    async function readyExecutor(sessionTarget) {
+        const name = agentNameByTarget(sessionTarget);
         const adapter = agentByName(name);
         if (!adapter.connected()) {
             const target = adapter.targets().find((t) => t.id === sessionTarget);
@@ -51,24 +57,11 @@ function create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFall
                 await adapter.version(target);
                 if (!adapter.connected()) adapter.activate(target); // пока ждали версию, человек мог подключить сам
             } catch (err) {
-                console.warn(`Reconnect ${name} for ${label} failed: ${err.message}`);
+                console.warn(`Reconnect ${name} failed: ${err.message}`);
             }
         }
-        // Свой CLI так и не поднялся — работу берёт любой подключённый: сессию
-        // может продолжить кто угодно, контекст он получит пересказом
-        // (handoffPreamble). Человеку об этом говорим: замена может стоить денег.
-        // Тех, кто в кулдауне (071), пропускаем: знаем заранее, что они не в ладах
-        if (adapter.connected()) return { name, replaced: false };
-        const spare = Object.keys(agents).find((key) => agents[key].connected() && !cooldowns.cooled(key, null));
-        if (!spare) {
-            const any = Object.keys(agents).some((key) => agents[key].connected());
-            throw new Error(any
-                ? `${name} is not connected and the connected agents are cooling down — work paused until they recover`
-                : `${name} is not connected and no other agent is — open Settings and connect one`);
-        }
-        if (note) note(`🔁 ${name} недоступен — работу ведёт ${spare}.`);
-        name = spare;
-        return { name, replaced: true };
+        if (!adapter.connected()) throw new Error(`${name} is not connected — open Settings and connect it`);
+        return name;
     }
 
     // mode — режим, выбранный мостом по виду поручения (вопрос — Chat, без правок;
@@ -77,14 +70,14 @@ function create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFall
         if (!getSessionTitle.get(sessionId)) throw new Error('Session not found');
         if (runs.isStopping()) throw new Error(runs.restartError);
 
-        const { name, replaced } = await readyExecutor(getSessionMeta.get(sessionId)?.target, sessionId, note);
-        // модель и effort у каждого CLI свои — чужому агенту их не передаём
-        const last = replaced ? { mode: getLastTurnParams.get(sessionId)?.mode } : (getLastTurnParams.get(sessionId) || {});
+        const name = await readyExecutor(getSessionMeta.get(sessionId)?.target);
+        // модель и effort — те же, что человек выбрал для этой сессии
+        const last = getLastTurnParams.get(sessionId) || {};
         // отказ до старта хода (не подключён, пустой запрос) в базу не попадёт и
         // обратно сам не уедет — такой возвращаем ошибкой. Всё, что случилось уже
         // внутри хода, дописано в сессию и уйдёт в Telegram обычным путём
         const [hints, skill, homework] = await Promise.all([pickHints(text), pickSkill(text, name), pickHomework(text, sessionId)]);
-        const { failure, started } = await askWithFallback(
+        const { failure, started } = await ask(
             name,
             {
                 prompt: text,
@@ -104,21 +97,21 @@ function create({ agents, agentByName, agentNameByTarget, cooldowns, askWithFall
 
     // Новая работа не из браузера: человек нажал в Telegram END и написал поручение.
     // Исполнителя, модель и режим берём у его прошлой работы (likeSessionId) — это
-    // тот агент, которым он пользуется; прошлой нет — первый подключённый.
+    // тот агент, которым он пользуется.
     // onSession сообщает id новой сессии сразу, не дожидаясь конца хода: мосту он
     // нужен, чтобы следующие сообщения шли уже в неё
     async function startNew({ text, likeSessionId, note, onSession, mode }) {
         if (runs.isStopping()) throw new Error(runs.restartError);
         const like = likeSessionId && getSessionTitle.get(likeSessionId) ? likeSessionId : null;
-        const { name, replaced } = await readyExecutor(like ? getSessionMeta.get(like)?.target : null, 'new session', note);
+        const name = await readyExecutor(like ? getSessionMeta.get(like)?.target : null);
         const last = like ? (getLastTurnParams.get(like) || {}) : {};
         const [hints, skill, homework] = await Promise.all([pickHints(text), pickSkill(text, name), pickHomework(text, null)]);
-        const { failure, started } = await askWithFallback(
+        const { failure, started } = await ask(
             name,
             {
                 prompt: text,
-                model: (!replaced && last.model) || undefined,
-                effort: (!replaced && last.effort) || undefined,
+                model: last.model || undefined,
+                effort: last.effort || undefined,
                 mode: mode || last.mode || undefined,
                 hints,
                 skill,

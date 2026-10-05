@@ -8,6 +8,13 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
+// индекс хуков лежит в карте проекта (PROJECTS/Graph): он отдаёт место элемента
+// в коде по его именам. Здесь только маршрут — сама работа идёт оттуда, иначе
+// и indexes, и поиск по коду жили бы в двух местах с разными ответами
+const { findHooks } = require('../Graph/graph-search.js');
+// контекст места: секция файла, соседи по фиче, обратные ссылки — то, что иначе
+// добывается поиском по vault (PROJECTS/Graph/graph-context.js)
+const { contextOf } = require('../Graph/graph-context.js');
 
 // снимок экрана для миниатюры сессии: canvas на фронтенде не видит ничего
 // за пределами вкладки браузера, поэтому реальный скриншот системы делает
@@ -160,6 +167,39 @@ function createRoutes({ setEnvValue }) {
             }
             setEnvValue('SCREENSHOT_SCREEN', String(index));
             sendJson(res, { ok: true });
+        },
+
+        // место выбранного элемента в коде: клиент отдаёт имена (id и классы),
+        // ответ — файлы и строки, где этот элемент создаётся и где описан стилем.
+        // Без этого модель получает только селектор и ищет место сама — по одному
+        // имени класса на проект приходится десяток упоминаний (решение 091).
+        //
+        // К файлам и строкам добавляется контекст места (PROJECTS/Graph/graph-context.js):
+        // секция файла, в которой строки живут, остальные файлы фичи и то, кто
+        // ссылается на этот файл. Названного файла мало: у клика по кнопке карандаш
+        // за файлом тянется ещё полкарты, и без этого агент читает всё подряд (100)
+        //
+        // Индекс пуст (сервер только что поднялся, файлы ещё не прочитаны) —
+        // это не поломка: клиент просто оставит строку элемента как была
+        '/api/karandash/element': async (req, res) => {
+            const { names } = await readJson(req);
+            const list = Array.isArray(names) ? names.filter((n) => typeof n === 'string').slice(0, 6) : [];
+            if (!list.length) {
+                sendJson(res, { ok: true, places: [] });
+                return;
+            }
+            try {
+                const places = findHooks(list, 8);
+                sendJson(res, {
+                    ok: true,
+                    places: places.map((place) => ({
+                        ...place,
+                        context: contextOf(place.file, place.lines[0]),
+                    })),
+                });
+            } catch (error) {
+                sendJson(res, { ok: false, error: `Hook index failed: ${error.message}` });
+            }
         },
     };
 }

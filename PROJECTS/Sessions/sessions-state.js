@@ -41,7 +41,6 @@ export const state = {
     // лента: messages прокручивается, list — колонка строк внутри неё
     messages: null,
     list: null,
-    empty: null,
 
     composer: null,
     input: null,

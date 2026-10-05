@@ -45,10 +45,13 @@ function untilMs(reason, nowMs) {
 }
 
 // db — общий с сессиями handle (SYSTEM/core/sessions-db.js): те же WAL и
-// busy_timeout уже выставлены. Зависимости аргументами, как у createRoutes.
-// enabled — выключатель AGENT_FALLBACK (SYSTEM/cli/index.js): при нём память ни читается,
-// ни пишется, поведение возвращается к прежнему «работаю как попросили»
-function create({ db, now = () => new Date(), enabled = () => true }) {
+// busy_timeout уже выставлены. Зависимости аргументом, как у createRoutes.
+//
+// Память — только запись о том, кто и когда ломался, и больше ничего не решает:
+// кого звать, решает человек в строке выбора над сессией, и подхвата, ради
+// которого память заводилась, больше нет (DOCS/decisions/097). Поэтому
+// `cooled()` нигде не спрашивается перед ходом — читается только списком.
+function create({ db, now = () => new Date() }) {
     db.exec(`
         CREATE TABLE IF NOT EXISTS agent_cooldown (
             agent TEXT NOT NULL,
@@ -77,7 +80,6 @@ function create({ db, now = () => new Date(), enabled = () => true }) {
     // положить поломку в память. model = null/'' — агент целиком; reason вне
     // списка сроков молча не кладётся, прежде чем что-то помнить о будущем
     function record(agent, model, reason) {
-        if (!enabled()) return;
         const until = untilMs(reason, now().getTime());
         if (!until) return;
         prune();
@@ -89,7 +91,6 @@ function create({ db, now = () => new Date(), enabled = () => true }) {
     // перекрывает свои модели: запись об агенте достаётся и для любого его
     // запроса, а запись о модели — только для этой модели
     function cooled(agent, model) {
-        if (!enabled()) return null;
         prune();
         const row = select.get(agent, '');
         if (row && row.until > now().toISOString()) return { reason: row.reason, until: row.until };
@@ -99,8 +100,7 @@ function create({ db, now = () => new Date(), enabled = () => true }) {
         return null;
     }
 
-    // все активные записи — диагностика и API пульта (выключатель не трогает:
-    // посмотреть, что лежит, полезно и при выключенной работе)
+    // все активные записи — диагностика и API пульта
     function list() {
         prune();
         return listAll.all(now().toISOString()).map((r) => ({ agent: r.agent, model: r.model || null, reason: r.reason, until: r.until }));
@@ -111,15 +111,11 @@ function create({ db, now = () => new Date(), enabled = () => true }) {
         return list();
     }
 
-    // Агент снова подключили — про забытую поломку пора забыть (071). Без этого
-    // запись not_connected переживала успешный connect и заставляла пульт до часа
-    // отбивать ходы сообщением «агент не подключён», хотя он подключён: чинится
-    // только руками через cooldowns/clear. Снимаем запись агента целиком и его
-    // моделей — подключение снимает и их поломку тоже.
+    // Агент снова подключили — про забытую поломку пора забыть (071).
+    // Снимаем запись агента целиком и его моделей: подключение снимает и их
     const forgetAgent = db.prepare('DELETE FROM agent_cooldown WHERE agent = ?');
 
     function forget(agent) {
-        if (!enabled()) return [];
         prune();
         forgetAgent.run(agent);
         return list();

@@ -89,7 +89,7 @@ const {
     countToolSteps, getMessageRole, setMessageText, clip, toolResultText, toolResultImages, resetSessions,
     deleteSession, stampEvent, appendRaw, startExchange, extractTitle, sessionTitle, recordStep,
     recordHookStart, recordHookResponse, recordThinking, recordAssistantText, recordNotice,
-    recordUnknownPart, recordSystemEvent, recordTopLevelEvent, finishExchange,
+    recordUnknownPart, recordSystemEvent, recordTopLevelEvent, finishExchange, originOfTarget,
 } = require('./SYSTEM/core/sessions-db.js').open({
     ROOT, DATA_DIR: graph.DATA_DIR, agentNameByTarget: cliIndex.agentNameByTarget,
 });
@@ -142,19 +142,30 @@ const handoff = require('./SYSTEM/core/handoff.js').create({
 const runTurn = require('./SYSTEM/core/run-turn.js').create({
     startExchange,
     setMessageMode,
+    // без этой функции runTurn нечем записать, что реально ушло модели: ctx.noteInput
+    // звал setMessageInputSent.run(...), а её в списке не было, и поле input_sent
+    // оставалось пустым во всех ходах, включая живые (DOCS/decisions/092)
+    setMessageInputSent,
     setCliSession,
     finishExchange,
+    // цель хода — источник его строк: сессию можно продолжить другим CLI, а
+    // колонка target в sessions при смене не перебивается, и по ней ход
+    // подписывался прежним исполнителем (DOCS/decisions/043)
+    originOfTarget,
     countToolSteps,
     listToolSteps,
     getSessionTitle,
     recordThinking,
+    // без recordNotice пометки хода («продолжил», «остановлен по лимиту»)
+    // жили только в ленте до перезагрузки страницы, и три отображения
+    // разходились (DOCS/decisions/039)
+    recordNotice,
     setMessageText,
     appendRaw,
     clip,
     turnJudgment,
-    notifyTurnFinished: (letter) => bridge.notifyTurnFinished(letter),
-    willHandOver: (sessionId, errorText) => cli.willHandOver(sessionId, errorText),
-    runs,
+notifyTurnFinished: (letter) => bridge.notifyTurnFinished(letter),
+runs,
     map: watch,
     live: watch,
 });
@@ -225,7 +236,7 @@ const featureRoutes = {
     // два набора ничьих маршрутов: запуск любого CLI и общее хранилище переписок
     // (DOCS/decisions/017). Оформлены так же, как фичи, — таблицей путь → обработчик
     ...require('./SYSTEM/core/agent-routes.js').createRoutes({
-        agents: { byName: cli.byName, askWithFallback: cli.askWithFallback },
+        agents: { byName: cli.byName, ask: cli.ask },
         cooldowns: cli.cooldowns,
         turnJudgment,
         runs,

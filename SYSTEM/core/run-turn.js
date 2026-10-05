@@ -11,6 +11,7 @@
 //                          наружу; повторные вызовы игнорируются
 //   emit(event)          — событие и отправителю, и подключённым к сессии
 //   session              — наш id сессии (null, пока не позвали begin)
+//   origin               — источник строк хода: кто его ведёт (CLI и его цель)
 //   meta                 — turnMeta хода: usage/cost/stopReason/resultMeta
 //   run                  — запись хода в реестре runs: сюда драйвер кладёт child,
 //                          а снять ход может кто угодно — уборка здесь или Stop
@@ -24,10 +25,10 @@
 // пишет в базу и кто отправляет письма.
 function create(deps) {
     const {
-        startExchange, setMessageMode, setCliSession, finishExchange,
+        startExchange, setMessageMode, setCliSession, finishExchange, originOfTarget,
         countToolSteps, listToolSteps, getSessionTitle,
-        recordThinking, setMessageText, appendRaw, clip, setMessageInputSent,
-        turnJudgment, notifyTurnFinished, willHandOver, runs, map, live,
+        recordThinking, recordNotice, setMessageText, appendRaw, clip, setMessageInputSent,
+        turnJudgment, notifyTurnFinished, runs, map, live,
     } = deps;
 
     // сколько отложенный перезапуск сервера ждёт письмо о конце хода (см. finally)
@@ -80,6 +81,20 @@ function create(deps) {
             session: null,
             answer: '',
             errorText: null,
+            // Откуда ход — то есть кто его ведёт: имя CLI и его цель. Источник
+            // всех строк этого хода (шаги, размышления, ответ): сессию можно
+            // продолжить другим CLI, а колонка target в sessions при смене не
+            // перебивается, и по ней строки хода подписывались прежним
+            // исполнителем (originForSession в sessions-db-records.js)
+            origin: originOfTarget(target.id),
+            // id, который выдал сам CLI. Он же уходит в его --session, когда
+            // ход продолжают после обрыва, поэтому хранится в ходе, а не
+            // только в session_cli: там он лежит по сессии, а нужен по ходу
+            cliSessionId: null,
+            // всё, что ушло в модель за этот ход, нарастающим текстом: ход
+            // может быть продолжен, и тогда в «Sent to model» лежит не первый
+            // запрос, а оба
+            sentToModel: '',
             // позиция последней записанной строки ответа: finishExchange дописывает
             // метаданные хода на неё, а не вставляет ещё одну строку
             assistantPosition: null,
@@ -128,7 +143,7 @@ function create(deps) {
                 thought.parts.push(part);
                 const block = clip(thought.parts.join('\n\n'));
                 if (thought.position === null) {
-                    thought.position = recordThinking(ctx.session, block, signature || null, raw);
+                    thought.position = recordThinking(ctx.session, block, signature || null, raw, ctx.origin);
                 } else {
                     setMessageText.run(block, ctx.session, thought.position);
                     if (raw) appendRaw(ctx.session, thought.position, raw);
@@ -150,14 +165,31 @@ function create(deps) {
             // собран ход, до того как начнутся шаги
             noteInput(text) {
                 if (!ctx.session || !ctx.userPosition) return;
-                setMessageInputSent.run(String(text ?? ''), ctx.session, ctx.userPosition);
-                ctx.emit({ type: 'input', text: String(text ?? '') });
+                const chunk = String(text ?? '');
+                // второй вызов — это продолжение хода тем же CLI: всё, что ушло
+                // в модель, лежит одной строкой, иначе «Sent to model» молча
+                // врёт про половину запроса
+                ctx.sentToModel = ctx.sentToModel ? `${ctx.sentToModel}\n\n--- continuation ---\n\n${chunk}` : chunk;
+                setMessageInputSent.run(ctx.sentToModel, ctx.session, ctx.userPosition);
+                ctx.emit({ type: 'input', text: chunk });
+            },
+            // Пометка хода, которую делает сам пульт, а не модель: работает
+            // он (продолжил ход, остановил его по лимиту или по пределу
+            // продолжений). Строка в базе обязательна — её видят все три
+            // отображения (DOCS/decisions/039), а одна живая лента после
+            // перезагрузки страницы потеряла бы расхождение с Sessions и Flow
+            notice(name, text) {
+                if (!ctx.session) return;
+                recordNotice(ctx.session, name, text, null, null, ctx.origin);
+                ctx.emit({ type: 'notice', name, text });
             },
             // cliSessionId — id, который выдал сам CLI. Наш id сессии от него не зависит
             // (заведён в open() ещё до очереди), этот нужен только для «--resume» того же
             // CLI и потому живёт отдельно, в session_cli
             begin(cliSessionId) {
-                if (cliSessionId) setCliSession.run(ctx.session, target.id, cliSessionId);
+                if (!cliSessionId) return;
+                ctx.cliSessionId = cliSessionId;
+                setCliSession.run(ctx.session, target.id, cliSessionId);
             },
         };
 
@@ -224,9 +256,10 @@ function create(deps) {
                         toolSteps: countToolSteps.get(ctx.session, ctx.userPosition).n,
                     }).catch(() => null);
                     // решение о письме принимается до записи хода: оно само часть
-                    // суждения и должно лежать в той же строке, а не теряться
-                    // причина поломки — до решения о письме: по ней willHandOver ниже знает,
-                    // подхватят ли работу, а письмо об ошибке называет её человеку
+                    // суждения и должно лежать в той же строке, а не теряться.
+                    // Причину поломки разбираем здесь же: подхвата больше нет
+                    // (DOCS/decisions/097), и письмо об ошибке всегда уходит
+                    // именно тем, кто выбрал исполнителя
                     if (ctx.errorText) await turnJudgment.classifyFailure(ctx.errorText).catch(() => null);
                     const notify = turnJudgment.shouldNotify(judgment, { errorText: ctx.errorText });
                     if (judgment) meta.resultMeta = { ...(meta.resultMeta || {}), judgment: { ...judgment, notified: notify } };
@@ -264,11 +297,24 @@ function create(deps) {
                     // Запасной вариант — настенное время самого хода (run.startedAt поставлен
                     // в начале runTurn) — используем его, только если коннектор не прислал
                     // точную цифру сам
+                    // Пометка об ошибке — в result_meta строки ответа. Раньше её
+                    // негде было положить: в текст строки уходит ответ, и при
+                    // непустом ответе текст ошибки пропадал целиком, а stop_reason
+                    // оставался тем, что успел прислать CLI (у kilo на обрыве
+                    // это tool-calls), — ход с упавшим процессом читался в трёх
+                    // отображениях как доведённый, и причину приходилось искать
+                    // по логу CLI. Теперь причина лежит рядом с ходом.
+                    if (ctx.errorText) {
+                        meta.resultMeta = { ...(meta.resultMeta || {}), error: ctx.errorText };
+                    }
                     finishExchange(ctx.session, ctx.answer || ctx.errorText, {
                         ...meta,
+                        origin: ctx.origin,
                         durationMs: meta.durationMs ?? (Date.now() - run.startedAt),
                         assistantPosition: ctx.assistantPosition,
-                        stopReason: meta.stopReason || (ctx.errorText ? 'error' : null),
+                        // ошибка хода важнее того, что успел прислать CLI: ход,
+                        // который упал, не доведён, и кнопка продолжения нужна
+                        stopReason: ctx.errorText ? 'error' : meta.stopReason,
                     });
                     // в Telegram уходит законченный ход, а не каждый: человеку нужен
                     // сигнал «задание закончено» и сообщение, ответом на которое он
@@ -276,7 +322,7 @@ function create(deps) {
                     // законченным, решает правило в turn-judgment.js поверх суждения;
                     // ошибка и ход, остановившийся с вопросом к человеку, уходят всегда.
                     // Без await: почта не должна ни задерживать ход, ни ронять его
-                    if (notify.send && !(await willHandOver(ctx.session, ctx.errorText))) {
+                    if (notify.send) {
                         mail = notifyTurnFinished({
                             sessionId: ctx.session,
                             title: getSessionTitle.get(ctx.session)?.title || '',

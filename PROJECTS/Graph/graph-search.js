@@ -11,6 +11,7 @@ const {
     collectNotes, projectFiles, readText, parseUnits, sessionNote,
 } = require('./graph-vault.js');
 const searchRank = require('../../SYSTEM/core/search-rank.js');
+const hooks = require('./graph-hooks.js');
 
 // ---------- поиск по проекту (FTS5) ----------
 
@@ -81,6 +82,11 @@ function ftsQuery(raw) {
 // дорос до 837 МБ при 6 МБ живого содержимого, а он остаётся таким даже после
 // того, как старые сессии из индекса убрали. Плюс чтение всей переписки всех
 // сессий на каждый чих держало event loop занятым.
+
+// схема индекса хуков (класс/id → файл:строка) — своей таблицей рядом с FTS.
+// ответ на «где этот элемент в коде» отдаёт она, а не текстовый поиск: имени
+// класса в разметке десятки упоминаний, а место, где его создают, одно
+hooks.initSchema(searchDb);
 
 // отпечаток файла по размеру и времени правки — этого хватает, чтобы отличить
 // «файл не трогали» от «файл изменился», и стоит одного stat вместо чтения
@@ -159,6 +165,16 @@ function rebuildSearchIndex() {
 
         const wanted = new Map();
         collectWanted(wanted);
+        // индекс хуков обновляем в той же транзакции и тем же проходом: обе
+        // таблицы описывают одни и те же файлы, и отдельный обход прошёлся бы по
+        // проекту второй раз ради того же самого результата. Сбой здесь не
+        // должен уносить с собой поисковый индекс — ради ответа «где элемент» он
+        // не жертвует тем, что уже собрано
+        try {
+            hooks.syncHooks(searchDb);
+        } catch (error) {
+            console.error(`Failed to build the hook index: ${error.message}`);
+        }
         const known = new Map(readState.all().map((row) => [`${row.kind}|${row.ref}`, row]));
         // первая сборка на таблице, которой ещё нет: в индексе лежат строки
         // прежней полной пересборки, о них index_state не знает, и они остались бы
@@ -286,4 +302,9 @@ async function searchProjectRanked(query, limit, kind) {
     return { ok: true, hits: ranked.map(({ excerpt, ...hit }) => hit) };
 }
 
-module.exports = { rebuildSearchIndex, compactSearchIndex, searchProject, searchProjectRanked };
+module.exports = {
+    rebuildSearchIndex, compactSearchIndex, searchProject, searchProjectRanked,
+    // место элемента в коде по его именам: ответ на вопрос «где это править» без
+    // rg. Соединение то же, что у поиска, — второй файл базы открывать нельзя
+    findHooks: (names, limit) => hooks.findHooks(searchDb, names, limit),
+};

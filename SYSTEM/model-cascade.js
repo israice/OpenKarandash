@@ -1,45 +1,68 @@
-// Выбор агента и модели одним каскадом из четырёх уровней (CLI / шлюз /
-// поставщик / модель) и строка этого каскада в шапке сессии. Отдельный файл от
-// SYSTEM/providers.js, где лежит само состояние подключения: провайдеры,
-// подключения и их сохранение. Здесь — только выбор и его отрисовка.
+// Каскад выбора модели: пять уровней (CLI / шлюз / поставщик / модель / глубина
+// размышления) и правила их заполнения. Отдельный файл от SYSTEM/providers.js,
+// где лежит само состояние подключения: провайдеры, подключения и их
+// сохранение. Здесь — только выбор и его отрисовка.
 //
-// Каскад стоит в трёх местах: витрина вверху вкладки Providers, строка под
-// карточкой подключённого провайдера (обе — PROJECTS/Settings/settings.js) и
-// строка выбора в шапке сессии (PROJECTS/Sessions). Все три получают одну и ту
-// же строку из modelCascadeRow и пишут выбор через applyModelChoice, поэтому
-// места не расходятся: смена в любом из них приходит остальным объявлением
-// onModelChoice, а сохранённый выбор переживает перезагрузку страницы.
-// Наружу это уходит через window.App (его собирает SYSTEM/app.js).
+// Каскад стоит в одном месте: строка выбора в шапке сессии
+// (SYSTEM/session-model-bar.js, она же читает выбор при отправке хода). Раньше
+// та же строка стояла ещё и в настройках — витриной вверху вкладки Providers и
+// под карточкой подключённого провайдера, — но выбор модели в двух местах
+// разъезжался: подключение в настройках возвращало свой дефолт поверх выбора
+// человека в шапке. Теперь выбирают в шапке, и она единственный источник выбора,
+// поэтому модель приходит одним словом оттуда и уходит в CLI тем же.
 import {
-    PROVIDERS, connections, saveProviderState, saveActiveProvider, defaultProviderId, DEFAULT_AGENT_MODEL,
+    providerById, connections, saveProviderState, saveLevelChoice, loadLevelChoice,
 } from './providers.js';
-import { state as sessionsState } from '../PROJECTS/Sessions/sessions-state.js';
-import { cliAgentNames, isStubCli, onCliAgents } from './cli-agents.js';
+import { cliAgentNames } from './cli-agents.js';
+import { modelLevels, modelPath } from './model-path.js';
+import { levelWithAdd, ignoreAdd } from './model-add-option.js';
+import { fillEffortLevel, saveEffort } from './model-effort.js';
 
-// ---------- каскад выбора модели: CLI → шлюз → поставщик → модель ----------
-
-// Четыре выпадающих списка — это один каскад по имени модели у CLI, а не
-// четыре независимых выбора: «openrouter/stealth/space-bunny-alpha» — шлюз
-// openrouter (куда уходит запрос), поставщик stealth (кто за ним стоит),
-// модель space-bunny-alpha. Короткое имя без среднего уровня
-// («opencode/claude-sonnet-5») оставляет поставщика пустым: у него одна
-// строка-прочерк и он неактивен.
+// ---------- выбор уровней ----------
 //
-// Места различаются только списком CLI: в карточке провайдера он один — тот,
-// чья это карточка, в шапке сессии — подключённые, потому что ход пойдёт
-// выбранному и неподключённым не пойдёт. Поэтому это фабрика
-// modelCascadeRow, а не разметка, которую пришлось бы править трижды.
-
-// имя модели разбирается на уровни — всё левее последнего слэша это шлюз и
-// поставщик, хвост сама модель (та же мысль, что в SYSTEM/model-tag.js)
-function modelLevels(model) {
-    const parts = String(model || '').split('/');
-    const name = parts.pop();
+// Уровни выбора живут в строке в шапке сессии (SYSTEM/session-model-bar.js) и
+// больше нигде: конкретных моделей и запасных значений в коде нет вообще, и
+// строка на прочерках — честный ответ «человек ещё ничего не выбрал», который
+// видно и который можно исправить, выбрав в этой же строке. Раньше здесь стоял
+// дефолт проекта (openrouter / stealth / space-bunny-alpha) и строка без выбора
+// показывала его, а ход по нему уходил — то есть у человека был выбор на
+// экране и совершенно другой в ходе
+//
+// Три уровня выбора как их запомнил человек: хранилище и ничего кроме него.
+// Ключ один на все CLI (решение в SYSTEM/providers.js), поэтому переключение CLI
+// ничего в них не меняет
+function levelTriplet() {
+    const remembered = loadLevelChoice();
     return {
-        gateway: parts.shift() || '',
-        provider: parts.join('/'),
-        model: name || '',
+        gateway: remembered.gateway || '',
+        provider: remembered.provider || '',
+        model: remembered.model || '',
     };
+}
+
+// Уровни выбора — ровно те, что человек поставил, и ничего кроме них. Пути
+// модели здесь нет намеренно: конкретную форму пути знает CLI, а не уровни
+// (у kilo путь начинается с «kilo/…», у pi — «шлюз/модель»), и собранный из
+// уровней путь получался не тем, что уходит в ход. Раньше здесь был ещё и
+// model — с путём, который терял шлюз там, где поставщика нет, то есть ровно
+// то неверное значение, из-за которого ход уходил к другой модели. Путь,
+// собранный правильно, один: modelOf (ему известен CLI), и читает его строка
+// выбора. Наружу уровни уходят для подписи над ответом (SYSTEM/model-tag.js),
+// которой нужен шлюз: у CLI с путём от своего имени его в пути нет вовсе, и
+// подпись дописывает его сама
+export function levelsOf() {
+    const { gateway, provider, model } = levelTriplet();
+    return { gateway, provider, model };
+}
+
+// Модель, которой сейчас отвечает CLI: ровно выбор человека по уровням,
+// собранный в путь той формы, какой этот CLI понимает (см. modelPath). Запасных
+// чтений нет — ни из состояния подключения, ни из дефолта провайдера: список
+// моделей у CLI до Connect пуст, поэтому каскад строится по этой строке, и пока
+// выбора нет, модель не выбрана
+export function modelOf(cliId) {
+    const { gateway, provider, model } = levelTriplet();
+    return modelPath(cliId, gateway, provider, model, providerById(cliId).models);
 }
 
 // один уровень каскада: строки по списку, а когда списка нет — единственный
@@ -61,79 +84,19 @@ function fillLevel(select, values, emptyLabel, wanted, label = (value) => value)
 // Шлюзы, которых в меню Gateway нет: список шлюзов приходит из моделей CLI и
 // там есть openai, а владелец его из меню убрал. Строка просто не
 // показывается — модели openai/… в списке CLI остаются, а если выбран был
-// именно этот шлюз, уровень встаёт на первый из оставшихся (fillLevel сам).
+// именно этот шлюз, уровень встаёт на первый из оставшихся (fillLevel сам)
 const HIDDEN_GATEWAYS = new Set(['openai']);
 
-// Пункт «Add» нижней строкой раскрытого списка CLI и Gateway. Пока это
-// заглушка без логики, поэтому option отключена: в раскрытом списке строка
-// видна, выбрать её нельзя, и значение каскада от неё не зависит (row.read и
-// обработчики change смотрят только на выбранный CLI). Когда у пункта появится
-// действие, отключение снимается, а обработчик вешается рядом с остальными в
-// modelCascadeRow. Значение-заглушка отдельное от значений уровней, чтобы
-// пункт не совпал с настоящим шлюзом или агентом, даже если кто-то назовёт его
-// add
-const ADD_OPTION = { value: '::add', label: 'Add' };
+// Провайдер по имени CLI берётся из providers.js: запись заводится там по
+// требованию, поэтому у kilo или omp она есть уже при первом показе строки
 
-function appendAddOption(select) {
-    const option = document.createElement('option');
-    option.value = ADD_OPTION.value;
-    option.textContent = ADD_OPTION.label;
-    option.disabled = true;
-    // класс — только ради выравнивания: раскрытый список браузер рисует по
-    // text-align каждого option'а, и Add в нём остаётся по центру, а пункты
-    // уровня уходят влево (SYSTEM/styles/model-cascade.css)
-    option.className = 'provider__option--add';
-    select.append(option);
-}
-
-function providerById(id) {
-    return PROVIDERS.find((p) => p.id === id) || { id, name: id, models: [], defaultModel: null };
-}
-
-// Выбор человека живёт под своим ключом на каждого CLI и переживает
-// перезагрузку страницы. Отдельное хранилище нужно потому, что каскад виден
-// и до подключения, когда состояния провайдера ещё нет (а оно и есть то,
-// что подхватывает строка выбора в шапке сессии). Пока ключа нет — встаёт
-// дефолтная строка проекта openrouter/stealth/space-bunny-alpha
-// (DEFAULT_AGENT_MODEL из providers.js): при первом заходе человек видит
-// именно её
-const MODEL_KEYS = { opencode: 'noname.model.opencode' };
-const modelKey = (cliId) => MODEL_KEYS[cliId] || `noname.model.${cliId}`;
-
-export function saveModelChoice(cliId, model) {
-    try {
-        if (model) localStorage.setItem(modelKey(cliId), model);
-        else localStorage.removeItem(modelKey(cliId));
-    } catch {
-        // приватный режим или запрет на хранилище — работаем без сохранения
-    }
-}
-
-function loadModelChoice(cliId) {
-    try {
-        return localStorage.getItem(modelKey(cliId)) || '';
-    } catch {
-        return '';
-    }
-}
-
-// Модель, которой сейчас отвечает CLI: сохранённый выбор человека, иначе
-// состояние подключения, иначе дефолтная строка проекта. Список моделей у
-// OpenCode до Connect пуст, поэтому каскад строится по этой одной строке, а
-// не пустеет
-export const modelOf = (cliId) => loadModelChoice(cliId)
-    || connections.get(cliId)?.model
-    || providerById(cliId).defaultModel
-    || DEFAULT_AGENT_MODEL
-    || '';
-
-// уникальные значения одного уровня по моделям выбранного CLI. Шлюз и
+// Уникальные значения одного уровня по моделям выбранного CLI. Шлюз и
 // поставщик, выбранные левее, сужают список; порядок остаётся тем же, в каком
 // CLI отдал модели, — иначе список прыгал бы при каждой перерисовке
-function levelValues(models, gateway, provider, take) {
+function levelValues(models, gateway, provider, take, cliId) {
     const values = [];
     for (const model of models) {
-        const levels = modelLevels(model);
+        const levels = modelLevels(model, cliId);
         if (gateway != null && levels.gateway !== gateway) continue;
         if (provider != null && levels.provider !== provider) continue;
         const value = take(levels);
@@ -143,37 +106,26 @@ function levelValues(models, gateway, provider, take) {
 }
 
 // Модели, по которым строится каскад: список, который отдал CLI, а пока его
-// нет (провайдер не подключён) — одна строка текущей модели, иначе витрина
-// была бы тремя прочерками вместо выбранного значения
+// нет (CLI не подключён) — одна строка текущей модели, иначе строка выбора в
+// шапке стояла бы на прочерках вместо выбранного значения
 const modelsFor = (cliId) => {
-    // Пункт списка без своего коннектора (см. cliValues в modelCascadeRow):
-    // моделей у него нет, и выдумывать ему чужую строку нельзя — уровни
-    // остаются прочерками
-    if (isStubChoice(cliId)) return [];
     const models = providerById(cliId).models;
     return models.length ? models : [modelOf(cliId)].filter(Boolean);
 };
 
-// Пункт списка OpenRouter без своего коннектора. Настоящий CLI всегда остаётся
-// настоящим, даже если его название совпало с чужим из списка: список не имеет
-// права выкинуть из каскада того, за кем мы умеем ходить
-const isStubChoice = (id) => !!id && !PROVIDERS.some((p) => p.id === id) && isStubCli(id);
-
-// Четыре селекта в ряд: CLI / Gateway / Provider / Model. cliIds — какие CLI
-// в них перечислять (витрина: все, карточка провайдера: только его, шапка
-// сессии: подключённые), cli — каким встать уровню CLI, model — что показать
-// сразу, onChange — куда попадает собранный выбор, addOption — дописать ли
-// вниз списков CLI и Gateway пункт «Add» (шапка сессии; в Settings его нет),
-// stubOptions — дописать ли вниз списка CLI весь список агентов с OpenRouter
-// (SYSTEM/cli-agents.js, тот же, что на странице «New projects»). Этот список
-// нужен везде, где строка перечисляет всех: витрина и шапка сессии; в карточке
-// одного провайдера он лишний, там перечислять нечего кроме него самого, и
-// строку та заводят без stubOptions
-export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = false, stubOptions = true }) {
+// Пять селектов в ряд: CLI / Gateway / Provider / Model / Effort. cliIds — какие
+// CLI строка считает своими сверх списка с сайта (шапка сессии: подключённые и
+// последний выбранный), cli — каким встать уровню CLI, model — что показать
+// сразу, onChange — куда попадает собранный выбор, addOption — дописать ли вниз
+// списков CLI и Gateway пункт «Add». Строка стоит в шапке сессии, и уровень CLI
+// перечисляет в ней всех, кого может назвать сайт (SYSTEM/cli-agents.js): имя
+// оттуда — ровно то, что уходит в CLI, коннектор один на всех и работает с
+// любым именем (SYSTEM/cli/any.js)
+export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = false }) {
     const row = document.createElement('div');
     row.className = 'provider__model provider__model--cascade';
     const selects = {};
-    for (const [key, title] of [['cli', 'CLI'], ['gateway', 'Gateway'], ['provider', 'Provider'], ['model', 'Model']]) {
+    for (const [key, title] of [['cli', 'CLI'], ['gateway', 'Gateway'], ['provider', 'Provider'], ['model', 'Model'], ['effort', 'Effort']]) {
         const label = document.createElement('span');
         label.className = 'provider__model-label';
         label.textContent = `${title}:`;
@@ -184,104 +136,207 @@ export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = fals
         selects[key] = select;
     }
 
-    // Значения уровня CLI: настоящие CLI, какие этой строке полагается
-    // перечислять, и под ними весь список с OpenRouter — тем же, что на
-    // странице «New projects». Своего коннектора у этих пунктов пока нет: за
-    // пунктом не стоит ни моделей, ни подключения, поэтому он не доходит до
-    // каскада (модель у него пустая, emit молчит) и ход по нему не пойдёт —
-    // getActiveProviderId такие значения отбрасывает. По умолчанию выбран
-    // первый настоящий CLI, то есть OpenCode
-    const cliValues = () => (stubOptions ? [...new Set([...cliIds, ...cliAgentNames()])] : [...cliIds]);
-    // Пункт без коннектора — по этой строке, и никакая модель ему не показывается
-    const isStub = (id) => isStubChoice(id) && !cliIds.includes(id);
-    // Модель, которую уровни показывают для выбранного CLI: у пункта без
-    // коннектора её нет вовсе
-    const wantedModel = (cliId) => (isStub(cliId) ? '' : modelOf(cliId));
+    // Глубина размышления наполняется один раз и перерисовкой не трогается:
+    // список у неё общий (SYSTEM/model-effort.js), от выбранной модели он не
+    // зависит, а меняет его только сам человек — обработчиком change ниже
+    fillEffortLevel(selects.effort);
 
-    // Уровень с пунктом «Add» внизу: сам уровень наполняется общим fillLevel,
-    // а пункт дописывается заново при каждой перерисовке (fillLevel чистит
-    // option'ы). Сейчас это два верхних уровня — CLI и Gateway, где появляется
-    // новое; Provider и Model остаются чистыми. Заодно запоминаем последнее
-    // настоящее значение уровня — им уровень возвращается, если значение
-    // подменили (см. ignoreAdd)
-    const realValue = new Map();
-    function fillLevelWithAdd(select, values, emptyLabel, wanted, label) {
-        fillLevel(select, values, emptyLabel, wanted, label);
-        realValue.set(select, select.value);
-        if (addOption) appendAddOption(select);
-    }
+    // Значения уровня CLI — список с сайта (SYSTEM/cli-agents.js, тот же, что на
+    // странице «New projects») плюс наши собственные провайдеры: подключённый
+    // CLI должен остаться в списке, даже если сайт его не назвал. Слово из
+    // этого списка — то, что уходит в CLI: коннектор один на всех и работает с
+    // любым именем (SYSTEM/cli/any.js)
+    const cliValues = () => [...new Set([...cliAgentNames(), ...cliIds])];
 
-    // Значение заглушки не доходит до каскада: уровень молча возвращается на
-    // прежнее настоящее значение. Отключённый пункт выбрать нельзя, но
-    // подменить значение селекта можно (будущий обработник пункта, чужой код,
-    // autofill браузера) — и без этой проверки уровень уехал бы вниз, а за ним
-    // перерисовались бы поставщик и модель, то есть выбор человека сменился бы
-    // сам собой. Возвращает true, когда значение было заглушкой.
-    function ignoreAdd(select) {
-        if (select.value !== ADD_OPTION.value) return false;
-        const back = realValue.get(select);
-        const usable = [...select.options].some((o) => o.value === back && !o.disabled);
-        if (usable) select.value = back;
-        return true;
-    }
+// Уровень с пунктом «Add» внизу наполняется через levelWithAdd: сейчас это
+// два верхних уровня — CLI и Gateway, где появляется новое; Provider, Model и
+// Effort остаются чистыми. Заглушка и возврат с неё — в model-add-option.js
+const fillLevelWithAdd = (select, values, emptyLabel, wanted, label) =>
+        levelWithAdd(select, () => fillLevel(select, values, emptyLabel, wanted, label), addOption);
 
-    // собранный выбор в виде, который понимает CLI: в списке моделей подпись —
+// собранный выбор в виде, который понимает CLI: в списке моделей подпись —
     // хвост после последнего слэша, а value там целиком («openrouter/stealth/
     // space-bunny-alpha»), поэтому строка собирается сама и склеивать уровни
-    // заново не надо. Читают её оттуда, где человек управляет выбором: из шапки
-    // сессии (getActiveModel) и из Settings
-    row.read = () => ({ cli: selects.cli.value, model: selects.model.value });
-
+    // заново не надо. Effort в пути модели нет — он уходит отдельным флагом
+    // хода, поэтому читается рядом с ним. Читает её оттуда, где человек
+    // управляет выбором: из шапки сессии (getActiveModel и getActiveEffort)
+    row.read = () => ({
+        cli: selects.cli.value,
+        model: selects.model.value,
+        effort: selects.effort.value,
+    });
     // один проход по четырём уровням: у каждого своя строка, которую просил
-    // человек (wanted), остальные целиком берутся из того, что уже выбрано
+    // человек (wanted), остальные целиком берутся из того, что уже выбрано.
+    // Значения, которых нет в списке CLI, не выбрасываются: уровень остаётся
+    // на прежнем (том, что поставил человек), а не прыгает на первую
+    // попавшуюся. Каталог CLI диктует, какие модели доступны, но не то, что
+    // человек выбрал
     function renderLevels({ cli: wantedCli, gateway, provider, model: wanted }) {
-        fillLevelWithAdd(selects.cli, cliValues(), '—', wantedCli, (id) => (isStubChoice(id) ? id : providerById(id).name));
-        const models = modelsFor(selects.cli.value);
-        // уровни той модели, которую просили показать, — тоже wanted: у
-        // короткого имени без среднего уровня («opencode/claude-sonnet-5»)
-        // шлюз другой, и без этого строка не нашлась бы в списке и встала
-        // бы первая по чужому шлюзу
-        const asked = modelLevels(wanted);
-        const gateways = levelValues(models, null, null, (l) => l.gateway)
+        fillLevelWithAdd(selects.cli, cliValues(), '—', wantedCli, (id) => providerById(id).name);
+        const cliId = selects.cli.value;
+        const models = modelsFor(cliId);
+        // Уровни той модели, которую просили показать, — тоже wanted: у
+        // короткого имени без среднего уровня («pi/gpt-4o-mini») шлюз другой,
+        // и без этого строка не нашлась бы в списке и встала бы первой по
+        // чужому шлюзу. Разбор — с именем CLI: у kilo путь начинается с
+        // «kilo/…», и без этого «kilo» встал бы в Gateway, а в Model уехал бы
+        // путь целиком вместо имени модели
+        const asked = modelLevels(wanted, cliId);
+        const remembered = levelTriplet();
+        // Шлюз, который человек поставил. У CLI, чей путь начинается с его
+        // имени (kilo, opencode), уровня шлюза в пути нет вовсе: там у всех
+        // моделей gateway пуст, и фильтровать по нему нельзя — иначе каталог
+        // отсекается целиком и строка встаёт на прочерки, потеряв выбор
+        const hasGateway = models.some((m) => modelLevels(m, cliId).gateway);
+        const wantedGateway = gateway ?? (asked.gateway || remembered.gateway);
+        const gateways = levelValues(models, null, null, (l) => l.gateway, cliId)
             .filter((value) => !HIDDEN_GATEWAYS.has(value));
-        fillLevelWithAdd(selects.gateway, gateways, '—', gateway ?? asked.gateway);
-        fillLevel(selects.provider, levelValues(models, selects.gateway.value, null, (l) => l.provider), '—', provider ?? asked.provider);
+        // пустым списком шлюзов строка встала бы на прочерк, поэтому в каталог
+        // без шлюзов добавляется тот, что поставил человек
+        if (!gateways.length && wantedGateway) gateways.push(wantedGateway);
+        fillLevelWithAdd(selects.gateway, gateways, '—', wantedGateway);
+        // Поставщик — уровень внутри шлюза, и помнить его между шлюзами нельзя:
+        // поставщик stealth есть у openrouter и у anthropic под ним нет вовсе.
+        // Раньше он всё равно возвращался в строку пунктом (keepAbsent), и на
+        // anthropic строка показывала «Provider: stealth» — уровня, которого
+        // под этим шлюзом нет, — а путь из него уходил в CLI целиком. Поэтому
+        // поставщиком встаёт только то, что каталог называет под этим шлюзом,
+        // и пустым он тоже бывает честно (у pi каталог «anthropic/claude-…»
+        // вообще без среднего уровня)
+        const providerValues = levelValues(models, hasGateway ? selects.gateway.value : null, null, (l) => l.provider, cliId);
+        const wantedProvider = provider
+            ?? (asked.provider && providerValues.includes(asked.provider) ? asked.provider : undefined)
+            ?? (remembered.provider && providerValues.includes(remembered.provider) ? remembered.provider : undefined);
+        fillLevel(selects.provider, providerValues, '—', wantedProvider);
         const inPath = models.filter((m) => {
-            const levels = modelLevels(m);
-            return levels.gateway === selects.gateway.value && levels.provider === selects.provider.value;
+            const levels = modelLevels(m, cliId);
+            return levels.provider === selects.provider.value
+                && (!hasGateway || levels.gateway === selects.gateway.value);
         });
-        // модели в списке — целиком, иначе выбор не собрать обратно в строку,
-        // которую понимает CLI; подпись — короткое имя после последнего слэша
-        fillLevel(selects.model, inPath, '—', wanted, (m) => modelLevels(m).model);
+        // Уровень Model в списке хранит путь целиком — так его понимает CLI, —
+        // а показывает имя после последнего слэша.
+        //
+        // Модель переезжает вместе с поставщиком и шлюзом: сменил Gateway на
+        // anthropic — модель stealth под ним и не существует, и оставить её
+        // значило бы отдать CLI путь, которого в каталоге нет. Поэтому прежнее
+        // имя держится, только пока оно есть в новом пути, иначе встаёт первая
+        // модель оттуда. Список пуст (CLI не подключён, каталога нет) — тогда
+        // остаётся прежнее имя, иначе выбор человека пропал бы до Connect
+        const names = inPath.map((m) => modelLevels(m, cliId).model);
+        const wantedName = [asked.model, remembered.model, names[0]].find((n) => n && names.includes(n))
+            || asked.model
+            || remembered.model;
+        // Путь берётся из каталога целиком, а не склеивается заново: уровень
+        // Model хранит путь так, как его понимает CLI, и значение, которого в
+        // списке нет, ничего не значит — CLI такого пути не знает. Склейка давала
+        // бы путь, которого нет ни в одном списке (и который не показывала бы
+        // строка), а он и уходил в ход — тот самый случай, когда выбрано одно,
+        // а отвечает другое. Каталог пуст — тогда склеиваем, иначе выбор
+        // человека не пережил бы перезагрузку до Connect
+        const wantedPath = inPath.find((m) => modelLevels(m, cliId).model === wantedName)
+            || modelPath(cliId, selects.gateway.value, selects.provider.value, wantedName, models);
+        fillLevel(selects.model, inPath, '—', wantedPath, (m) => modelLevels(m, cliId).model);
+        // Выбранного значения может не оказаться в списке: у CLI, чей каталог
+        // не называет этого шлюза (путь начинается с имени CLI — kilo,
+        // opencode), и у неподключённого, у которого каталога нет вовсе. Такое
+        // значение возвращается в уровень пунктом, иначе выбор человека пропал
+        // бы с экрана и вернулся бы прочерком по reload. Уровня поставщика это
+        // не касается: его список и так выведен из шлюза, и чужой поставщик в
+        // нём — это ровно то значение, которого под этим шлюзом нет
+        keepAbsent(selects.gateway, wantedGateway);
+        keepAbsent(selects.model, wantedPath);
+    }
+
+    // Значение уровня, которого нет в списке: добавляем его пунктом обратно и
+    // выбираем. Так каскад показывает и каталог CLI, и то, что выбрано, а
+    // переход на другой CLI не стирает ни одну из половин выбора
+    function keepAbsent(select, value) {
+        if (!value || [...select.options].some((o) => o.value === value)) return;
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        select.append(option);
+        select.value = value;
+    }
+
+    // Объявление о выборе — по любому изменению строки. CLI в списке без
+    // подключения тоже объявляется: выбор уровня CLI и есть выбор, с которым
+    // пойдёт ход (getActiveProviderId читает его отсюда), и молчать об
+    // этом нельзя — иначе смена CLI в шапке ничего бы не меняла. Модель при
+    // этом может быть и пустой: её список у неподключённого CLI ещё пуст, а
+    // выбор CLI от неё не зависит.
+    // Путь, собранный из показанных значений: значения уровня Model в списке
+    // может не быть (каталог CLI молчит, пока не подключились), и тогда путь
+    // склеивается из уровней и хвоста — той же формой, какой этот CLI
+    // называет модель (см. modelPath). Этим же пользуется emit — собирать
+    // путь в одном месте, иначе строка в базе и подпись в ленте разойдутся.
+    // Effort в пути модели нет, но объявляется вместе с ним же: он общий для
+    // трёх строк выбора, и молчал бы ровно до перерисовки любой из них
+    function assembled() {
+        const cliId = selects.cli.value;
+        const gateway = selects.gateway.value || '';
+        const provider = selects.provider.value || '';
+        const tail = modelLevels(selects.model.value, cliId).model || '';
+        return { gateway, provider, tail, model: modelPath(cliId, gateway, provider, tail, modelsFor(cliId)) };
     }
 
     function emit() {
-        const { cli: chosenCli, model: chosen } = row.read();
-        if (chosen) onChange(chosenCli, chosen, row);
+        const chosenCli = selects.cli.value;
+        if (!chosenCli) return;
+        const { gateway, provider, tail, model } = assembled();
+        saveLevelChoice({ gateway, provider, model: tail });
+        saveEffort(selects.effort.value);
+        onChange(chosenCli, model, row, selects.effort.value);
     }
 
+    // Смена CLI не должна сбрасывать остальные уровни. Человек выбрал
+    // openrouter / stealth / space-bunny-alpha, переключил CLI на kilo — и
+    // ждёт тот же путь, а не прочерки и не первую попавшуюся модель нового
+    // CLI. Поэтому прежние значения уровней передаются дальше как просимые,
+    // а renderLevels возвращает в уровни и те, которых нет в каталоге нового
+    // CLI (см. keepAbsent): каталог не решает, что выбрал человек. Уровни
+    // общие на все CLI (см. levelsOf), поэтому переключение CLI ничего в них не
+    // меняет — и emit после перерисовки записывает ровно то, что осталось в
+    // строке
     selects.cli.addEventListener('change', () => {
         if (ignoreAdd(selects.cli)) return;
-        renderLevels({ cli: selects.cli.value, model: wantedModel(selects.cli.value) });
+        const kept = {
+            gateway: selects.gateway.value,
+            provider: selects.provider.value,
+            model: selects.model.value,
+        };
+        renderLevels({ cli: selects.cli.value, ...kept });
         emit();
     });
+    // Смена уровня оставляет соседние как были: пересборка идёт от значения
+    // уровня и от пути, собранного из строки, поэтому Gateway=anthropic не
+    // уносит за собой Provider и Model
     for (const key of ['gateway', 'provider']) {
         selects[key].addEventListener('change', () => {
             if (ignoreAdd(selects[key])) return;
-            renderLevels({ [key]: selects[key].value, model: wantedModel(selects.cli.value) });
+            renderLevels({ [key]: selects[key].value, model: assembled().model });
             emit();
         });
     }
+    // Модель и Effort меняют только себя: пересборки не требуется, объявляется
+// собранный выбор как есть
     selects.model.addEventListener('change', emit);
+    selects.effort.addEventListener('change', emit);
 
-    renderLevels({ cli: cli ?? (model ? cliIds.find((id) => modelOf(id) === model) : undefined), model });
+    // какому CLI встать, когда строка получила список, но не получила выбора:
+    // сперва переданный, иначе тот, у кого такая же модель, иначе первый в
+    // списке
+    const wantedCli = () => cli
+        || (model ? cliValues().find((id) => modelOf(id) === model) : undefined)
+        || cliValues()[0];
+    renderLevels({ cli: wantedCli(), model });
     return row;
 }
 
-// Подписчики на смену выбора: строка в шапке сессии и оба ряда в Settings.
-// Ряд, из которого пришёл выбор, перерисовывать нельзя — select уехал бы из-под
-// курсора, не дорисовав список, поэтому sourceRow едет вместе с объявлением и
-// подписчик сверяется с ним.
+// Подписчики на смену выбора: строка в шапке сессии — единственное место, где
+// модель выбирают. Ряд, из которого пришёл выбор, перерисовывать нельзя —
+// select уехал бы из-под курсора, не дорисовав список, поэтому sourceRow едет
+// вместе с объявлением и подписчик сверяется с ним.
 const modelChoiceListeners = new Set();
 
 export function onModelChoice(fn) {
@@ -289,102 +344,51 @@ export function onModelChoice(fn) {
     return () => modelChoiceListeners.delete(fn);
 }
 
-// Выбор из любого из трёх мест попадает в одно и то же: сохранённый ключ CLI
-// (он переживает перезагрузку страницы), сам дефолт провайдера и состояние
-// подключения под ним. Дальше — объявление, чтобы остальные места увидели
-// тот же выбор
-export function applyModelChoice(cliId, model, sourceRow) {
-    saveModelChoice(cliId, model);
-    // дефолт пишется всегда, и до Connect тоже: список моделей приходит от
-    // CLI только при подключении, а выбрать модель можно и раньше
-    // (connectOpenCode и refreshConnectedModels в settings.js бережно
-    // сохраняют этот выбор, если он есть в свежем списке от CLI)
-    providerById(cliId).defaultModel = model;
-    const state = connections.get(cliId);
-    if (state) {
-        state.model = model;
-        saveProviderState(cliId);
+// Выбор попадает в одно и то же: сохранённые уровни выбора (они переживают
+// перезагрузку страницы), сохранённая строка модели по ключу CLI, дефолт
+// провайдера и состояние подключения под ним. Дальше — объявление, чтобы
+// строка в шапке увидела тот же выбор.
+//
+// Модель может быть пустой, и это не значит «сбрось выбор»: список моделей у
+// неподключённого CLI ещё пуст, а человек уже выбрал, кем идти. Поэтому при
+// пустой модели сохранённый выбор и состояние подключения не трогаются —
+// затирать их было бы потерей того, что человек настраивал заранее.
+// Глубина размышления (effort) — отдельный уровень строки и отдельное
+// хранилище, поэтому пишется и при пустой модели, и при объявлении без неё
+export function applyModelChoice(cliId, model, sourceRow, effort) {
+    if (effort) saveEffort(effort);
+    if (model) {
+        // Уровни разбираются из строки модели обратно: строка склеена в emit
+        // (modelCascadeRow) из показанных значений, поэтому хранить её одной
+        // строкой означало бы, что смена одного уровня затрет остальные.
+        // Разбор — с именем CLI: у kilo путь начинается с «kilo/…», и без
+        // этого «kilo» записался бы в шлюз, а модель — с именем CLI в хвосте.
+        // Шлюз такого пути в нём не значится, поэтому остаётся прежний — тот,
+        // что поставил человек
+        const asked = modelLevels(model, cliId);
+        const remembered = loadLevelChoice();
+        saveLevelChoice({
+            gateway: asked.gateway || remembered.gateway || '',
+            provider: asked.provider || '',
+            model: asked.model || '',
+        });
+        // Строка выбранной модели под ключом CLI и поле defaultModel у
+        // провайдера убраны: это был второй и третий места, где модель живёт
+        // своей жизнью, и оба молча перебивали выбор из строки. Остаётся один
+        // источник — уровни выше, и читает их строка выбора в шапке
+        const state = connections.get(cliId);
+        if (state) {
+            state.model = model;
+            saveProviderState(cliId);
+        }
     }
-    for (const listener of [...modelChoiceListeners]) listener({ cliId, model, sourceRow });
+    for (const listener of [...modelChoiceListeners]) listener({ cliId, model, effort, sourceRow });
 }
 
-// ---------- строка выбора в шапке сессии ----------
-
-// Текущая отрисовка каскада в шапке и CLI, выбранный в нём последним: строка
-// перерисовывается на каждую смену сессии, и без этой памяти выбранный в шапке
-// CLI каждый раз возвращался бы к провайдеру по умолчанию
-let barRow = null;
-let barCliId = null;
-
-export function renderSessionBarControls() {
-    const bar = sessionsState.sessionBar;
-    if (!bar) return;
-
-    const ids = PROVIDERS.filter((p) => connections.has(p.id)).map((p) => p.id);
-    // строка выбора видна, как только подключён хотя бы один провайдер, и до
-    // создания самой сессии — так пользователь настраивает параметры заранее
-    bar.hidden = ids.length === 0 || sessionsState.sessionList.hidden;
-    bar.innerHTML = '';
-    barRow = null;
-    if (ids.length === 0) return;
-
-    const chosen = ids.includes(barCliId) ? barCliId : defaultProviderId();
-    barCliId = ids.includes(chosen) ? chosen : ids[0];
-    barRow = modelCascadeRow({
-        cliIds: ids,
-        cli: barCliId,
-        model: modelOf(barCliId),
-        // вниз списков CLI и Gateway — строка «Add», заглушка без действия
-        addOption: true,
-        onChange: (cliId, model, sourceRow) => {
-            // выбор уровня CLI в шапке — это и есть выбор, с которым пойдёт ход
-            // (getActiveProviderId читает его отсюда), поэтому он же становится
-            // активным провайдером: без этого строка после перезагрузки вернула
-            // бы прежнего, а ход пошёл бы иначе
-            barCliId = cliId;
-            saveActiveProvider(cliId);
-            applyModelChoice(cliId, model, sourceRow);
-        },
-    });
-    bar.append(barRow);
-}
-
-// Смена выбора в настройках перерисовывает строку шапки (и наоборот). Ряд, из
-// которого выбор пришёл, не трогаем — как и в Settings, где так же ведут себя
-// оба своих каскада.
-onModelChoice(({ sourceRow }) => {
-    if (sourceRow === barRow) return;
-    renderSessionBarControls();
-});
-
-// Список агентов с OpenRouter обновился (проверка на сайте) — строки, где он
-// перечислен, перерисовываются под новый. Объявляем тем же порядком, что и смену
-// модели (sourceRow пустой — значит, перерисовать все ряды, включая те, что в
-// Settings, и они об этом объявлении знают)
-onCliAgents(() => {
+// Объявление без выбора: список CLI с сайта обновился (SYSTEM/cli-agents.js),
+// и строки, где он перечислен, надо перерисовать под новый. Отдельная функция
+// вместо applyModelChoice с пустым cliId — чтобы «перерисовать всех» и «человек
+// сменил выбор на пустое» не выглядели одним и тем же событием
+export function publishModelChoice() {
     for (const listener of [...modelChoiceListeners]) listener({ cliId: null, model: null, sourceRow: null });
-});
-
-// отдаёт провайдера, с которым сейчас реально ведётся диалог: тот, что выбран
-// в строке шапки сессии, а до её появления — провайдер по умолчанию
-export function getActiveProviderId() {
-    if (barRow && !sessionsState.sessionBar.hidden) {
-        const cli = barRow.read().cli;
-        // пункт списка без коннектора (см. cliValues в modelCascadeRow) ходом
-        // не пойдёт, поэтому диалог остаётся за последним настоящим
-        if (cli && !isStubChoice(cli)) return cli;
-    }
-    return defaultProviderId();
-}
-
-// модель, которой пойдёт следующий ход, — собранный выбор строки шапки: выбор
-// в ней настоящий (см. обработчик change в modelCascadeRow). Ею подписывается
-// ответ в ленте, пока он стримится (SYSTEM/model-tag.js); у строк, уже лежащих
-// в базе, подпись берётся из их собственного поля model
-export function getActiveModel() {
-    if (barRow && !sessionsState.sessionBar.hidden) {
-        const model = barRow.read().model;
-        if (model) return model;
-    }
-    return connections.get(getActiveProviderId())?.model || null;
 }

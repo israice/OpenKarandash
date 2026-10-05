@@ -18,20 +18,22 @@
 // грузится первым (см. порядок <script> в index.html), поэтому в init() можно
 // сразу находить #settingsModal/#pickerModal в DOM.
 import {
-    PROVIDERS, connections, saveProviderState, saveActiveProvider, loadActiveProvider,
-    activateExclusive, DEFAULT_AGENT, DEFAULT_AGENT_MODEL,
+    PROVIDERS, providerById, registerProvider, connections, saveProviderState, saveActiveProvider, loadActiveProvider,
+    activateExclusive, DEFAULT_AGENT,
 } from './providers.js';
 // Горячая перезагрузка скриптов — отдельный модуль: правило переисполнения,
 // перерисовки и поставщиков к ядру отношения не имеет, а app.js подходит к
 // четырёмстам строкам (DOCS/decisions/022)
 import * as HotReload from './hot-reload.js';
-// Каскад выбора модели и строка выбора в шапке сессии — из model-cascade.js:
-// витрина в настройках, карточка провайдера и шапка сессии берут одну и ту же
-// строку и пишут выбор одним и тем же способом
+// Каскад выбора модели — из model-cascade.js: строка в шапке сессии берёт оттуда
+// выбор и пишет его одним способом, а модель при отправке хода читается оттуда же
 import {
-    renderSessionBarControls, getActiveProviderId, getActiveModel,
-    modelCascadeRow, applyModelChoice, modelOf, saveModelChoice, onModelChoice,
+    modelOf, levelsOf,
 } from './model-cascade.js';
+// Строка выбора в шапке сессии и чтения выбора при отправке хода — отсюда
+import {
+    renderSessionBarControls, getActiveProviderId, getActiveModel, getActiveEffort,
+} from './session-model-bar.js';
 
 // общий помощник для POST-запросов к серверу — им пользуются и остальные
 // файлы через window.App.api, каждый второй экран так или иначе ходит на сервер
@@ -139,12 +141,12 @@ const BOARD_COLUMNS = ['New', 'In Progress', 'In Review', 'Validator', 'Done'];
 // сервер держит выбранное окружение в памяти и теряет его при перезапуске,
 // поэтому страница умеет восстановить подключение по сохранённому id —
 // функция общая на всех провайдеров.
-// Ответ connect для OpenCode/pi везёт свежий список моделей — кладём его в
+// Ответ connect для pi везёт свежий список моделей — кладём его в
 // PROVIDERS сразу, иначе после reload select «Model for …» остаётся пустым
 // (provider.models сброшен в [], см. providers.js) и строка модели не рисуется
 const reconnecting = {};
 
-export function restoreServerConnection(providerId = DEFAULT_AGENT) {
+export function restoreServerConnection(providerId) {
     const state = connections.get(providerId);
     if (!state) return Promise.resolve(false);
     if (!reconnecting[providerId]) {
@@ -161,16 +163,14 @@ export function restoreServerConnection(providerId = DEFAULT_AGENT) {
                     saveProviderState(providerId);
                 }
                 if (Array.isArray(r.models) && r.models.length) {
-                    const provider = PROVIDERS.find((p) => p.id === providerId);
-                    if (provider) {
-                        provider.models = r.models;
-                        if (!provider.defaultModel || !r.models.includes(state.model)) {
-                            provider.defaultModel = provider.defaultModel && r.models.includes(provider.defaultModel)
-                                ? provider.defaultModel
-                                : r.models[0];
-                        }
-                    }
-                    if (state.model && !r.models.includes(state.model)) state.model = r.models[0];
+                    // Каталог моделей едет в провайдера, и больше connect тут
+                    // ничего не меняет: раньше он попутно решал, какая модель
+                    // «должна» быть (не из выбранной — из своего дефолта или
+                    // первой в каталоге), и затирал ею выбор человека из строки
+                    // над сессией. Модель выбирают там, и подключение её не
+                    // трогает — только наполняет списки строки выбора
+                    const provider = providerById(providerId);
+                    if (provider) provider.models = r.models;
                 }
                 return true;
             })
@@ -178,6 +178,44 @@ export function restoreServerConnection(providerId = DEFAULT_AGENT) {
             .finally(() => { reconnecting[providerId] = null; });
     }
     return reconnecting[providerId];
+}
+
+// Подключение выбранного CLI перед ходом. Слово из строки выбора в шапке может
+// быть неподключённым — список CLI приходит с сайта и меняется, — и раньше такой
+// выбор молча уводил ход на провайдера по умолчанию. Здесь то же слово
+// подключается: сперва пробуем восстановить прошлое подключение, иначе ищем CLI
+// на машине и подключаем единственную найденную цель. Список моделей оттуда же
+// едет в каскад выбора, поэтому уровни Gateway/Provider/Model после первого
+// хода показывают реальные имена, а не прочерки
+export async function ensureConnected(providerId) {
+    if (connections.has(providerId)) {
+        const restored = await restoreServerConnection(providerId);
+        if (restored || connections.has(providerId)) return connections.get(providerId);
+    }
+    const provider = providerById(providerId);
+    const { installs = [] } = await api('/api/agent/detect', { agent: providerId }).catch(() => ({}));
+    const target = installs[0];
+    if (!target) return null;
+    const result = await api('/api/agent/connect', { agent: providerId, id: target.id });
+    if (!result?.ok) return null;
+    // Подключение наполняет каталог моделей и не выбирает модель: выбор
+    // человека живёт в строке над сессией, и он единственный. Раньше здесь
+    // стоял свой перебор (его модель → дефолт проекта → первая в каталоге), и
+    // подключение, случись оно между выбором и ходом, тихо подменяло модель на
+    // другую — ровно тот случай, когда настройки «перестают работать»
+    const chosen = modelOf(providerId);
+    provider.models = Array.isArray(result.models) ? result.models : [];
+    connections.set(providerId, {
+        installId: result.id,
+        label: result.label,
+        version: result.version,
+        model: chosen || null,
+        note: `${result.label} · CLI ${result.version}`,
+    });
+    saveProviderState(providerId);
+    saveActiveProvider(providerId);
+    renderSessionBarControls();
+    return connections.get(providerId);
 }
 
 export function escapeHtml(s) {
@@ -257,9 +295,10 @@ function init() {
     window.App = {
         BOARD_COLUMNS,
         VIEWS,
-PROVIDERS,
+        PROVIDERS,
+        providerById,
+        registerProvider,
         DEFAULT_AGENT,
-        DEFAULT_AGENT_MODEL,
         api,
         connections,
         saveProviderState,
@@ -267,13 +306,16 @@ PROVIDERS,
         loadActiveProvider,
         activateExclusive,
         renderSessionBarControls,
+        ensureConnected,
         getActiveProviderId,
         getActiveModel,
-        modelCascadeRow,
-        applyModelChoice,
+        getActiveEffort,
+        // выбор человека из шапки сессии целиком: подключение держит его при
+        // Connect, чтобы не вернуть свой выбор поверх выбора в шапке
         modelOf,
-        saveModelChoice,
-        onModelChoice,
+        // выбранные уровни Gateway/Provider/Model: подпись модели над ответом
+        // дописывает шлюз, которого нет в пути CLI-шной формы (DOCS/decisions/076)
+        levelsOf,
         openModal,
         confirmModal,
         closeModal,

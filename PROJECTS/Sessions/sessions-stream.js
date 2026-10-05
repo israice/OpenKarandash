@@ -12,15 +12,32 @@ import {
 } from './sessions-feed.js';
 import { renderStored, isTurnUnfinished } from './sessions-history.js';
 import { streamAsk, followRun } from './sessions-ndjson.js';
-import { api, closeModal, restoreServerConnection } from '../../SYSTEM/app.js';
+import { api, closeModal, restoreServerConnection, ensureConnected } from '../../SYSTEM/app.js';
 import {
-    PROVIDERS, connections, saveProviderState, saveAllProviderStates,
+    providerById, connections, saveProviderState, saveAllProviderStates,
     updateContextGauge, contextWindowForModel,
 } from '../../SYSTEM/providers.js';
-import { getActiveProviderId, getActiveModel } from '../../SYSTEM/model-cascade.js';
+import { getActiveProviderId, getActiveModel, getActiveEffort } from '../../SYSTEM/session-model-bar.js';
 import { setSessionId, setRunningSessionId, setComposerBusy, loadSessions } from './sessions-panel.js';
 
 // ---------- события в ленту ----------
+
+// Чем продолжается ход, который не дошёл до ответа. Словами человека и по
+// правилам проекта: работа не выкинута, её надо доделать, проверить и сдать
+// отчётом — поэтому «продолжить» здесь означает «доделай», а не «ответь ещё
+// раз». Тот же текст идёт и в кнопку плашки, и в кнопку под лимитом.
+const CONTINUE_TEXT = 'Продолжай работу с того места, где она остановилась. Доделай задание до конца, проверь результат так, как велит AGENTS.override.md, и только потом дай итоговый ответ.';
+
+// Режим последнего хода сессии: продолжение должно идти в том же, а не
+// всегда в Action (в Chat у CLI ограничен набор инструментов, и работа,
+// оборвавшаяся в Chat, продолжилась бы с полным набором — то есть не так,
+// как её начинали)
+function modeOfLastTurn(messages) {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+        if (messages[i].role === 'user' && messages[i].mode) return messages[i].mode;
+    }
+    return 'Action';
+}
 
 // Отрисовка событий потока — одна и та же для своего запроса и для
 // подключения к работе, которая уже идёт. model — та модель, которой пойдёт
@@ -121,7 +138,7 @@ export async function openSession(id, running = false) {
     // ход, который не дошёл до ответа: последней осталась строка шага или сам
     // вопрос. Ждать нечего — работа уже не идёт, поэтому предлагаем продолжить
     if (isTurnUnfinished(messages)) {
-        addInterrupted(() => sendTurn('продолжай'));
+        addInterrupted(() => sendTurn(CONTINUE_TEXT, modeOfLastTurn(messages)));
     }
 }
 
@@ -177,6 +194,17 @@ async function reloadFromStore(id, run) {
     state.list.innerHTML = '';
     for (const message of messages) renderStored(message);
 
+    // Ход, который не дошёл до ответа (оборвался, или у него кончился дневной
+    // лимит модели), получает кнопку продолжения сразу — под последней строкой,
+    // а не при следующем открытии сессии: раньше плашка появлялась только в
+    // openSession, и после хода её не было видно вовсе, пока человек не закроет
+    // и не откроет сессию заново. Смена источника модели делается в строке над
+    // сессией, кнопка зовёт новый ход — то есть ровно то, что нужно после
+    // лимита (PROJECTS/Sessions/README.md)
+    if (isTurnUnfinished(messages)) {
+        addInterrupted(() => sendTurn(CONTINUE_TEXT, modeOfLastTurn(messages)));
+    }
+
     // человек читал выше — оставляем его на месте, а не выдёргиваем вниз
     if (stick) scrollToBottom();
     else state.messages.scrollTop = scroll;
@@ -187,20 +215,39 @@ async function reloadFromStore(id, run) {
 export async function sendTurn(text, mode = 'Action') {
     const run = ++state.run;
 
-    // Провайдер и модель — из строки выбора в шапке сессии, а она устроена тем же
-    // каскадом, что и настройки (SYSTEM/model-cascade.js). Это единственный
-    // источник: раньше модель бралась из состояния подключения (providerState.model),
-    // и после перезагрузки страницы или смены CLI в шапке ход уходил не туда, куда
-    // показывал выбор — то есть работали «другие модели» (решение владельца
-    // 2026-10-03).
+    // Провайдер, модель и глубина размышления — из строки выбора в шапке
+    // сессии, и больше ниоткуда (SYSTEM/session-model-bar.js). Это единственный
+    // источник: раньше модель бралась из состояния подключения
+    // (providerState.model), и после перезагрузки страницы или смены CLI в
+    // шапке ход уходил не туда, куда показывал выбор — то есть работали
+    // «другие модели» (решение владельца 2026-10-03).
+    //
+    // Читаем строку до подключения: подключение дозапрашивает каталог моделей и
+    // перерисовывает строку, а перерисовка не имеет права изменить то, что
+    // человек уже выбрал к этому моменту
     const providerId = getActiveProviderId();
-    const provider = PROVIDERS.find((p) => p.id === providerId);
-    const providerState = connections.get(providerId);
-    if (!providerState) {
-        addMessage(`${provider ? provider.name : 'Provider'} is not connected. Open Settings and click "Connect".`, 'error');
+    const provider = providerById(providerId);
+    // Ход идёт ровно тем, что выбрано в строке над сессией. Если строка не
+    // нарисована или в ней не выбрано — хода нет: подставлять вместо выбора
+    // что-то другое (дефолт проекта, состояние подключения, первую модель
+    // каталога) нельзя, потому что тогда человек читает одну настройку, а
+    // работает другая. Лучше сказать прямо и ждать выбора
+    const model = getActiveModel();
+    const effort = getActiveEffort();
+    if (!providerId || !model) {
+        addMessage('Choose a CLI and a model in the row above the chat.', 'error');
         return;
     }
-    const model = getActiveModel();
+    // Подключение выбранного CLI — часть отправки хода, а не отдельная забота
+    // человека: слово из строки выбора может быть неподключённым (список CLI
+    // меняется, а ход идёт сразу), и раньше такой выбор молча уводил ход на
+    // провайдера по умолчанию. Теперь ход подключает именно то, что человек
+    // выбрал, и если не вышло — говорит об этом тем же именем
+    const providerState = await ensureConnected(providerId);
+    if (!providerState) {
+        addMessage(`${provider ? provider.name : providerId} is not available. Check that the CLI is installed, or set its path in the environment variable.`, 'error');
+        return;
+    }
 
     addMessage(text, 'user');
 
@@ -287,6 +334,7 @@ export async function sendTurn(text, mode = 'Action') {
         agent: providerId,
         prompt: text,
         model,
+        effort,
         sessionId: state.sessionId,
         mode,
     }, handle);

@@ -9,7 +9,7 @@ window.SettingsModal = (function () {
 
     function init({
             settingsModal, api, closeMenu,
-            bindModelChoice, renderDefaultProviderRow, renderProviders, renderScreenshotScreen,
+            renderProviders, renderScreenshotScreen,
             renderTelegram, startTelegramRefresh, stopTelegramRefresh,
             startSandglassCountdown, stopSandglassCountdown,
         }) {
@@ -51,30 +51,22 @@ window.SettingsModal = (function () {
         // ---------- открытие окна настроек ----------
 
         // свежий список моделей подтягиваем при каждом открытии окна — иначе
-        // новые free-модели из `opencode models --refresh` видны только после
-        // Disconnect/Connect вручную, а каскад выбора модели выглядит frozen
+        // новые free-модели из `pi --list-models` видны только после
+        // Disconnect/Connect вручную, а строка выбора в шапке сессии выглядит
+        // frozen. Списком этим пользуется только шапка: выбора модели настройки
+        // не делают. Раньше открытие окна попутно решал, какая модель «должна»
+        // быть, и записывало это в хранилище — то есть само открытие настроек
+        // меняло модель хода. Теперь список только наполняет списки строки
+        // выбора, а её выбор остаётся тем, что поставил человек
         async function refreshConnectedModels() {
-            const state = App.connections.get(App.DEFAULT_AGENT);
-            if (!state?.installId) return;
+            const cliId = App.getActiveProviderId();
+            const state = cliId ? App.connections.get(cliId) : null;
+            if (!cliId || !state?.installId) return;
             try {
-                const result = await api('/api/agent/connect', { agent: App.DEFAULT_AGENT, id: state.installId });
+                const result = await api('/api/agent/connect', { agent: cliId, id: state.installId });
                 if (!result?.ok || !Array.isArray(result.models) || !result.models.length) return;
-                const provider = App.PROVIDERS.find((p) => p.id === App.DEFAULT_AGENT);
-                provider.models = result.models;
-                // выбор человека (App.modelOf) главнее свежего списка: пока он в этом
-                // списке, обновление моделей его не двигает. Иначе падает на дефолт
-                // проекта, и этот откат тоже запоминается — иначе витрина, каскад
-                // в карточке и строка выбора в шапке сессии разошлись бы на
-                // следующем же открытии окна
-                const wanted = App.modelOf(App.DEFAULT_AGENT);
-                if (!result.models.includes(wanted)) {
-                    provider.defaultModel = result.models.find((m) => m === App.DEFAULT_AGENT_MODEL)
-                        || result.models.find((m) => /-free$/i.test(m) || /:free$/i.test(m))
-                        || result.models.find((m) => m === 'opencode/big-pickle' || m === 'openrouter/openrouter/free')
-                        || result.models[0];
-                    App.saveModelChoice(App.DEFAULT_AGENT, provider.defaultModel);
-                }
-                if (!result.models.includes(state.model)) state.model = provider.defaultModel || result.models[0];
+                const provider = App.providerById(cliId);
+                if (provider) provider.models = result.models;
             } catch {
                 // сервер недоступен — показываем закэшированный список как есть
             }
@@ -82,9 +74,6 @@ window.SettingsModal = (function () {
 
         async function openSettings() {
             closeMenu();
-            // подписка на чужой выбор модели — с первого открытия окна (здесь
-            // window.App уже на месте, в отличие от верхнего уровня файла)
-            bindModelChoice();
             // окно всегда открывается на вкладке Providers, даже если в прошлый
             // раз закрыли на другой — соответствует текущему содержимому по умолчанию
             settingsTabItems.forEach((btn) => {
@@ -94,18 +83,17 @@ window.SettingsModal = (function () {
                 if (panel) panel.hidden = !active;
             });
             setSettingsHeaderVisibility(true);
-            renderDefaultProviderRow();
             renderProviders();
             renderScreenshotScreen();
             api('/api/telegram/state').then(renderTelegram);
             startTelegramRefresh();
             App.openModal(settingsModal);
             // свежие модели дотягиваем уже поверх открытого окна: connect стоит
-            // секунд (opencode опрашивает models.dev), держать закрытое окно ради
-            // этого — заставлять человека ждать
+            // секунд (pi опрашивает каталог моделей), держать закрытое окно ради
+            // этого — заставлять человека ждать. Список нужен строке выбора в
+            // шапке сессии: её уровни сужаются до настоящих имён моделей CLI
             await refreshConnectedModels();
             if (!settingsModal.hidden) {
-                renderDefaultProviderRow();
                 renderProviders();
                 App.renderSessionBarControls();
             }

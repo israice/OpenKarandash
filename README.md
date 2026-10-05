@@ -19,7 +19,7 @@ What is inside:
 | **Karandash** | Point at an element on the page, describe what is wrong — the assistant goes and fixes the sources |
 | **Settings** | Finding and connecting a CLI, the model, the effort, the subscription limits |
 
-Besides the Claude CLI the server can drive **OpenCode** — the same routes, another connector
+Besides the Claude CLI the server can drive **pi** — the same routes, another connector
 in the `AGENTS` table.
 
 ## Requirements
@@ -192,7 +192,7 @@ The **Graph** tab shows the project map. There is nothing to configure: on start
 
 **What becomes a node.** A project file, a section inside a large file (by the `// ---------- … ----------` separator comments), a top-level function, an API route and a past Claude session.
 
-The map includes **everything that physically sits in the project folder** — including hidden files and things git ignores: `.env`, `opencode.json`. There are exactly two exceptions, both unavoidable: `.git` (an internal database of thousands of objects, in which the project's contents are duplicated) and `DATA/` — everything the server produced itself: the vault is already present in the graph as nodes, and walking it again would breed notes about notes with every rebuild.
+The map includes **everything that physically sits in the project folder** — including hidden files and things git ignores: `.env`, `.mcp.json`. There are exactly two exceptions, both unavoidable: `.git` (an internal database of thousands of objects, in which the project's contents are duplicated) and `DATA/` — everything the server produced itself: the vault is already present in the graph as nodes, and walking it again would breed notes about notes with every rebuild.
 
 **Where the links come from.** Only from anchor points, not from matching names: `/api/...` string literals (which is why you can see who calls which route), `src`/`href` in markup, `require`/`import`, function calls inside a file, `[[…]]` links in notes. Separately there is git history: files that change together, and when a file first appeared.
 
@@ -231,12 +231,12 @@ OBSIDIAN_VAULT="C:/path/to/vault" node server.js
 
 | Path | Purpose |
 | --- | --- |
-| `server.js` | A thin entry point: `.env`, module wiring, route table, `listen`. Everything with a topic of its own lives in a module: `SYSTEM/core/` is the shared plumbing (`env`, `watchdog`, `watch`, `version`, `http-server`, `api`, `runs`, `run-turn`, `handoff`, `session-list`, `sessions-routes`, `agent-routes`, `sessions-db`), `SYSTEM/cli/` is the agent layer (connectors, process spawn, cooldown, handover, turns started outside the browser) |
+| `server.js` | A thin entry point: `.env`, module wiring, route table, `listen`. Everything with a topic of its own lives in a module: `SYSTEM/core/` is the shared plumbing (`env`, `watchdog`, `watch`, `version`, `http-server`, `api`, `runs`, `run-turn`, `handoff`, `session-list`, `sessions-routes`, `agent-routes`, `sessions-db`), `SYSTEM/cli/` is the agent layer (connectors, process spawn, the turn itself, memory of what broke, turns started outside the browser) |
 | `SYSTEM/` | The client shell: `index.html`, `app.js`, `tabs.js`, the toolbar and panel scripts, `core/` (server plumbing), `cli/` (CLI connectors), `styles/`, `assets/` |
 | `PROJECTS/<Section>/*.eta` | Templates for the server fragments that htmx pulls in — next to the feature that renders them |
 | `PROJECTS/<Section>/` | One folder per interface section — client, styles, the server half and its own README. A page created by the toolbar's «+» button is one of these too: its `page.js` *is* the page |
 | `DOCS/decisions/` | Why something in the project is done the way it is; a new decision goes here when the "why" is not visible from the code |
-| `AGENTS.md` | The project rules for the agent that works in this repo — OpenCode, the only one left (`DOCS/decisions/078`) |
+| `AGENTS.md` | The project rules for the agent that works in this repo — pi, the only one left (`DOCS/decisions/078`, `094`) |
 | `TOOLS/` | Helper scripts that belong to no section: the live-verification scenarios and the script that counts the next version and decision number |
 | `VERSION.md` | The version history; its last `DEV LOG` line is the single source of truth about the version |
 | `PLAN.md` | The plan for splitting the code into modules |

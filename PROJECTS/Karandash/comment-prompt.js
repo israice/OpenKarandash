@@ -2,18 +2,30 @@
 //
 // Живёт отдельно от karandash.js: там режим (наведение, колесо, окно, снимок),
 // а здесь — что из выбранного элемента уезжает в запрос. Список строк растёт
-// (описание, место в коде, текущий вид, текст элемента), и держать его в файле
-// режима значит растить файл, который и так уже велик (DOCS/decisions/022).
+// (описание, место в коде, текущий вид, текст элемента, дерево фичи), и держать
+// его в файле режима значит растить файл, который и так уже велик (решение 022).
 //
 // Каждая строка снимает один заход агента за файлом или браузером: описание
-// element-desc.js, место в коде element-code.js, числа element-style.js. Здесь
-// только строки — как их собирать, знает тот, кто отвечает за каждую.
+// element-desc.js, место и контекст element-code.js, числа element-style.js.
+// Здесь только строки — как их собирать, знает тот, кто отвечает за каждую.
 (function () {
     // у контейнеров в textContent лежит всё их содержимое — такой «текст элемента»
     // только зашумляет вопрос, поэтому берём его лишь у коротких элементов
     const TEXT_LIMIT = 120;
 
-    function build(el, comment, place, hostFrame) {
+    // дерево фичи едет одной строкой, а не планом чтения: агенту нужно знать,
+    // что эти файлы вообще есть и что он может их открыть, — а не обязаны читать
+    function featureLine(context) {
+        if (!context || !context.siblings.length) return null;
+        return context.siblings.join(', ');
+    }
+
+    // found — пара из element-code.js: `place` (строка `Code:`) и `context`
+    // (секция, соседи по фиче, обратные ссылки). Разделены, потому что в строку
+    // `Code:` попадают все места, а контекст один — у того, где элемент создаётся
+    function build(el, comment, found, hostFrame) {
+        const place = found?.place || '';
+        const context = found?.context || null;
         const text = (el.textContent || '').trim().replace(/\s+/g, ' ');
         const lines = [`UI element: ${window.KarandashDesc.describe(el, hostFrame)}`];
         if (place) lines.push(`Code: ${place}`);
@@ -22,6 +34,10 @@
         const look = window.KarandashStyle?.computed(el);
         if (look) lines.push(`Current look: ${look}`);
         if (text && text.length <= TEXT_LIMIT) lines.push(`Element text: ${text}`);
+        if (context?.section) lines.push(`Section: ${context.section}`);
+        const feature = featureLine(context);
+        if (feature) lines.push(`Feature files: ${feature}`);
+        if (context?.referrers?.length) lines.push(`Referenced by: ${context.referrers.join(', ')}`);
         lines.push(`Comment: ${comment}`);
         return lines.join('\n');
     }

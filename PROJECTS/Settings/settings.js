@@ -134,8 +134,8 @@
     // ---------- части раздела ----------
 
     // Порядок вызовов повторяет прежний порядок кода в этом файле: сначала список
-    // провайдеров (в нём же витрина выбора модели), потом скриншоты и Telegram, потом
-    // счётчик Sandglass, и последним окно настроек — оно зовёт их всех при открытии.
+    // провайдеров, потом скриншоты и Telegram, потом счётчик Sandglass, и
+    // последним окно настроек — оно зовёт их всех при открытии.
     const providers = window.SettingsProviders.init({ settingsModal, pickerModal, api });
     const screenshot = window.SettingsScreenshot.init({ settingsModal, api });
     const telegram = window.SettingsTelegram.init({ settingsModal, api });
@@ -145,8 +145,6 @@
         settingsModal,
         api,
         closeMenu,
-        bindModelChoice: providers.bindModelChoice,
-        renderDefaultProviderRow: providers.renderDefaultProviderRow,
         renderProviders: providers.renderProviders,
         renderScreenshotScreen: screenshot.renderScreenshotScreen,
         renderTelegram: telegram.renderTelegram,

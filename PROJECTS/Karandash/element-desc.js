@@ -111,6 +111,22 @@
         return same.length > 1 ? `${same.indexOf(el) + 1} of ${same.length}` : null;
     }
 
+    // имена, по которым сервер ищет место элемента в коде: id и классы без
+    // служебных. Служебные отбрасываем по той же причине, что и в пути: по
+    // `is-active` в коде нет ни одной строки, искать по нему бессмысленно.
+    // id идёт первым — он в проекте уникален, а классов у элемента бывает
+    // несколько, и узкий ответ по id лучше широкого по классу
+    function hooksOf(el) {
+        const out = [];
+        if (el.id) out.push(el.id);
+        if (typeof el.className === 'string') {
+            for (const c of el.className.trim().split(/\s+/)) {
+                if (c && !STATE_CLASS.test(c) && !out.includes(c)) out.push(c);
+            }
+        }
+        return out.slice(0, 6);
+    }
+
     function describe(el, hostFrame) {
         const id = el.id ? '#' + el.id : '';
         const cls = typeof el.className === 'string' && el.className
@@ -140,5 +156,5 @@
         return parts.join(' ');
     }
 
-    window.KarandashDesc = { describe };
+    window.KarandashDesc = { describe, hooksOf };
 })();

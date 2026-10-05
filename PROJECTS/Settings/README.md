@@ -8,7 +8,7 @@ Settings is not a separate tab but the `settingsButton` gear in the right corner
 
 The section has exactly one, very concrete job: **connect the interface to the real CLI on your machine**. The server looks for the CLI on this machine, remembers the one it found — and after that the Sessions tab starts sending messages to a real model rather than into the void.
 
-The agent of the project is **OpenCode**, and the card list holds exactly one card: Claude, Codex and pi were removed from the project by the owner's decision (`DOCS/decisions/074`, `075`). The four dropdowns in the session header stayed in place — with a single CLI the first of them shows one option, and the place is still needed if another CLI ever comes back.
+The agent of the project is **pi** (`@earendil-works/pi-coding-agent`), and the card list holds exactly one card: Claude, Codex and OpenCode were removed from the project by the owner's decision (`DOCS/decisions/074`, `075`, `078`, `094`). The four dropdowns in the session header stayed in place. Their first level (CLI) lists exactly the agents OpenRouter publishes on its "CLI agents" page (`SYSTEM/cli-agents.js`, refreshed by the server once an hour and cached in `localStorage`), plus a disabled **Add** row at the bottom; the project's own providers are not mixed into that list and can only get in through Add. Most of those entries have no connector behind them, so picking one leaves Gateway / Provider / Model blank and the turn still goes to the real agent — a listed name is a real one only when it matches a provider id, `pi` being that one now.
 
 There are two levels of settings in the project, and it matters not to confuse them:
 
@@ -17,12 +17,12 @@ There are two levels of settings in the project, and it matters not to confuse t
 
 ## 🎛 What can be configured
 
-- **The provider.** The dialog has one card: **OpenCode** — local and third-party models, with a "Connect" / "Disconnect" button.
-- **The model.** It is picked in four dropdowns in one row — **CLI / Gateway / Provider / Model**. That is one cascade over the model name the CLI reports, not four independent choices: `openrouter/stealth/space-bunny-alpha` is gateway `openrouter` (where the request goes), provider `stealth` (who is behind it) and model `space-bunny-alpha`. A short name with no middle level (`opencode/claude-sonnet-5`) leaves the provider with a single dash and it goes inactive. The row sits twice: as a showcase at the top of the Providers tab (visible whether or not anything is connected) and under the card of a connected provider. OpenCode has no hard-coded list at all: the server asks the CLI itself on connect (`opencode models --refresh`), so what you see is whatever that CLI is logged into — before the first connect the cascade is built from the single default model of the project.
+- **The provider.** The dialog has one card: **pi** — local and third-party models, with a "Connect" / "Disconnect" button.
+- **The model.** It is not picked here. Five dropdowns in one row — **CLI / Gateway / Provider / Model / Effort** — stand in the header of the active session on the Sessions tab, and that row is the only place the choice is made (`SYSTEM/session-model-bar.js`). It is one cascade over the model name the CLI reports, not five independent choices: `openrouter/stealth/space-bunny-alpha` is gateway `openrouter` (where the request goes), provider `stealth` (who is behind it) and model `space-bunny-alpha`. A short name with no middle level (`pi/gpt-4o-mini`) leaves the provider with a single dash and it goes inactive. pi has no hard-coded list at all: the server asks the CLI itself on connect (`pi --list-models`), so what you see is whatever that CLI is logged into — before the first connect the cascade is built from the single default model of the project. The rows used to stand in this dialog too (a showcase at the top of the tab and one under the card of a connected provider); they were removed because two places to choose from are two answers, and connecting here quietly put this dialog's default back over the choice made in the header.
 - **The toolbar button order.** A long press (2 seconds) on any `.toolbar` button enables "wobble" mode — the buttons can be dragged with the mouse, `Esc` exits, and the order is saved. The gear does not take part in this: it sits outside `.toolbar`.
 - **The session panel width** — also an appearance setting, and it also survives a reload (see the storage table).
 
-The same four dropdowns stand in the header of the active session on the Sessions tab. It is not a copy: all three rows come from one factory (`SYSTEM/model-cascade.js`), write the choice through one function and read it back from the same storage — so a change in any of them is visible in the other two at once, survives a page reload, and the next message in the current session goes out with the new one.
+The five dropdowns stand in the header of the active session on the Sessions tab, and nothing else duplicates them: the choice is written by one function (`applyModelChoice`), read back from the same storage and survives a page reload, so the next message in the current session goes out with the model shown in that row.
 
 ## 🔌 Connecting a CLI
 
@@ -33,7 +33,7 @@ Pressing "Connect" starts a real reconnaissance rather than flipping a switch:
 3. Then it depends on how many were found: **one** environment — connect immediately; **several** — the `#pickerModal` dialog "Where should the CLI run?" opens with a list; **none** — the same dialog with a hint that the CLI was not found and that a path can be given through the matching environment variable.
 4. The choice goes to `POST /api/agent/connect`; the server remembers the environment in memory and answers with a label, a version and the list of models the CLI itself reported.
 
-Where the server looks for the CLI (on the example of OpenCode): `opencode.exe` in `PATH`, and if it is not there — in `~/.opencode/bin/opencode.exe`. The path can also be given explicitly: `OPENCODE_BIN` in `.env`. If it is set, the search stops there and that one path is used, labelled with the name of the variable.
+Where the server looks for the CLI: on Windows it takes `where pi` (the npm shims `pi`, `pi.cmd`, `pi.ps1` cannot be spawned without a shell) and runs the package entry `@earendil-works/pi-coding-agent/dist/bundle/cli.js` with the same node the server runs on; if `pi` is not in `PATH`, the standard global npm folder is checked. On Linux it is simply `pi` in `PATH`. The path can also be given explicitly: `PI_BIN` in `.env`. If it is set, the search stops there and that one path is used, labelled with the name of the variable.
 
 **The connection does not fall off.** The environment, the model and the CLI session id are saved in the browser. When the page opens, the state is restored, and if the server has restarted in the meantime the page quietly hands it the chosen environment again with a repeat `connect`. The "Disconnect" button removes the record and resets the active session.
 
@@ -77,7 +77,7 @@ https address, and the server lives on localhost. Details — `DOCS/decisions/02
 | `PORT` | `3001` | The server port. It is taken strictly from here, with no fallback to neighbouring ports: a second copy on the same folder would fight over `DATA/.sessions.db`/`DATA/.index.db` and overwrite `DATA/vault/`. If the port is busy, the server honestly exits. |
 | `TELEGRAM_BOT_TOKEN` | not set | The Telegram bot key. Filled from Settings; with it empty the bridge simply does not start. |
 | `TELEGRAM_USER_IDS` | not set | The ids the bot writes to and accepts messages from, comma separated. Also filled from Settings. |
-| `OPENCODE_BIN` | not set | The path to the OpenCode executable if it is not in `PATH`. If set, its search in `PATH` is disabled. |
+| `PI_BIN` | not set | The path to the pi executable if it is not in `PATH`. If set, its search in `PATH` is disabled. |
 | `OBSIDIAN_VAULT` | the `vault/` folder in the project | An external Obsidian vault instead of the built-in one: this is where the server writes the project map that feeds search and the file editor. |
 | `NO_RELOAD` | not set | `NO_RELOAD=1` disables the server's self-restart on edits to `server.js`. It is not part of the `.env` template but is read from there like the rest. |
 | `SERVER_CHILD` | — | Internal: the server sets it on the child process itself. Do not touch by hand. |
@@ -88,8 +88,8 @@ The format is simple: `KEY=value`, lines starting with `#` and empty lines are s
 
 | What | Where | Key / file |
 | --- | --- | --- |
-| CLI environment, model, session id | browser `localStorage` | `noname.opencode` |
-| The model picked in the four dropdowns, before any connect | `localStorage` | `noname.model.opencode` |
+| CLI environment, model, session id | browser `localStorage` | `noname.pi` |
+| The model picked in the session header, before any connect | `localStorage` | `noname.model.pi` |
 | The button order in the toolbars | `localStorage` | `toolbarOrder` |
 | The session panel width | `localStorage` | `sessionsPanelWidth` |
 | The camera, nodes, edges and agent in Flow | `localStorage` | `flowCanvasViews`, `flowNodePositions2`, `flowNodeGraph3`, `flowNodeSecretaryAgent` |
