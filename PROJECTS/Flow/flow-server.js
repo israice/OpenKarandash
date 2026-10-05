@@ -8,8 +8,13 @@
 // (profiles-server.js, DOCS/decisions/022: один файл — одна тема); здесь только
 // подмешивание её маршрутов, чтобы server.js по-прежнему знал одну точку входа.
 
+const { Eta } = require('eta');
 const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
+const { sendHtml } = require('../../SYSTEM/core/http.js');
 const profiles = require('./profiles-server.js');
+
+// свой Eta с views = своя папка (см. PROJECTS/Sessions/sessions-server.js)
+const eta = new Eta({ views: __dirname, cache: false });
 
 function createRoutes({ db }) {
     db.exec(`
@@ -27,6 +32,10 @@ function createRoutes({ db }) {
 
     return {
         ...profiles.createRoutes(),
+
+        '/api/fragment/flow': (req, res) => {
+            sendHtml(res, eta.render('flow', {}));
+        },
 
         '/api/flow/state': (req, res) => {
             const state = {};

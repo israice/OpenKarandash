@@ -1,10 +1,21 @@
-// Выпадающий список сессий слева в тулбаре Flow (см. #flowSessionSelect в SYSTEM/index.html):
-// строит граф нод текущего канваса из сообщений выбранной сессии (SYSTEM/app.js). Сама
-// сборка (белый текст — цепочка вправо, серый текст шагов — цепочка вниз под ним)
+// Выпадающий список сессий слева в тулбаре Flow (см. #flowSessionSelect в
+// PROJECTS/Flow/flow.eta): строит граф нод текущего канваса из сообщений
+// выбранной сессии (SYSTEM/app.js). Сама сборка (белый текст — цепочка вправо, серый текст шагов — цепочка вниз под ним)
 // живёт в PROJECTS/Flow/flow-session-build.js, здесь сбор данных и вызов MissionFlow.buildFromSession,
 // плюс живое обновление: если сессия сейчас выполняется, подключаемся к её потоку
 // (/api/sessions/attach) и перестраиваем граф по мере появления новых сообщений.
-(function () {
+(async function () {
+    // разметка приходит серверным фрагментом (/api/fragment/flow) — ждём её
+    // появления, прежде чем трогать элементы полотна: раньше разметка была
+    // inline в SYSTEM/index.html и тащилась в DOM до выполнения defer-скриптов.
+    // #flowSessionSelect ждём не здесь — он в SYSTEM/topbar.eta и приходит
+    // серверной сборкой вместе со страницей; здесь важна разметка #flowView
+    // (#flowNav, #flowCanvas), без неё обработчики ниже не повесились бы
+    const hardDeadline = Date.now() + 10000;
+    while (!document.getElementById('flowNav')) {
+        if (Date.now() > hardDeadline) return;
+        await new Promise((r) => setTimeout(r, 50));
+    }
     const select = document.getElementById('flowSessionSelect');
     if (!select) return;
 

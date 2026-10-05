@@ -1,5 +1,6 @@
 // Вкладка Flow целиком: полотно с зумом и панорамированием плюс карточка ноды
-// (стили — PROJECTS/Flow/flow.css, разметка #flowView — в SYSTEM/index.html рядом с остальными видами).
+// (стили — PROJECTS/Flow/flow.css, разметка — PROJECTS/Flow/flow.eta через
+// /api/fragment/flow; #flowView в SYSTEM/index.html остаётся только контейнером).
 // Сам этот файл — только сборка: хранилище состояния, порядок модулей и отложенные
 // вызовы. Всё предметное разложено по темам в соседних файлах, каждый отвечает за
 // одну: меню, полотно, состояние ноды, панели профиля, селекторы, рёбра, раскладка,
@@ -39,6 +40,13 @@
     // страницы (SYSTEM/boot.js): незагруженный Flow рисуется пустым, и страница
     // открылась бы наполовину собранной
     window.MissionBoot?.task('flow', init());
+    async function waitForFlowMarkup() {
+        const hardDeadline = Date.now() + 10000;
+        while (!document.getElementById('flowCanvas')) {
+            if (Date.now() > hardDeadline) return;
+            await new Promise((r) => setTimeout(r, 50));
+        }
+    }
     async function init() {
 
     // хранилище вкладки Flow целиком — раньше localStorage, теперь БД
@@ -83,6 +91,12 @@
     }
 
     // нода «New»: дата/время открытия и имя проекта
+    // Разметка полотна приходит серверным фрагментом (PROJECTS/Flow/flow.eta →
+    // /api/fragment/flow, hx-get на #flowBody), поэтому сначала ждём её появления:
+    // без этого init трогал бы document и запускал FlowCanvas до того, как htmx
+    // вставил ответ. Заслон boot.js её уже отслеживает, но порядок событий
+    // здесь надёжнее, чем тайминг htmx:afterSettle.
+    await waitForFlowMarkup();
     const startMeta = document.getElementById('flowNodeStartMeta');
     if (startMeta) {
         startMeta.textContent = '';
