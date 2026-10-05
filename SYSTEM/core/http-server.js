@@ -29,6 +29,27 @@ function isLocalRequest(req) {
         || address.startsWith('127.');
 }
 
+// Host, которому отвечаем: только loopback-имена — тот же круг, что в
+// isLocalRequest, но по заголовку, а не по адресу соединения: страница с чужого
+// домена, перерезолвлившаяся на 127.0.0.1 (DNS rebinding), приходит с Host
+// этого домена и получает отказ здесь, не доходя до маршрутов (DOCS/decisions/103)
+function isLocalHost(req) {
+    const raw = req.headers.host;
+    // HTTP/1.0 без Host: сверять не с чем, локальность уже доказана isLocalRequest
+    if (raw === undefined) return true;
+    const host = String(raw).toLowerCase();
+    const name = host.startsWith('[')
+        ? host.slice(1, host.indexOf(']') > 0 ? host.indexOf(']') : host.length)
+        : host.replace(/:\d+$/, '');
+    return name === 'localhost' || name === '::1' || /^127\./.test(name);
+}
+
+// Служебные пути статикой не отдаются: .env и .git в любом месте дерева,
+// DATA/ и .kilo/ первым сегментом (DOCS/decisions/103). Ответ такой же, как у
+// несуществующего файла, — по коду не отличить, есть ли файл. Регистр не важен:
+// файловая система Windows чувствительна к регистру только по написанию
+const DENY_STATIC = /(?:^|\/)\.env(?:\/|$)|(?:^|\/)\.git(?:\/|$)|^\/(?:DATA|\.kilo)(?:\/|$)/i;
+
 // createServer({ root, liveReload, reload, api, branch }):
 //   reload — живая перезагрузка (канал /__reload и скрипт страницы)
 //   api    — обработчик /api/* (core/api.js)
@@ -38,6 +59,12 @@ function createServer({ root, liveReload, reload, api, branch }) {
         if (!isLocalRequest(req)) {
             res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
             res.end('403 Forbidden: the server only answers local requests');
+            return;
+        }
+
+        if (!isLocalHost(req)) {
+            res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+            res.end('403 Forbidden: unknown Host header');
             return;
         }
 
@@ -56,6 +83,11 @@ function createServer({ root, liveReload, reload, api, branch }) {
         } catch {
             res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
             res.end('400 Bad Request: cannot parse the request URL');
+            return;
+        }
+
+        if (DENY_STATIC.test(urlPath)) {
+            res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('404 Not Found');
             return;
         }
 

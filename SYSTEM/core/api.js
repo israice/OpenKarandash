@@ -5,9 +5,30 @@
 // только складывает (см. server.js) и больше ничего о маршрутах не знает.
 const { sendJson, sendHtml, escapeHtml } = require('./http.js');
 
+// CSRF-граница: браузерный запрос обязан исходить со своей страницы
+// (DOCS/decisions/103; OWASP Cross-Site Request Forgery Prevention Cheat Sheet —
+// проверка Origin как первичная защита). POST приходит с Origin, равным Host;
+// GET — с Sec-Fetch-Site, потому что у same-origin GET Origin не ставят. Оба
+// заголовка отсутствуют — запрос не из браузера, и локальность его уже
+// доказана isLocalRequest в http-server.js
+function sameOrigin(req) {
+    const origin = req.headers.origin;
+    if (origin !== undefined) {
+        const host = req.headers.host;
+        return host !== undefined && String(origin).toLowerCase() === `http://${String(host).toLowerCase()}`;
+    }
+    const site = req.headers['sec-fetch-site'];
+    if (site === undefined) return true;
+    return site === 'same-origin' || site === 'none';
+}
+
 // createApi(routes) — обработчик запроса для http-server.js
 function createApi(routes) {
     return async function handleApi(req, res, urlPath) {
+        if (!sameOrigin(req)) {
+            sendJson(res, { ok: false, error: 'Cross-origin request rejected' }, 403);
+            return;
+        }
         // фрагменты только читают состояние, и htmx тянет их обычным hx-get —
         // остальному API по-прежнему нужен POST. Исключение второе: картинки по
         // адресу (/api/image/*) — их тоже забирает браузер сам, GET'ом, и в
