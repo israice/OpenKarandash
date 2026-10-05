@@ -90,7 +90,10 @@
     }
 
     function openFile(path) {
-        fileEditorPanel().open({ file: path, kind: 'file', label: path });
+        // промис отдаём наружу: на первой сборке страницы README открывается
+        // асинхронно, и его ждёт заслон (SYSTEM/boot.js) — иначе правая половина
+        // вкладки доезжала бы уже после показа страницы
+        return fileEditorPanel().open({ file: path, kind: 'file', label: path });
     }
 
     function closePanel() {
@@ -200,7 +203,7 @@
     function show() {
         list.innerHTML = '';
         for (const entry of collectEntries()) list.append(buildCard(entry));
-        openFile('README.md');
+        window.MissionBoot?.task('book', openFile('README.md'));
     }
 
     window.MissionBookTab = { show, openFile, closePanel };

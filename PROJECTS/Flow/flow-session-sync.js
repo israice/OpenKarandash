@@ -176,13 +176,36 @@
         // успел выбрать сессию сам) или select — скрыться (см. «321» в flow-nav.js):
         // молча перестраивать чужой канвас нельзя
         if (!followingLatest || select.hidden || select.value !== newest.id) return;
-        syncFromSession(newest.id);
+        await syncFromSession(newest.id);
     }
 
-    (async () => {
-        const sessions = await reloadList();
-        await followNewest(sessions);
-    })();
+    // список сессий в этом списке — часть страницы, поэтому его сборка входит
+    // в первую сборку заслоном (SYSTEM/boot.js): показанный список без пунктов
+    // человек видит пустым, а потом видит, как он заполняется
+    const firstList = reloadList();
+    window.MissionBoot?.task('flow-sessions', firstList);
+    const startup = firstList.then(followNewest).catch(() => {});
+    // Граф канваса — тоже часть страницы, когда открыта именно вкладка Flow:
+    // без него показывали пустой холст, а ноды дорисовывались на глазах. Открыта
+    // ли вкладка Flow, видно по метке data-restored-view на <html>: её ставит
+    // скрипт в <head> (SYSTEM/index.html), а снимает SYSTEM/tabs.js — на
+    // DOMContentLoaded, то есть уже после выполнения этого файла.
+    if (document.documentElement.getAttribute('data-restored-view') === 'flow') {
+        // вкладку Flow могли открыть и тут же увести (ход идущей сессии открывает
+        // Sessions сам, restoreOnLoad) — тогда графа ждать незачем, и без этого
+        // ждал бы заслон до потолка по простою
+        const shownThenHidden = whenFlowViewVisible().then(() => new Promise((resolve) => {
+            const view = document.getElementById('flowView');
+            if (view.hidden) return resolve();
+            const observer = new MutationObserver(() => {
+                if (!view.hidden) return;
+                observer.disconnect();
+                resolve();
+            });
+            observer.observe(view, { attributes: true, attributeFilter: ['hidden'] });
+        }));
+        window.MissionBoot?.task('flow-canvas', Promise.race([startup, shownThenHidden]));
+    }
     select.addEventListener('change', () => {
         // ручной выбор в select — человек решил сам, дальше автослежение за
         // новыми сессиями (включая возврат на плейсхолдер) ему не указ
