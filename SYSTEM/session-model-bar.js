@@ -18,7 +18,7 @@ import { saveActiveProvider, loadActiveProvider } from './providers.js';
 import {
     modelCascadeRow, applyModelChoice, modelOf, onModelChoice, publishModelChoice,
 } from './model-cascade.js';
-import { onCliAgents, cliAgentNames } from './cli-agents.js';
+import { onCliAgents, cliLevelNames } from './cli-agents.js';
 
 // Текущая отрисовка каскада в шапке и CLI, выбранный в нём последним: строка
 // перерисовывается на каждую смену сессии, и без этой памяти выбранный в шапке
@@ -42,7 +42,7 @@ export function renderSessionBarControls() {
     // Какие CLI строка считает своими: те, что назвал сайт, плюс выбранный
     // последним (даже если он сейчас не подключён — иначе перерисовка строки
     // вернула бы уровень CLI на первый в списке и ход пошёл бы не туда)
-    const ids = [...new Set([...cliAgentNames(), ...(barCliId ? [barCliId] : [])])];
+    const ids = cliLevelNames(barCliId ? [barCliId] : []);
     // Пока строка не перерисована, выбранного CLI в ней нет — берём его из того
     // же хранилища, куда строка пишет выбор сама (saveActiveProvider в onChange
     // ниже). Это не второй источник, а тот же выбор, переживший перезагрузку

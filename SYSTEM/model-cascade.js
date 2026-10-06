@@ -13,7 +13,7 @@
 import {
     providerById, connections, saveProviderState, saveLevelChoice, loadLevelChoice,
 } from './providers.js';
-import { cliAgentNames } from './cli-agents.js';
+import { cliLevelNames } from './cli-agents.js';
 import { modelLevels, modelPath } from './model-path.js';
 import { levelWithAdd, ignoreAdd } from './model-add-option.js';
 import { fillEffortLevel, saveEffort } from './model-effort.js';
@@ -146,7 +146,7 @@ export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = fals
     // CLI должен остаться в списке, даже если сайт его не назвал. Слово из
     // этого списка — то, что уходит в CLI: коннектор один на всех и работает с
     // любым именем (SYSTEM/cli/any.js)
-    const cliValues = () => [...new Set([...cliAgentNames(), ...cliIds])];
+    const cliValues = () => cliLevelNames(cliIds);
 
 // Уровень с пунктом «Add» внизу наполняется через levelWithAdd: сейчас это
 // два верхних уровня — CLI и Gateway, где появляется новое; Provider, Model и

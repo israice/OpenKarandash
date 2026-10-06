@@ -25,6 +25,14 @@ export const SNAPSHOT = [
     'Hermes Web UI', 'PostQode', 'Mage', 'JiuwenSwarm',
 ];
 
+// Наши собственные CLI: не с сайта, а наши. Такой стоит в уровне CLI всегда и
+// первым, независимо от того, назвал его сайт или нет, а из списка сайта он
+// убирается: иначе в раскрытом списке шапки оказалось бы две одинаковые строки
+// подряд, и выбор между ними ничего бы не менял. Список сайта он не портит —
+// сравнение с ним идёт по тому, что пришло с сайта (changed в loadCliAgents), а
+// не по нашему списку
+export const OWN_CLI = ['opencode'];
+
 const LIST_KEY = 'noname.cliAgents';
 const CHECKED_KEY = 'page3.checkedAt';
 const HOUR = 60 * 60 * 1000;
@@ -44,6 +52,14 @@ export function cliAgentNames() {
         // приватный режим или запрет на хранилище — читаем снимок из файла
     }
     return SNAPSHOT;
+}
+
+// Список имён для уровня CLI в каскаде: сперва наши собственные, потом сайт без
+// них, потом (по словам вызывающего) подключённый CLI. Наборы сливаются в один
+// без повторов: свой CLI, названный сайтом, иначе стоял бы в списке дважды
+export function cliLevelNames(extra = []) {
+    const fromSite = cliAgentNames().filter((name) => !OWN_CLI.includes(name));
+    return [...new Set([...OWN_CLI, ...fromSite, ...extra])];
 }
 
 // Пункт списка CLI, у которого нет своего коннектора: название как есть, но
