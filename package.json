@@ -14,6 +14,7 @@
     "@dimforge/rapier3d-simd-compat": "0.19.3",
     "eta": "3.5.0",
     "htmx.org": "2.0.4",
+    "node-screenshots": "^0.2.8",
     "three": "0.180.0"
   },
   "devDependencies": {
