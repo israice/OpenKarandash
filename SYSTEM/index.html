@@ -109,7 +109,14 @@
          (шестерёнка настроек, кнопка Karandash), и верхний ряд дёргался на глазах.
          Здесь остаётся только сама полка: её высота заложена в тело каждой
          вкладки через --topbar-height, поэтому она должна быть в разметке страницы. -->
-    <div class="topbar" id="topbar">{{TOPBAR}}</div>
+    <!-- hx-get + hx-swap="innerHTML" + hx-trigger="fragment-reload": правка
+         topbar.eta доезжает точечной подменой innerHTML (событие fragment:topbar,
+         htmx.ajax в SYSTEM/core/watch.js). hx-trigger намеренно не «load»:
+         тогда htmx перефетчит фрагмент при загрузке страницы и подменит
+         SSR-разметку свежей копией; «fragment-reload» — событие, которое
+         никто не шлёт, оно только перебивает дефолтный click-триггер htmx
+         на div. -->
+    <div class="topbar" id="topbar" hx-get="/api/fragment/topbar" hx-swap="innerHTML" hx-trigger="fragment-reload">{{TOPBAR}}</div>
 
     <div class="view view--side" id="flowView" hidden>
         <!-- Разметка полотна живёт в PROJECTS/Flow/flow.eta и подставляется сервером:
@@ -126,17 +133,17 @@
          в PROJECTS/Settings, сервер — telegram-server.js): разметка приходит
          готовой из серверной сборки страницы, telegram.js только вешает
          обработчики и индикатор связи. Стоит перед Sessions, как и раньше. -->
-    <div class="view view--telegram" id="telegramView" hidden>{{TELEGRAM_VIEW}}</div>
+    <div class="view view--telegram" id="telegramView" hidden hx-get="/api/fragment/telegram-view" hx-swap="innerHTML" hx-trigger="fragment-reload">{{TELEGRAM_VIEW}}</div>
 
     <!-- Вкладка Sessions целиком живёт в PROJECTS/Sessions: разметка —
          session-view.eta сервером подставляется на место заглушки,
          стили лежат рядом. -->
-    <div class="view view--sessions" id="chatView" hidden>{{SESSION_VIEW}}</div>
+    <div class="view view--sessions" id="chatView" hidden hx-get="/api/fragment/session-view" hx-swap="innerHTML" hx-trigger="fragment-reload">{{SESSION_VIEW}}</div>
 
     <!-- Вкладка Book: разметка — book-view.eta; сервер подставляет её на
          место заглушки BOOK_VIEW и раздаёт моментный маршрут; book-tab.js
          только карточки и README. -->
-    <div class="view view--side view--book" id="bookView" hidden>{{BOOK_VIEW}}</div>
+    <div class="view view--side view--book" id="bookView" hidden hx-get="/api/fragment/book-view" hx-swap="innerHTML" hx-trigger="fragment-reload">{{BOOK_VIEW}}</div>
 
     <div class="shot-lightbox" id="shotLightbox" hidden>
         <img id="shotLightboxImg" src="" alt="">
@@ -147,7 +154,7 @@
     <!-- Модалка настроек и окно выбора CLI: шаблон PROJECTS/Settings/settings-modal.eta,
          подставляется сервером на место заглушки SETTINGS_MODAL; логика —
          settings.js и входящие модули Settings. -->
-    {{SETTINGS_MODAL}}
+    <div id="settingsSlot" hx-get="/api/fragment/settings-modal" hx-swap="innerHTML" hx-trigger="fragment-reload">{{SETTINGS_MODAL}}</div>
 
     <div class="modal file-modal" id="fileModal" hidden>
         <div class="modal__backdrop" data-close-modal></div>
