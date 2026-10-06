@@ -20,6 +20,22 @@
         return context.siblings.join(', ');
     }
 
+    // строка `Control:` — состояние контрола в момент клика: что за элемент,
+    // что в нём выбрано и как называются соседние пункты. В описание элемента
+    // это уже вошло короткой строкой, но там оно прижато к селектору и теряется
+    // среди классов, а здесь читается отдельным фактом — и снимает заход в файл
+    // ради двух значений, которые стоили одного клика. Строка пропускается там,
+    // где контрола нет (текст, контейнер): описывать нечего
+    function controlLine(el) {
+        const info = window.KarandashDesc.controlOf?.(el);
+        if (!info || !info.control) return null;
+        const parts = [`${info.control}`];
+        if (info.selected) parts.push(`выбрано «${info.selected}»`);
+        if (info.preview?.length) parts.push(`первые: ${info.preview.join(', ')}`);
+        if (info.disabled) parts.push('неактивен');
+        return parts.join(', ');
+    }
+
     // found — пара из element-code.js: `place` (строка `Code:`) и `context`
     // (секция, соседи по фиче, обратные ссылки). Разделены, потому что в строку
     // `Code:` попадают все места, а контекст один — у того, где элемент создаётся
@@ -28,6 +44,8 @@
         const context = found?.context || null;
         const text = (el.textContent || '').trim().replace(/\s+/g, ' ');
         const lines = [`UI element: ${window.KarandashDesc.describe(el, hostFrame)}`];
+        const control = controlLine(el);
+        if (control) lines.push(`Control: ${control}`);
         if (place) lines.push(`Code: ${place}`);
         // вычисленные стили — украшение: без этого файла (например, при горячей
         // перезагрузке между двумя скриптами) запрос уходит как раньше

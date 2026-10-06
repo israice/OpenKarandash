@@ -41,23 +41,30 @@ The result is a short loop: you see a problem in the interface → you point at 
 
 ## 🔧 How it works
 
-**The selector.** `window.KarandashDesc.describe(el, hostFrame)` builds a string from the tag name, the `#id` (if there is one) and every class joined by dots — for example `button.icon-button.toolbar__item` — then adds the path to the ancestors (`in div.msg-bubble`), the number among identical siblings (`(2 of 3)`) and the section (`— section chatView`). The same string is shown in the comment window header and goes into the prompt.
+**The selector.** `window.KarandashDesc.describe(el, hostFrame)` builds a string from the tag name, the `#id` (if there is one) and every class joined by dots — for example `button.icon-button.toolbar__item` — then adds what kind of control it is and what is chosen in it right now (`[select, 50 пунктов, выбрано «openrouter», первые: Hermes Agent, …]`), the path to the ancestors (`in div.msg-bubble`), the number among identical siblings (`(2 of 3)`) and the section (`— section Sessions`). The same string is shown in the comment window header and goes into the prompt.
 
 The path and the number are not decoration. A class alone often points at a dozen identical elements — the model tag is one `span.model-tag` across Sessions, Feed and Flow by design (`DOCS/decisions/039`) — and the collector throws such a name away as too common (`TOOLS/homework/README.md`). The ancestors and the number are what narrow the search back down to a single place. Only permanent classes go into the path: a class about state (`is-open`) has no line of its own in the code.
+
+**What kind of control it is.** A task like "add an item to this list" is unanswerable from a selector alone: the agent cannot see that it is a `<select>`, how many items it holds, which one is picked now or what the neighbours are called. `controlOf(el)` reads all of that from the DOM at the moment of the click — real values, not ones reconstructed from the code — and both the description and the `Control:` line of the prompt carry it. A password field's value is never included: `type=password` reports `(скрытое значение)`.
+
+A label standing next to the element is used when it has none of its own: in the model cascade the words `CLI:` lie in a separate `span` to the left, and without that the description only had the `aria-label` — which that cascade does not always have.
+
+The view names come from a table that is easy to let rot: it once held `sessionsView`, an id that is nowhere in the markup (the tab is called `chatView`), so no name matched and the raw id went into the description — the very thing the owner complained about ("the pencil pointed at something unexplained"). It is now checked against `SYSTEM/index.html`.
 
 All of it lives in `PROJECTS/Karandash/element-desc.js`; `karandash.js` only calls it and knows nothing about how the description is built.
 
 **The prompt.** `buildCommentPrompt` assembles up to five lines:
 
 ```
-UI element: <selector> in <ancestors> (<nth> of <total>) — section <view>
+UI element: <selector> [control, <state>] in <ancestors> (<nth> of <total>) — section <view>
+Control: <what kind of control, what is chosen, the first items>
 Code: <file>:<lines> (where it is created), <style file>:<lines> (the style)
 Current look: <width>×<height>, background <…>, text colour <…>, font <…>, padding <…>, radius <…>, border <…>
 Element text: <text, if it is no longer than 120 characters>
 Comment: <what you wrote>
 ```
 
-Three of these lines come from neighbours, and `karandash.js` only assembles them: the place in the code from `element-code.js` (`Code:`), the numbers from `element-style.js` (`Current look:`), the text from `element-desc.js`. Each line replaces a detour the agent would otherwise make on its own — the file it has to open, the stylesheet it has to read, the live check it has to run to learn the current values (`DOCS/decisions/099`).
+Four of these lines come from neighbours, and `karandash.js` only assembles them: what kind of control it is and what is in it from `element-desc.js` (`Control:`), the place in the code from `element-code.js` (`Code:`), the numbers from `element-style.js` (`Current look:`), the text from `element-desc.js`. Each line replaces a detour the agent would otherwise make on its own — the file it has to open, the stylesheet it has to read, the live check it has to run to learn the current values (`DOCS/decisions/099`).
 
 `Current look:` is skipped for a hidden element: without a layout pass it would report a zero size as if it were real. Values equal to the defaults are left out too — a zero radius or an inherited text colour says nothing and only makes the line longer.
 
@@ -80,7 +87,7 @@ The whole Karandash button lives in this folder — client, styles and the serve
 | File | What is in it |
 |---|---|
 | `PROJECTS/Karandash/karandash.js` | The entire mode: its own markup (button, frame, comment window), cursor tracking, wheel-based raising, prompt assembly, screenshot capture |
-| `PROJECTS/Karandash/element-desc.js` | How an element is described for the task: label, selector, path to the ancestors, number among identical siblings, section. Publishes `window.KarandashDesc` |
+| `PROJECTS/Karandash/element-desc.js` | How an element is described for the task: label, selector, kind of control and what is chosen in it, path to the ancestors, number among identical siblings, section. Publishes `window.KarandashDesc` |
 | `PROJECTS/Karandash/element-code.js` | Where the selected element lives in the code: asks the hook index for the files and lines where it is created and where it is styled. Publishes `window.KarandashCode` |
 | `PROJECTS/Karandash/element-style.js` | How the element looks right now: its size and the values the browser computed for it. Publishes `window.KarandashStyle` |
 | `PROJECTS/Karandash/comment-prompt.js` | Assembles the request out of the lines the neighbours produced. Publishes `window.KarandashPrompt` |
