@@ -18,6 +18,7 @@ const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
 const vault = require('./graph-vault.js');
 const { rebuildSearchIndex, compactSearchIndex, searchProjectRanked } = require('./graph-search.js');
 const { MAX_EDIT_BYTES, readProjectFile, writeProjectFile } = require('./graph-files.js');
+const complexity = require('./graph-complexity.js');
 // контекст места держит копию карты (PROJECTS/Graph/graph-context.js): клик по
 // элементу не должен ждать её сборки, но и после пересборки карты копия обязана
 // стать новой — иначе агент получит ссылки на файлы, которых уже нет
@@ -80,6 +81,10 @@ function createRoutes() {
             // стандартного лимита readJson, поэтому лимит здесь свой
             const { path: target, text } = await readJson(req, MAX_EDIT_BYTES + 100_000);
             sendJson(res, writeProjectFile(target, text));
+        },
+
+        '/api/complexity': (req, res) => {
+            sendJson(res, complexity.collect());
         },
 
         '/api/search': async (req, res) => {

@@ -51,6 +51,7 @@ A session note is named `<date> <title> <id prefix>`, and the title is the user'
 | --- | --- |
 | `/api/obsidian/graph` | The vault's nodes and links. The canvas is gone; now the file editor takes them for a node's list of links |
 | `/api/search` | Search: `{ q, limit }` → a list of hits with snippets |
+| `/api/complexity` | Project complexity report: file sizes over 400 lines, requires per file, folder depth (`DOCS/decisions/111`) |
 | `/api/file/read` | A file's contents for the panel: text, size, the `binary` and `editable` flags |
 | `/api/file/write` | Saving an edit; vault notes and binary files are rejected |
 
@@ -63,9 +64,10 @@ A session note is named `<date> <title> <id prefix>`, and the title is the user'
 | `PROJECTS/Graph/file-editor.js` | The client: the project map (loading, `nodeByPath`, a node's links) and the file editor — the modal window, the Chat panel and the factory for someone else's panel (`window.MissionFiles`) |
 | `PROJECTS/Graph/file-editor.css` | Its styles: the window, the panel in Chat and its markdown mode |
 | `PROJECTS/Graph/md-editors.js` | EasyMDE over a panel's `textarea` (`MdEditors.attach`), vendored in `vendor/easymde/` |
-| `PROJECTS/Graph/graph-server.js` | The server entry point: `init()` (what the folder needs from outside arrives here once), `prepareVault()` — the one place where the map and the search index are rebuilt together — and the routes (`createRoutes`): `/api/obsidian/graph`, `/api/search`, `/api/file/read`, `/api/file/write`. Nothing else lives here: the work is split by topic into the three files below |
+| `PROJECTS/Graph/graph-server.js` | The server entry point: `init()` (what the folder needs from outside arrives here once), `prepareVault()` — the one place where the map and the search index are rebuilt together — and the routes (`createRoutes`): `/api/obsidian/graph`, `/api/search`, `/api/file/read`, `/api/file/write`, `/api/complexity`. Nothing else lives here: the work is split by topic into the three files below |
 | `PROJECTS/Graph/graph-vault.js` | Building the vault: walking the project folder, parsing code into sections and functions, git history, file/section/route notes, reading the finished vault into a graph (`buildVaultGraph`), session-memory notes. Also owns the state shared by the server half — the project root, the `DATA`/vault paths and the `state` object filled by `init()` — the other two modules and the entry point `require` it, never the other way round |
 | `PROJECTS/Graph/graph-search.js` | The FTS5 index in `DATA/.index.db`: full rebuild over code, vault notes and session conversations (`rebuildSearchIndex`) and the ranked query behind `/api/search` (`searchProject`) |
+| `PROJECTS/Graph/graph-complexity.js` | The complexity metric: walking the project for file line counts, per-file require counts and folder depth |
 | `PROJECTS/Graph/graph-files.js` | Reading and writing a file: the path comes from the client, so it is resolved through real paths and never allowed outside the project root; vault notes and binary files are refused for writing |
 | `PROJECTS/Graph/search.js` | The same search from the terminal: `node PROJECTS/Graph/search.js "query"`, reads the prebuilt index |
 | `DATA/vault/` | The notes themselves: the map in `Project/`, session memory in `Sessions/`, your own notes alongside (not tracked by git) |

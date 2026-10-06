@@ -166,12 +166,98 @@
         return item;
     }
 
+    // Метрика сложности проекта (DOCS/decisions/111): /api/complexity,
+    // отчёт показываем в той же панели файла, read-only — править нечего.
+    //
+    // Запрос идёт через window.App.api (POST), а не fetch'ем GET'ом: общий слой
+    // SYSTEM/core/api.js разрешает GET только /api/fragment/* и /api/image/* —
+    // тем, что браузер тянет сам. Наш GET отбивался 405, и карточка показывала
+    // пустой отчёт. App.api кладёт window.App, а зовём мы его по клику, то есть
+    // уже после загрузки app.js, — прямой доступ window.App здесь уместен.
+    async function openComplexity() {
+        empty.hidden = true;
+        fileEditor.hidden = false;
+        const titleEl = view.querySelector('#bookFileEditorTitle');
+        const metaEl = view.querySelector('#bookFileEditorMeta');
+        const linksEl = view.querySelector('#bookFileEditorLinks');
+        const textEl = view.querySelector('#bookFileEditorText');
+        const statusEl = view.querySelector('#bookFileEditorStatus');
+        titleEl.textContent = 'Project complexity';
+        metaEl.textContent = 'Loading…';
+        linksEl.innerHTML = '';
+        textEl.value = '';
+        textEl.readOnly = true;
+        statusEl.textContent = 'read-only';
+
+        let data;
+        try {
+            data = await window.App.api('/api/complexity');
+        } catch {
+            data = null;
+        }
+        // App.api возвращает тело ответа независимо от кода, поэтому ok:false —
+        // это отказ сервера, а не пустой отчёт: без этой проверки отчёт молча
+        // показывал бы undefined на месте каждого числа
+        if (!data || data.ok === false) {
+            metaEl.textContent = data?.error || 'The server did not respond';
+            return;
+        }
+
+        const lines = [];
+        lines.push(`Files: ${data.files}`);
+        lines.push(`Max folder depth: ${data.maxFolderDepth}`);
+        lines.push(`Long files (>${data.maxLines} lines): ${data.longFiles.length}`);
+        for (const f of data.longFiles) lines.push(`  ${f.lines}\t${f.file}`);
+        lines.push('');
+        lines.push('Top requires per file:');
+        for (const f of data.topRequires) lines.push(`  ${f.requires}\t${f.file}`);
+        lines.push('');
+        lines.push('Deepest files:');
+        for (const f of data.topDepth) lines.push(`  ${f.depth}\t${f.file}`);
+
+        metaEl.textContent = `${data.files} files · depth ${data.maxFolderDepth} · ${data.longFiles.length} long`;
+        textEl.value = lines.join('\n');
+    }
+
+    function buildComplexityCard() {
+        const item = document.createElement('li');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'project-card';
+        btn.title = 'Project complexity';
+        btn.addEventListener('click', () => {
+            const wasSelected = btn.classList.contains('project-card--selected');
+            for (const other of list.querySelectorAll('.project-card--selected')) {
+                other.classList.remove('project-card--selected');
+            }
+            if (wasSelected) { closePanel(); return; }
+            btn.classList.add('project-card--selected');
+            openComplexity();
+        });
+        const icon = document.createElement('span');
+        icon.className = 'project-card__icon';
+        icon.textContent = 'Σ';
+        const body = document.createElement('span');
+        body.className = 'project-card__body';
+        const text = document.createElement('span');
+        text.className = 'project-card__label';
+        text.textContent = 'Complexity';
+        const descEl = document.createElement('span');
+        descEl.className = 'project-card__desc';
+        descEl.textContent = 'File sizes, requires, nesting depth';
+        body.append(text, descEl);
+        btn.append(icon, body);
+        item.append(btn);
+        return item;
+    }
+
     // пересобираем при каждом открытии вкладки — новая папка от кнопки «+»
     // могла появиться уже после предыдущего показа; справа сразу показываем
     // README из корня проекта, как раньше делала вкладка Projects
     function show() {
         list.innerHTML = '';
         for (const entry of collectEntries()) list.append(buildCard(entry));
+        list.append(buildComplexityCard());
         window.MissionBoot?.task('book', openFile('README.md'));
     }
 
