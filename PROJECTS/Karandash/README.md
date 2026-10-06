@@ -63,7 +63,7 @@ Three of these lines come from neighbours, and `karandash.js` only assembles the
 
 The element text is taken only from short elements: for containers, `textContent` holds all of their content, and such an "element text" would only add noise to the task.
 
-**The screenshot.** `POST /api/screenshot` — the shot is taken by the server: a `canvas` in the browser sees only the tab, not the whole screen. On the `server.js` side this is PowerShell plus `System.Drawing`: a shot of the entire virtual screen, downscaled to `SCREENSHOT_WIDTH` and turned into a JPEG `data:` URL. If it fails, `null` is returned and the session simply keeps a placeholder. The "Save" button is disabled during the capture so a second click cannot overtake the first shot.
+**The screenshot.** `POST /api/screenshot` — the shot is taken by the server: a `canvas` in the browser sees only the tab, not the whole screen. On the server side this is `node-screenshots` (native capture) plus `sharp` for the downscale: a shot of the whole screen, resized to `SCREENSHOT_WIDTH` and turned into a JPEG `data:` URL. Both are separate native modules because neither does both halves on its own — `node-screenshots` has no resize at all, only `crop`, and a crop would hand the user a corner of the screen instead of the screen (`DOCS/decisions/110`). If it fails, `null` is returned and the session simply keeps a placeholder. The "Save" button is disabled during the capture so a second click cannot overtake the first shot.
 
 **Always a new session.** `App.startCommentSession(prompt, thumb)` resets `chatSessionId` to `null`, clears the feed, deselects the session list and sets `Action` mode. A comment is never mixed into the current conversation — it is a separate task from a clean slate. The tab is not switched: if you are not sitting in Chat, you can go there and pick the session whenever you want.
 
@@ -85,7 +85,7 @@ The whole Karandash button lives in this folder — client, styles and the serve
 | `PROJECTS/Karandash/element-style.js` | How the element looks right now: its size and the values the browser computed for it. Publishes `window.KarandashStyle` |
 | `PROJECTS/Karandash/comment-prompt.js` | Assembles the request out of the lines the neighbours produced. Publishes `window.KarandashPrompt` |
 | `PROJECTS/Karandash/karandash.css` | Styles for `body.karandash-mode`, `.hover-frame`, `.comment-popover` and its parts |
-| `PROJECTS/Karandash/karandash-server.js` | The server half: its routes (`createRoutes`) plus `captureScreenshot()`: PowerShell plus `System.Drawing`, `SCREENSHOT_WIDTH`, a JPEG `data:` URL |
+| `PROJECTS/Karandash/karandash-server.js` | The server half: its routes (`createRoutes`) plus `captureScreenshot()`: `node-screenshots` for the capture, `sharp` for the resize, `SCREENSHOT_WIDTH`, a JPEG `data:` URL |
 
 Only the wiring stays outside — three lines that cannot be moved out of the shared files:
 

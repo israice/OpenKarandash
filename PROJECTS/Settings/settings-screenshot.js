@@ -1,4 +1,4 @@
-// Экран для скриншотов Karandash: список мониторов от сервера (PowerShell) и наглядное
+// Экран для скриншотов Karandash: список мониторов от сервера (node-screenshots) и наглядное
 // превью того, что реально снимет кнопка Karandash с выбранного монитора. Отдельный файл —
 // это самостоятельный кусок вкладки Providers со своим кешем и своей записью в
 // localStorage.
@@ -16,7 +16,7 @@ window.SettingsScreenshot = (function () {
         // наглядное превью того, что реально снимет кнопка Karandash с выбранного
         // монитора — тот же снимок, что уходит в миниатюру сессии.
         // Кэшируем по индексу экрана: повторный выбор уже показанного экрана
-        // не гоняет PowerShell заново, а сразу показывает то, что уже есть
+        // не снимает экран заново, а сразу показывает то, что уже есть
         const screenshotThumbCache = new Map();
         const SCREENSHOT_LAST_THUMB_KEY = 'screenshotLastThumb';
 
@@ -48,7 +48,7 @@ window.SettingsScreenshot = (function () {
             }
         }
 
-        // список мониторов приходит от сервера (PowerShell), поэтому подгружаем
+        // список мониторов приходит от сервера (node-screenshots), поэтому подгружаем
         // его при каждом открытии Settings — состав экранов может меняться
         async function renderScreenshotScreen() {
             const { screens, current } = await api('/api/screenshot/screens');

@@ -3,9 +3,12 @@
 // внизу файла) — вся кнопка Karandash собрана в одной папке, server.js только
 // раскладывает готовую таблицу путей.
 //
-// Скриншот делается через node-screenshots (нативный бинарный модуль), а не
-// PowerShell — это убирает эвристику антивируса (ScriptContainedMaliciousContent)
-// на System.Drawing + ручное JPEG-кодирование.
+// Скриншот снимает node-screenshots (нативный бинарный модуль), а не PowerShell —
+// это убирает эвристику антивируса (ScriptContainedMaliciousContent) на
+// System.Drawing + ручное JPEG-кодирование. Масштабирует кадр sharp: у самого
+// node-screenshotsresize нет вовсе, только crop (вырезать прямоугольник), а
+// вырезанный угол экрана вместо всего экрана — не то, что показывают пользователю
+// (DOCS/decisions/110).
 
 const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
 // индекс хуков лежит в карте проекта (PROJECTS/Graph): он отдаёт место элемента
@@ -17,8 +20,13 @@ const { findHooks } = require('../Graph/graph-search.js');
 const { contextOf } = require('../Graph/graph-context.js');
 
 const { Monitor } = require('node-screenshots');
+const sharp = require('sharp');
 
 const SCREENSHOT_WIDTH = 480;
+// кадр целиком не годится даже по размеру: /api/sessions/thumb отклоняет превью
+// крупнее MAX_THUMB_BYTES (300 КБ, SYSTEM/core/sessions-routes.js), а полный кадр
+// в data-URL на 4K-мониторе — около 690 КБ, то есть миниатюра просто не сохранилась бы
+const SCREENSHOT_QUALITY = 80;
 
 // список подключённых экранов — для настройки в Settings, откуда выбирают,
 // с какого монитора кнопка Karandash снимает миниатюру
@@ -38,7 +46,16 @@ async function listScreens() {
 }
 
 // снимок экрана для миниатюры сессии: node-screenshots захватывает указанный
-// монитор, масштабирует до SCREENSHOT_WIDTH и возвращает base64 JPEG
+// монитор, sharp уменьшает кадр до SCREENSHOT_WIDTH по ширине (пропорции высоты
+// сохраняются), результат — base64 JPEG.
+//
+// Именно resize, а не crop: node-screenshots масштабировать не умеет, и вызов
+// crop(0, 0, 480, h) вырезал из кадра левый верхний угол 480x270, то есть на
+// 1920x1080 показывал 1/16 экрана, а на 3840x2160 — 1/64. Кадр node-screenshots
+// приходит в PNG: сначала кадр без потерь, потом одна перекодировка в JPEG.
+//
+// withoutEnlargement — кадр уже меньше SCREENSHOT_WIDTH по ширине не растягивается,
+// пропорции сохраняются в обоих направлениях.
 async function captureScreenshot(screenIndex) {
     const index = Number.isInteger(screenIndex) && screenIndex >= 0 ? screenIndex : 0;
     try {
@@ -46,10 +63,12 @@ async function captureScreenshot(screenIndex) {
         if (index >= monitors.length) return null;
         const m = monitors[index];
         const img = await m.captureImage();
-        const h = Math.max(1, Math.round(img.height / img.width * SCREENSHOT_WIDTH));
-        const thumb = await img.crop(0, 0, SCREENSHOT_WIDTH, h);
-        const jpeg = await thumb.toJpeg();
-        const base64 = jpeg.toString('base64');
+        const raw = await img.toPng();
+        const thumb = await sharp(raw)
+            .resize({ width: SCREENSHOT_WIDTH, withoutEnlargement: true })
+            .jpeg({ quality: SCREENSHOT_QUALITY })
+            .toBuffer();
+        const base64 = thumb.toString('base64');
         return base64 ? `data:image/jpeg;base64,${base64}` : null;
     } catch {
         return null;
