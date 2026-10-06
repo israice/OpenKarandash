@@ -10,6 +10,8 @@ const { escapeHtml } = require('./http.js');
 // в renderPage мимо первого. Сам шаблон и его маршрут — SYSTEM/topbar-server.js
 const topbar = require('../topbar-server.js');
 const sessionsServer = require('../../PROJECTS/Sessions/sessions-server.js');
+const telegramServer = require('../../PROJECTS/Settings/telegram-server.js');
+const bookServer = require('../../PROJECTS/Book/book-server.js');
 
 // корень проекта на два уровня выше: модуль лежит в SYSTEM/core
 const ROOT = path.join(__dirname, '..', '..');
@@ -44,10 +46,12 @@ function versionHistory() {
 // «$&» и «$'» своей подстановкой
 function renderPage(html, tail) {
     const page = html
-        .replace('{{APP_VERSION}}', currentVersion())
-        .replace('{{VERSION_LIST}}', versionHistory())
         .replace('{{TOPBAR}}', () => topbar.render())
-        .replace('{{SESSION_VIEW}}', () => sessionsServer.renderView());
+        .replace('{{SESSION_VIEW}}', () => sessionsServer.renderView())
+        .replace('{{TELEGRAM_VIEW}}', () => telegramServer.renderView())
+        .replace('{{BOOK_VIEW}}', () => bookServer.renderView())
+        .replace('{{APP_VERSION}}', currentVersion())
+        .replace('{{VERSION_LIST}}', versionHistory());
     if (!tail) return page;
     return page.includes('</body>') ? page.replace('</body>', `${tail}</body>`) : page + tail;
 }

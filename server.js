@@ -228,6 +228,7 @@ const featureRoutes = {
     }),
     ...require('./PROJECTS/Karandash/karandash-server.js').createRoutes({ setEnvValue }),
     ...telegram.createRoutes(),
+    ...require('./PROJECTS/Book/book-server.js').createRoutes(),
     ...require('./SYSTEM/toolbar-icons-server.js').createRoutes({ db }),
     // верхнее меню страницы: шаблон SYSTEM/topbar.eta подставляется в страницу
     // ещё и при отдаче (SYSTEM/core/version.js), маршрут отдаёт его же

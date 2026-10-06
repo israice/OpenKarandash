@@ -4,53 +4,23 @@
 // Sessions (PROJECTS/Chat/projects-tab.js) с тем же приёмом; теперь это
 // отдельная страница со своей панелью справа.
 //
-// Файл самодостаточный: свою разметку он вставляет сам, стили лежат рядом
-// (book.css), а всё чужое зовётся через окна — редактор файла
+// Файл самодостаточный по логике: карточки и правая панель — здесь, стили
+// лежат рядом (book.css), а всё чужое зовётся через окна — редактор файла
 // (MissionFiles.createFileEditor), EasyMDE (MdEditors.attach) и ручку ширины
-// панели (SidebarResize.init). Грузится раньше app.js (см. порядок <script>
-// в SYSTEM/index.html): тот на старте ищет #bookView для App.VIEWS.
+// панели (SidebarResize.init). Разметку вкладки отдаёт сервер — PROJECTS/Book/book-view.eta.
+// Грузится раньше app.js (см. порядок <script> в SYSTEM/index.html): тот ищет #bookView.
 (function () {
 
     // ---------- разметка ----------
 
-    const view = document.createElement('div');
-    view.className = 'view view--side view--book';
-    view.id = 'bookView';
-    view.hidden = true;
-    view.innerHTML = `
-        <nav class="side-nav" id="bookNav" aria-label="Book">
-            <h2 class="side-nav__title side-nav__title--nav"><span>Book</span></h2>
-            <ul class="session-list" id="bookList"></ul>
-            <div class="panel-resize" id="bookResize" aria-hidden="true"></div>
-        </nav>
-        <div class="view__content">
-            <p class="book-empty" id="bookEmpty">Select a section on the left</p>
-            <div class="chat-file-editor" id="bookFileEditor" hidden>
-                <div class="chat-file-editor-header">
-                    <h2 class="chat-file-editor-title" id="bookFileEditorTitle"></h2>
-                    <p class="file-modal__meta" id="bookFileEditorMeta"></p>
-                </div>
-                <div class="file-modal__links" id="bookFileEditorLinks"></div>
-                <textarea class="file-modal__text" id="bookFileEditorText" spellcheck="false" aria-label="File contents"></textarea>
-                <div class="file-modal__footer">
-                    <span class="file-modal__status" id="bookFileEditorStatus"></span>
-                </div>
-            </div>
-        </div>
-    `;
-    // Вкладки лежат подряд в body — встаём на прежнее место, после вкладки
-        // Sessions. Якорь — #chatView: он и есть эта вкладка, и его разметка
-        // приходит серверной подстановкой {{SESSION_VIEW}} ещё до выполнения
-        // скриптов. Смотреть надо именно на неё, а не на другой якорь — иначе
-        // вкладка уехала бы за Sessions и перестала открываться.
-        // Разметки нет — вкладку показать некуда, дальше идти незачем
-        const sessionsView = document.getElementById('chatView');
-        if (!sessionsView) return;
-        sessionsView.parentElement.insertBefore(view, sessionsView.nextSibling);
-
-    const list = view.querySelector('#bookList');
-    const fileEditor = view.querySelector('#bookFileEditor');
-    const empty = view.querySelector('#bookEmpty');
+    // Разметка пришла с сервера: book-view.eta сервером уже подставлен в
+    // страницу, поэтому узлы ищем сразу по id в готовом DOM.
+    const list = document.getElementById('bookList');
+    const fileEditor = document.getElementById('bookFileEditor');
+    const empty = document.getElementById('bookEmpty');
+    const bookView = document.getElementById('bookView');
+    if (!list || !fileEditor || !empty || !bookView) return;
+    const view = bookView;
 
     // ручка ширины панели и markdown-редактор подключаются, когда все файлы
     // с defer уже выполнились: до этого ни SidebarResize, ни EasyMDE ещё нет
@@ -206,8 +176,4 @@
     }
 
     window.MissionBookTab = { show, openFile, closePanel };
-
-    // горячая перезагрузка этого скрипта: снимаем вкладку, которую он нарисовал, —
-    // свежая копия вставит свою на то же место
-    window.App?.registerHotReload('PROJECTS/Book/book-tab.js', () => view.remove());
 })();

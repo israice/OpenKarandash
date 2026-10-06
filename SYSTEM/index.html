@@ -122,13 +122,21 @@
          тут только пустой контейнер вкладки (DOCS/decisions/032) -->
     <div class="view view--board" id="kanbanView" hidden></div>
 
-    <!-- Вкладка Book разметки в этом файле не имеет: и панель со списком
-         разделов, и панель README справа строит PROJECTS/Book/book-tab.js. -->
+    <!-- Вкладка Telegram живёт в PROJECTS/Telegram (шаблон — telegram-view.eta
+         в PROJECTS/Settings, сервер — telegram-server.js): разметка приходит
+         готовой из серверной сборки страницы, telegram.js только вешает
+         обработчики и индикатор связи. Стоит перед Sessions, как и раньше. -->
+    <div class="view view--telegram" id="telegramView" hidden>{{TELEGRAM_VIEW}}</div>
 
     <!-- Вкладка Sessions целиком живёт в PROJECTS/Sessions: разметка —
-         session-view.eta, сервер подставляет её в страницу на месте заглушки
-         (renderPage, как верхнее меню — DOCS/decisions/005), стили лежат рядом. -->
+         session-view.eta сервером подставляется на место заглушки,
+         стили лежат рядом. -->
     <div class="view view--sessions" id="chatView" hidden>{{SESSION_VIEW}}</div>
+
+    <!-- Вкладка Book: разметка — book-view.eta; сервер подставляет её на
+         место заглушки BOOK_VIEW и раздаёт моментный маршрут; book-tab.js
+         только карточки и README. -->
+    <div class="view view--side view--book" id="bookView" hidden>{{BOOK_VIEW}}</div>
 
     <div class="shot-lightbox" id="shotLightbox" hidden>
         <img id="shotLightboxImg" src="" alt="">
@@ -193,9 +201,11 @@
     <script src="PROJECTS/Settings/settings.js" data-hot-src="PROJECTS/Settings/settings.js" defer></script>
     <!-- 3D-рендер песочных часов вкладки Sandglass: ES-модуль (import three), поэтому type="module" -->
     <script src="PROJECTS/Settings/settings-sandglass.js" data-hot-src="PROJECTS/Settings/settings-sandglass.js" type="module"></script>
-    <!-- book-tab.js раньше app.js: тот на старте ищет #bookView в DOM -->
+    <!-- book-tab.js раньше app.js был обязан: он строил #bookView сам, а app.js ищет
+         его на старте для App.VIEWS. Теперь элемент приходит с разметкой страницы,
+         но порядок оставлен — переставлять без нужды нечего -->
     <script src="PROJECTS/Book/book-tab.js" data-hot-src="PROJECTS/Book/book-tab.js" defer></script>
-    <!-- telegram.js раньше app.js: тот на старте ищет #telegramView в DOM -->
+    <!-- telegram.js — по той же причине и с тем же оговорением, что book-tab.js -->
     <script src="PROJECTS/Telegram/telegram.js" data-hot-src="PROJECTS/Telegram/telegram.js" defer></script>
     <!-- ядро и вкладка Sessions — модули (DOCS/decisions/022): app.js импортирует
          SYSTEM/providers.js, sessions.js — свои ./sessions-*.js. Модульные скрипты

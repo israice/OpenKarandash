@@ -4,8 +4,8 @@
 // остальные файлы (tabs.js, Flow, Kanban, Karandash, Settings, страницы кнопки
 // «+») берут общее ядро. Подключён как <script type="module">: модульные
 // скрипты без async выполняются в порядке документа вместе с defer, поэтому
-// цепочка sessions-view.js → app.js → PROJECTS/Sessions/sessions.js → остальные
-// сохраняется.
+// цепочка book-tab.js / telegram.js → app.js → PROJECTS/Sessions/sessions.js →
+// остальные сохраняется.
 //
 // Провайдеры (состояние подключения, лимиты, шапка сессии) — SYSTEM/providers.js,
 // в window.App они попадают отсюда. Вкладка Sessions — PROJECTS/Sessions/sessions.js: она

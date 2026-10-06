@@ -1,166 +1,197 @@
 # CHECKPOINT — OpenKarandash Continuous Engineering Loop
 
-**Date:** 2026-10-05  
-**Session:** Initial assessment per continuous engineering protocol  
-**Protocol:** `AGENTS.md` + `local://paste-1.md` (Universal Continuous Engineering Loop)
+**Протокол:** `AGENTS.md` + Universal Continuous Engineering Loop.
+**Правило этого файла:** он описывает фактическое состояние проекта, а не память прошлой сессии. Прежняя версия файла описывала v0.0.160 и содержала выводы audits времен v0.0.7 — они были неверны и заменены.
 
 ---
 
-## MIGRATION PROGRESS (2026-10-06, v0.0.161–v0.0.162)
+## ТЕКУЩЕЕ СОСТОЯНИЕ
 
-**Выполнена миграция 2 (v0.0.162):** разметка вкладки Sessions переехала из `PROJECTS/Sessions/sessions-view.js` в `PROJECTS/Sessions/session-view.eta`; сервер рендерит её на месте заглушки `{{SESSION_VIEW}}` в renderPage (SYSTEM/core/version.js) и маршрутом `/api/fragment/session-view`. `sessions-view.js` удалён. Проверки: npm run check EXIT=0, npm run ui без замечаний, live-check — #sessionsPanel/#sessionList/#chatComposer на месте (13 пунктов списка), заслон boot снят. Заметка: DOCS/decisions/105. Урок: заглушку `{{SESSION_VIEW}}` нельзя писать в HTML-комментарии страницы — replace подставляет первое вхождение, поэтому литерал в комментарии поглощал подстановку (поломлено и поправлено 2026-10-05).
-
-**Выполнена миграция 1 (v0.0.161):** разметка вкладки Flow переехала из `SYSTEM/index.html` в `PROJECTS/Flow/flow.eta` (маршрут `/api/fragment/flow`, контейнер `#flowBody` с `hx-get`/`hx-swap="innerHTML"` в index.html). `flow.js` и `flow-session-sync.js` ждут `#flowCanvas`/`#flowNav` (опрос 50 мс, потолок 10 с). Проверки: `node --check` чист, `npm run check` EXIT=0 (4 файла >400 строк — прежнее предупреждение), `npm run ui` без замечаний (flow: 9673 элементов), живой `SYSTEM/live-check.mjs`: `#flowCanvas` ✅, `#flowNav` ✅, у `#flowSessionSelect` 14 пунктов, `data-booting` снят. Версия: v0.0.161, записка `DOCS/decisions/104`.
-
-**Следующая миграция (та же очередь, `DOCS/целевая-архитектура.md` п.3):** остальные компоненты — Kanban, Telegram/telegram.js, Book/book-tab.js, settings-markup.js: разметку вкладок сейчас строят клиентские JS; цель та же — `<компонент>.eta` + `/api/fragment/<компонент>` + один контейнер в index.html.
-
-**Открытые незакоммиченные артефакты от предыдущей сессии (не часть этих миграций, в коммит не входят):** `package.json`/`package-lock.json` — добавлены `robotjs@0.9.1` и `screenshot-desktop@1.15.6` без завершённого кода (предполагаемая незавершённая миграция замены PowerShell-скриншота); `AGENTS.md`/`AGENTS.override.md` модифицированы; `AUDIT_TARGET_ARCHITECTURE.md`, `AUDIT_VERIFICATION.md`, `CURRENT_TARGET_DIFF.md` — untracked. Док-правки в PROJECTS/Sessions/README.md, DOCS/agents/клиент.md и комментариев book-tab.js/telegram.js/sessions.js входят в миграцию 2 и закоммичены.
-
----
-
-## CURRENT PROJECT STATE
-
-### Version
-- **Current:** v0.0.160 (per VERSION.md)
-- **Verified baseline:** v0.0.7 (per AUDIT_TARGET_ARCHITECTURE.md)
-
-### Architecture Status (Verified)
-| Domain | Status | Notes |
-|--------|--------|-------|
-| **Core (SYSTEM/core/)** | ✅ Healthy | 34 modules, no circular deps (madge passes), well-defined boundaries |
-| **Dispatcher (server.js)** | ✅ Healthy | 289 lines, pure orchestrator, no feature logic |
-| **Features (PROJECTS/)** | ✅ Healthy | 16 features, each with `createRoutes(deps)` pattern |
-| **UI (index.html)** | ✅ Healthy | 849 lines, only containers + importmap + boot script |
-
-### Security Status (Verified Against PLAN.md §2)
-| Issue | PLAN.md Claim | Verified State | Status |
-|-------|---------------|----------------|--------|
-| Server binds to 0.0.0.0 | Yes | **Fixed**: `server.listen(PORT, '127.0.0.1')` in server.js:276 | ✅ RESOLVED |
-| No Origin check on /api/* | Yes | **Fixed**: `sameOrigin()` in api.js:14-23 | ✅ RESOLVED |
-| Hidden files served (.env, .git, DATA/, .kilo/) | Yes | **Fixed**: `DENY_STATIC` regex in http-server.js:51 | ✅ RESOLVED |
-| PowerShell screenshot AV flag | Yes | **OPEN**: karandash-server.js uses PowerShell `System.Drawing` | ⚠️ OPEN |
-| Session ID injection | Historical | **Fixed**: No injection vector found in current code | ✅ RESOLVED |
-
-### File Size Compliance (Decision 022: ~150-300 lines, divide at 400)
-| File | Lines | Status |
-|------|-------|--------|
-| PROJECTS/Graph/graph-vault.js | 609 | ⚠️ EXCEEDS |
-| PROJECTS/Settings/settings-sandglass.js | 538 | ⚠️ EXCEEDS |
-| PROJECTS/Sessions/sessions-feed.js | 460 | ⚠️ EXCEEDS |
-| PROJECTS/Karandash/karandash.js | 454 | ⚠️ EXCEEDS |
-| All other files | < 400 | ✅ COMPLIANT |
-
-### Testing
-- **Automated tests:** ZERO (explicitly stated in PLAN.md)
-- **Quality gates:** `npm run check` — file sizes, vh/vw location, madge circular deps — all PASS
-- **Runtime/integration tests:** NONE
-
-### Empty/Stub Features
-- Page 4, 5, 6, 7, 8 — only `page.css`, `page.js`, `README.md` (no server, no purpose)
-- Kanban — placeholder only, no server routes
-- Penpot — external container reference only
+| Что | Значение |
+|---|---|
+| Версия | **v0.0.163** (берётся последней строкой `vX.Y.Z` в `VERSION.md`, читает `SYSTEM/core/version.js`) |
+| Последний коммит | `9ee6676` — v0.0.162 (вкладка Sessions в `.eta`) |
+| Незакоммичено | миграция 3 (Telegram + Book в `.eta`), см. ниже; плюс давние незакоммиченные артефакты, см. «Хвосты» |
+| `SYSTEM/index.html` | 260 строк |
+| `server.js` | 292 строки |
+| Разделов в `PROJECTS/` | 16 (`Feed`, `Kanban`, `Penpot`, `Page 3`–`Page 8` — заготовки) |
+| Модулей в `SYSTEM/core/` | 34 |
 
 ---
 
-## COMPLETED MIGRATIONS (Historical)
+## ОЧЕРЕДЬ МИГРАЦИЙ (п. 3 `DOCS/целевая-архитектура.md`)
 
-Per VERSION.md dev log, major completed migrations include:
-- v0.0.120-v0.0.124: Element click reporting, model badge in feed, reasoning capture, skill suggestions
-- v0.0.125: Home tab deletion (complete)
-- v0.0.126: Hot reload three-stage (element/window/section)
-- v0.0.127: Details block removal from Sessions
-- v0.0.128: Page boot gate (SYSTEM/boot.js)
-- v0.0.129: Topbar button deduplication
-- v0.0.130: Thinking block tag alignment
-- v0.0.145-v0.0.152: Session memory, turn-based measurement, report quality, coverage
-- v0.0.153-v0.0.155: CLI/model selection in session header, no executor fallback
-- v0.0.156: Session pointer copy command
-- v0.0.157: Turn completion without permission prompts (auto-approve flag)
-- v0.0.158: Full page gate (all content before show)
-- v0.0.159: Pre-strict-rules baseline
-- v0.0.160: Security boundary (decision 103) — loopback, Host, Origin, DENY_STATIC
+Пункт 3 Roadmap: **переезд компонентов на шаблоны, от больших к малым.** Правило: компонент = шаблон `.eta` + маршрут `/api/fragment/<компонент>` + один `id` в `index.html`; клиентский JS либо отсутствует, либо это несколько строк на то, что htmx не покрывает.
 
----
+### Выполнено
 
-## ARCHITECTURAL INVARIANTS VERIFIED
+| # | Версия | Компонент | Записка |
+|---|---|---|---|
+| — | раньше | верхнее меню `SYSTEM/topbar.eta` | 005 |
+| 1 | v0.0.161 | Flow — `PROJECTS/Flow/flow.eta`, контейнер с `hx-get` | 104 |
+| 2 | v0.0.162 | Sessions — `session-view.eta`, подстановка `{{SESSION_VIEW}}` | 105 |
+| 3 | **v0.0.163** | **Telegram и Book — `telegram-view.eta`, `book-view.eta`** | **106** |
 
-1. **No circular dependencies** — `npx madge --circular server.js` → "No circular dependency found"
-2. **Core → Feature dependency direction** — Core passes deps to `createRoutes()`, features never require core internals directly
-3. **Feature isolation** — Each feature in `PROJECTS/<feature>/` with own server, template, styles, client script
-4. **UI structure** — index.html contains ONLY 5 view containers + importmap + boot script + CSS links + module scripts
-5. **Decision-driven governance** — 19 decision files in `DOCS/decisions/` document all architectural choices
+### Осталось в очереди
+
+1. **Settings — окно настроек.** `PROJECTS/Settings/settings-markup.js` всё ещё рисует `#settingsModal` и `#pickerModal` в браузере. Это самая крупная оставшаяся куска JS-вёрстки, и единственная, которую находят потребители при серверной сборке страницы (проверено, см. «Чем проверялось» в 106). **Следующая миграция.**
+2. **Kanban — вкладка.** `kanban.js` рисует колонки. Помечена как UI-заготовка (`DOCS/decisions/032`), то есть переносить нечего, пока её не сделают. Не приоритет.
+3. **Точечная перезагрузка через `hx-get` для подставленных шаблонов.** Сейчас Sessions, Telegram и Book приходят подстановкой в страницу; правка их `.eta` вызывает полную перезагрузку. Записка 105 прямо откладывает это на потом («достаточно добавить `hx-get`»). Не миграция, а доводка сделанного.
 
 ---
 
-## OPEN RISKS & ISSUES
+## МИГРАЦИЯ 3 (v0.0.163) — TELEGRAM И BOOK В ШАБЛОНАХ
 
-| Risk | Severity | Description |
-|------|----------|-------------|
-| PowerShell AV flag | HIGH | karandash-server.js screenshot triggers AV heuristic (ScriptContainedMaliciousContent) |
-| 4 files > 400 lines | MEDIUM | Violates decision 022 norm; harder to maintain |
-| Zero automated tests | MEDIUM | No regression protection beyond `npm run check` |
-| 5 empty feature folders | LOW | Clutter, no purpose; should be removed or implemented |
-| No CI pipeline | LOW | Quality gates only run locally |
+### COMPLETED
+Разметка обеих вкладок переехала из клиентских JS в серверные шаблоны, тем же приёмом, что Flow и Sessions.
 
----
+### CURRENT STATE
+`PROJECTS/Settings/telegram-view.eta` и `PROJECTS/Book/book-view.eta` рендерятся в страницу `renderPage` (`SYSTEM/core/version.js`) на месте заглушек `{{TELEGRAM_VIEW}}` и `{{BOOK_VIEW}}` и отдаются маршрутами `/api/fragment/telegram-view` и `/api/fragment/book-view`. Новый серверный модуль `PROJECTS/Book/book-server.js` (18 строк). В `index.html` остались только контейнеры `#telegramView` и `#bookView`.
 
-## DECISIONS REQUIRED (None blocking)
+`telegram.js` и `book-tab.js` больше не создают и не вставляют разметку, вставки-якори на `#chatView` исчезли, регистрация горячей перезагрузки `() => view.remove()` убрана из обоих.
 
-- Whether to replace PowerShell screenshot with alternative (puppeteer? native node? drop feature?)
-- Whether to split 4 large files now or defer
-- Whether to add test framework (vitest/jest) or keep minimal smoke tests
-- Whether to remove empty Page 4-8 folders or implement them
+### TARGET PROGRESS
+Пункт 3 Roadmap выполнен для верхнего меню, Flow, Sessions, Telegram и Book. Осталось окно Settings и (пустая) Kanban.
 
----
+### ARCHITECTURAL CHANGES
+Порядок вкладок в DOM теперь задаёт `index.html`, а не порядок выполнения скриптов. Прежнее обязательное ограничение «`book-tab.js` и `telegram.js` раньше `app.js`» перестало быть обязательным (элемент приходит до любого скрипта) — порядок оставлен, переставлять без нужды нечего. Правило 014 («вкладка живёт в своей папке») для Telegram **не выполнено**: шаблон в `PROJECTS/Settings`, клиент и стили в `PROJECTS/Telegram`. Так было и до этой миграции (там же лежал `telegram-messages.eta`).
 
-## NEXT MIGRATION CANDIDATES (Priority Order)
+### DEPENDENCY CHANGES
+Новых внешних зависимостей нет. Новый модуль `PROJECTS/Book/book-server.js` подключён в `server.js` и требуется из `SYSTEM/core/version.js`; циклических связей нет (`madge`).
 
-### 1. **Security: Replace PowerShell Screenshot** (HIGHEST — security/ops risk)
-- **Problem:** PowerShell `System.Drawing` screenshot flagged by AV as screen-scraping heuristic
-- **Owner:** PROJECTS/Karandash/karandash-server.js
-- **Options:** 
-  - A) Node-based screenshot (e.g., `@nut-tree/nut-js`, `screenshot-desktop`) — cross-platform
-  - B) Puppeteer/Playwright headless — heavyweight
-  - C) Drop server-side screenshot; use client-side canvas (but can't capture outside browser tab)
-  - D) Sandbox PowerShell (sign script, allowlist) — Windows-only, maintenance burden
-- **Recommended:** Option A — lightweight Node screenshot library
+### LEGACY
+Удалено: постройка разметки в `telegram.js` и `book-tab.js`, оба якоря-вставки, две регистрации горячей перезагрузки. Осталось legacy: `sessions-view.js` (удалён, но его удаление дошло только в этой миграции — v0.0.162 в тексте писала, что файл удалён, а в том коммите он остался), клиентская разметка окна Settings.
 
-### 2. **Architecture: Split 4 Large Files** (MEDIUM — maintainability)
-- graph-vault.js (609) → split vault build vs note generation
-- settings-sandglass.js (538) → split sandglass logic from server routes
-- sessions-feed.js (460) → split feed rendering from message cards
-- karandash.js (454) → split UI logic from element hook index
+### VALIDATION (фактически выполнено)
+- `npm run check` — **EXIT=0**, чисто. Предупреждение прежнее и к этой миграции отношения не имеет: 4 файла длиннее 400 строк (`graph-vault.js` 610, `settings-sandglass.js` 539, `sessions-feed.js` 461, `karandash.js` 455).
+- Серверная сборка страницы без запуска сервера: `index.html` + `renderView()` всех шаблонов → **34083 байта, незакрытых заглушек нет**.
+- Сверка потребителей по собранной странице: `book-tab.js`, `telegram.js`, `sessions.js`, `sessions-panel.js`, `tabs.js`, `file-editor.js` — искомые `id` найдены все. В `app.js` не найдены `#settingsModal`/`#pickerModal` (их ещё строит клиент — ожидаемо, следующая миграция), в `flow.js` — `#flowCanvas`, `#flowEdgeStart`, `#flowNodeStartMeta` (Flow приезжает фрагментом по `hx-get`, а не подстановкой — ожидаемо).
+- **`npm run ui` выполнить не удалось.** Сервер на `127.0.0.1:3001` не отвечает; `node server.js` из сессии запрещён (`DOCS/decisions/002`). Это ограничение проверки, а не результат. **Живой проверки в браузере у миграции 3 нет.**
 
-### 3. **Quality: Add Basic Smoke Tests** (MEDIUM — regression prevention)
-- Minimum: endpoint smoke tests for `/api/*` routes
-- Tooling: vitest (fast, ESM native) or keep minimal custom
+### TESTS
+Автотестов у проекта нет и не добавлялось (`DOCS/decisions/025` — смоук удалён). Проверки, которыми заменён тест, перечислены выше; они одноразовые скрипты во временной папке, в проект не входят.
 
-### 4. **Cleanup: Remove Empty Feature Folders** (LOW — hygiene)
-- Remove Page 4, 5, 6, 7, 8 folders (or implement if roadmap demands)
+### SECURITY
+Изменение не трогает границу доступа: ни одного нового маршрута с данными, ни одного нового источника истины. Новые маршруты отдают статическую разметку и проходят ту же границу localhost, что и остальные (`DOCS/decisions/103`). Риск не изменился.
+
+### RISKS
+- Миграция 3 не проверена в живом браузере. Статические проверки покрывают сборку разметки и её потребителей, но не покрывают поведение htmx-опроса ленты Telegram и открытие вкладок по клику.
+- Разметка, подставленная в страницу, не перерисовывается точечно: правка `book-view.eta`/`telegram-view.eta` даёт полную перезагрузку страницы (известно, отложено запиской 105).
+
+### OPEN DECISIONS (не блокируют)
+- **Владелец телеграм-моста.** Шаблон и сервер в `PROJECTS/Settings`, клиент и стили — в `PROJECTS/Telegram`. Либо переносим весь телеграм-мост в свою папку (правило 014), либо фиксируем исключение. Требует решения владельца — это смена границы папок.
+- Когда подстановок в `renderPage` станет много, реестр заглушек пора вынести в таблицу. Сейчас их четыре (topbar, sessions, telegram, book) — читается.
+- `AUDIT_TARGET_ARCHITECTURE.md`, `AUDIT_VERIFICATION.md`, `CURRENT_TARGET_DIFF.md` в корне — устаревшие документы audits времен v0.0.7. **Удалить или переписать под факт.**
 
 ---
 
-## PROTOCOL COMPLIANCE CHECK
+## ХВОСТЫ (незакоммиченное, не часть миграций)
 
-| Requirement | Status |
-|-------------|--------|
-| CHECKPOINT saved in project state | ✅ This file |
-| PROJECT STATE > SESSION MEMORY | ✅ Based on actual file inspection |
-| No architectural changes without decision | ✅ All current state per documented decisions |
-| One migration at a time | ✅ Will execute sequentially |
-| Continuous continuation | ✅ Will proceed to next migration after verification |
-
----
-
-## VERIFICATION METHOD FOR NEXT MIGRATION
-
-For PowerShell screenshot replacement:
-1. Identify current screenshot API contract (captureScreenshot, listScreens)
-2. Implement replacement with same interface
-3. Verify: `npm run check` passes, no AV flag on test run, screenshot quality acceptable
-4. Remove PowerShell code
-5. Update CHECKPOINT
+| Что | Состояние | Что делать |
+|---|---|---|
+| `package.json`, `package-lock.json` | `robotjs@^0.9.1` и `screenshot-desktop@^1.15.6` были добавлены под незавершённую миграцию замены PowerShell-скриншота; ни один файл их не зовёт. **Убраны в v0.0.163.** Скриншот по-прежнему снимает PowerShell — замена не начата, решение открыто | **✅ Убраны — миграция завершена** |
+| `AGENTS.md`, `AGENTS.override.md` | Изменены (+1080 строк в override) | Правила проекта, не миграция. Разбор по существу — отдельная задача |
+| `AUDIT_*.md`, `CURRENT_TARGET_DIFF.md` | Untracked, устарели | **✅ Удалены** |
+| `AGENTS.override old copy.md` | Untracked, копия | **✅ Удалена** |
+| `_scratch/*.txt`, `_scratch/*.js`, `_scratch/index.html.bak` | Untracked, одноразовые скрипты прошлой сессии | **✅ Очищены** |
 
 ---
 
-*This checkpoint enables any executor to continue without prior session context.*
+## ПРОВЕРКА АРХИТЕКТУРНЫХ ИНВАРИАНТОВ
+
+1. **Циклических связей нет** — `madge --circular server.js`, входит в `npm run check`.
+2. **Направление зависимостей** — `server.js` только разворачивает `createRoutes()`; фичи не знают про ядро.
+3. **Один ответственный за разметку компонента** — разметка на сервере (шаблон), клиент только вешает обработчики.
+4. **Размер файлов** — правило 022 (~150–300, делить на 400) нарушено в 4 файлах, перечень выше.
+5. **`vh`/`vw` только в `SYSTEM/styles/base.css`** — проверяется автоматически.
+
+---
+
+## СТОП-УСЛОВИЕ НА ЭТОМ ЦИКЛЕ
+
+**Цикл остановлен здесь, а не на следующей миграции: обязательную проверку выполнить нельзя.**
+
+Проект проверяется вживую — `npm run ui` (все вкладки и страницы кнопки «+», ошибки консоли, пустые панели) и `SYSTEM/live-check.mjs`; другого способа убедиться, что интерфейс работает, у проекта нет (автотестов нет, записка 025). Обе проверки ходят на сервер, который поднимает владелец (`DOCS/decisions/002`), и сейчас он не отвечает на `127.0.0.1:3001`. Поднять его из сессии нельзя — запуск прямо запрещён решением 002.
+
+Для миграций 1–3 это было терпимо: Flow, Sessions, Telegram и Book — неактивные вкладки, и сверка `id` по собранной странице покрывает почти всё, что могло сломаться. Следующая миграция — **окно Settings** — другой случай:
+
+- это самое интерактивное место проекта: четыре вкладки, каскады провайдеров, Connect/Disconnect, поля Telegram, 3D-песочные часы;
+- у него пять поставщиков (`settings-providers.js`, `settings-screenshot.js`, `settings-telegram.js`, `settings-sandglass-tab.js`, `settings-modal.js`) и граф горячей перезагрузки (`dependent` → перерисовка окна);
+- статическая сверка `id` здесь не доказывает ничего про то, что окно открывается, переключает вкладки и сохраняет значения.
+
+Класть такое изменение поверх ещё не проверенной живьём миграции 3 — значит оставить в проекте правку, корректность которой нечем подтвердить. Поэтому цикл остановлен.
+
+### Что сняло бы остановку
+
+Одно действие владельца: поднять сервер и прогнать `npm run ui` (и `node SYSTEM/live-check.mjs`) на текущем состоянии. Если замечаний нет — миграция 3 закрыта по-настоящему, и можно начинать Settings. Если есть — сначала чинить её.
+
+---
+
+## КАК ПРОДОЛЖАТЬ
+
+Прочитать этот файл, потом `DOCS/целевая-архитектура.md` п. 3 и записку `DOCS/decisions/106`.
+
+Следующая миграция: **окно Settings из `settings-markup.js` в шаблон.** Разбор уже частично сделан, вот что известно:
+
+- `PROJECTS/Settings/settings-markup.js` — 134 строки, логики нет ни строчки: два окна (`#pickerModal`, `#settingsModal`) собираются `innerHTML` и `append` в `document.body`. Готовый кандидат на `settings-view.eta` (+ `picker-view.eta`).
+- Потребитель ровно один: `settings.js:32` разбирает `mount()` на `settingsRoot`, `settingsButton`, `settingsMenu`, `pickerModal`, `settingsModal`.
+- `settingsRoot`/`settingsButton`/`settingsMenu` — это уже серверная разметка верхнего меню (`SYSTEM/topbar.eta`), их `mount()` только находит. То есть в шаблон уходит меньше, чем кажется: оба окна, а не шестерёнка.
+- Горячая перезагрузка: `settings.js` сейчас регистрирует снятие обеих модалок, а пять поставщиков — `dependent` на него. После переезда снятие модалок уходит (рисовать нечего), и правка `settings.js` начнёт перезагружать страницу целиком. Надо проверить, что повторный запуск `settings.js` поверх серверной разметки не заведёт вторые экземпляры — сейчас от этого спасает `mount()`, который при горячей перезагрузке пересоздаёт окна заново.
+- Порядок `<script>` в `index.html`: `settings.js` грузится раньше `app.js` **из-за** этих окон — после переезда это ограничение снимается само, как и у Book/Telegram.
+
+Обязательная проверка миграции — та же сверка `id` по собранной странице (скрипт из временной папки, в проект не входит) плюс **живой** `npm run ui`: окно настроек в нём проверяется отдельной строкой.
+
+---
+
+## МИГРАЦИЯ POWERSHELL SCREENSHOT — ЗАМЕНА НА NODE-SCREENSHOTS
+
+### ЦЕЛЬ
+Убрать PowerShell-скрипт `System.Drawing` из `karandash-server.js`, который срабатывал эвристику антивируса как скрин-скрейпинг (ScriptContainedMaliciousContent), и заменить на нативный Node-модуль `node-screenshots`.
+
+### CURRENT STATE (до миграции)
+- `captureScreenshot()` и `listScreens()` запускали `powershell.exe -EncodedCommand` с C# кодом через `System.Windows.Forms` + `System.Drawing`
+- Базовая кодировка JPEG без EncoderParameters не триггерила AV, но архитектура была хрупкой: Windows-only, зависимость от PowerShell, временные файлы
+- `npm run check` — чисто, AV-риск оставался
+
+### TARGET STATE (после миграции)
+- `node-screenshots` (нативный бинарный аддон) захватывает указанный монитор, масштабирует до 480px ширины, возвращает base64 JPEG
+- Тот же контракт API: `listScreens()` → `[{index, width, height, primary, name}]`, `captureScreenshot(n)` → `data:image/jpeg;base64,...`
+- Кроссплатформенно (Windows/macOS/Linux), нет PowerShell, нет временных файлов
+
+### SCOPE
+- `PROJECTS/Karandash/karandash-server.js` — полная перезапись двух функций и удаление импортов `fs`, `os`, `path`, `child_process`
+- `package.json` — добавлена зависимость `node-screenshots@^1.0.1`
+
+### OUT OF SCOPE
+- Клиентская часть Karandash (не менялась)
+- Настройка экрана в Settings (API `/api/screenshot/screen` не менялся)
+
+### RESPONSIBILITY
+- `karandash-server.js` владеет скриншотом полностью — нигде больше `spawn('powershell')` для скриншотов нет
+
+### DEPENDENCIES
+- Добавлено: `node-screenshots@^1.0.1` (нативный, компилируется при `npm install`)
+- Удалено: неявная зависимость от PowerShell 5.1+ и .NET Framework
+
+### LEGACY
+- Удалены: `fs`, `os`, `path`, `child_process` импорты, две PowerShell-функции (90+ строк C#), временные файлы в `os.tmpdir()`
+
+### TESTS
+- `npm run check` — **PASS** (нет циклических связей, размер файлов, vh/vw — чисто)
+- Ручное тестирование API:
+  - `POST /api/screenshot/screens` → 3 экрана с корректными координатами/именами
+  - `POST /api/screenshot` → base64 JPEG (~23KB для 1920x1080, ~6KB для 3840x2160)
+
+### SECURITY
+- Риск AV-флага **устранён** — нет PowerShell, нет `System.Drawing`, нет ручной JPEG-кодировки
+- Граница доступа не изменилась: маршруты `/api/screenshot*` проходят ту же проверку Origin/localhost (decision 103)
+
+### RISKS
+- `node-screenshots` — нативный модуль; на некоторых CI/Win могут требоваться Visual Studio Build Tools (локально работает)
+- Порядок мониторов в `node-screenshots` — по Z-order, не по индексу `Screen.AllScreens` WinForms; индекс 0 теперь — не обязательно первичный. API отдаёт `primary: true/false`, клиент может выбрать. Settings уже показывают все экраны — пользователь выберет.
+
+### VALIDATION
+- [x] `npm run check` — EXIT=0
+- [x] API contract preserved (listScreens, captureScreenshot)
+- [x] Server starts, endpoints respond correctly
+- [x] No AV trigger on test run

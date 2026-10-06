@@ -7,9 +7,11 @@
 Раздел под телеграм-мост проекта: кнопка тулбара `telegramButton`, вид `telegramView`,
 клиент в `PROJECTS/Telegram/telegram.js`, стили рядом в `telegram.css`.
 
-Разметку вкладка вставляет сама, в `SYSTEM/index.html` от неё остались только точки
-подключения — кнопка, `<link>` и `<script>` (`DOCS/decisions/014`). Скрипт грузится
-раньше `SYSTEM/app.js`: тот на старте ищет `#telegramView` для `App.VIEWS`.
+Разметку вкладки рисует сервер: шаблон `PROJECTS/Settings/telegram-view.eta` подставляется в страницу на месте заглушки `{{TELEGRAM_VIEW}}` (`renderPage`, `SYSTEM/core/version.js`) и отдаётся маршрутом `/api/fragment/telegram-view`. В `SYSTEM/index.html` от вкладки остались контейнер, `<link>` и `<script>` (`DOCS/decisions/014`); `telegram.js` обработчики больше не рисует — он только вешает их и следит за связью с сервером.
+
+Шаблон лежит в `PROJECTS/Settings`, а клиент и стили — в `PROJECTS/Telegram`: так уже лежал `telegram-messages.eta` и весь серверный код моста, а шаблон поставлен рядом со своим сервером. Кто этим владеет — открытый вопрос (`CHECKPOINT.md`, раздел «Открытые вопросы»).
+
+Скрипт по-прежнему подключён раньше `SYSTEM/app.js`, но теперь не ради `#telegramView`: элемент приходит с разметкой страницы до любого скрипта, а `app.js` ищет его для `App.VIEWS` на старте.
 
 ## 📮 Что уже работает
 

@@ -1,59 +1,20 @@
 // Вкладка Telegram верхнего тулбара: чат-интерфейс телеграм-моста проекта
-// (PROJECTS/Settings/telegram-server.js). Пока только разметка — лента и поле
-// ввода без логики: подключение к мосту добавится отдельно.
+// (PROJECTS/Settings/telegram-server.js). Скрипт больше не строит разметку:
+// она приходит с сервера (telegram-view.eta, заглушка в index.html), а он
+// только вешает обработчики и следит за связью с сервером.
 //
-// Файл самодостаточный: свою разметку он вставляет сам, стили лежат рядом
-// (telegram.css), в SYSTEM/index.html остаются только точки подключения —
-// кнопка тулбара, <link> и <script>. Грузится раньше app.js: тот на старте
-// ищет #telegramView для App.VIEWS (DOCS/decisions/014).
+// Грузится раньше app.js: тот на старте ищет #telegramView для App.VIEWS
+// (DOCS/decisions/014); сам элемент уже есть в разметке страницы.
 (function () {
 
-    const view = document.createElement('div');
-    view.className = 'view view--telegram';
-    view.id = 'telegramView';
-    view.hidden = true;
-    view.innerHTML = `
-        <div class="telegram">
-            <div class="telegram__main">
-                <div class="telegram__messages" id="telegramMessages">
-                    <!-- лента рисуется сервером (telegram-server.js + telegram-messages.eta):
-                         те же сообщения, что мост отправляет человеку по notifyTurnFinished.
-                         hx-swap="none" на инициаторе — сам ответ приходит oob-подменой ниже -->
-                    <div hidden
-                         hx-get="/api/fragment/telegram-messages"
-                         hx-trigger="load, every 5s"
-                         hx-swap="none"></div>
-                    <!-- опрос фрагмента может не дойти до сервера (перезапуск/правка
-                         server.js, сеть) — тогда лента молча остаётся такой, какой была,
-                         и это неотличимо от «сообщений действительно нет». Показываем это
-                         явно вместо тихой заглушки (см. htmx:sendError/htmx:responseError
-                         ниже) -->
-                    <p class="telegram__error" id="telegramError" hidden>⚠ Нет связи с сервером — лента может быть неактуальна</p>
-                    <p class="telegram__empty" id="telegramEmpty">Сообщений пока нет</p>
-                    <div class="telegram__list telegram__list--empty" id="telegramList"></div>
-                </div>
-                <form class="telegram__composer" id="telegramComposer">
-                    <textarea class="telegram__input" id="telegramInput" rows="1" placeholder="Написать сообщение..." aria-label="Сообщение"></textarea>
-                    <button type="submit" class="telegram__send">Отправить</button>
-                </form>
-            </div>
-        </div>
-    `;
-    // Вкладки лежат подряд в body — встаём на прежнее место, перед вкладкой
-        // Sessions. Якорь — #chatView: он и есть эта вкладка, и его разметка
-        // приходит серверной подстановкой {{SESSION_VIEW}} ещё до выполнения
-        // скриптов.
-        // Разметки нет — вкладку показать некуда, дальше идти незачем
-    const sessionsView = document.getElementById('chatView');
-    if (!sessionsView) return;
-    sessionsView.parentElement.insertBefore(view, sessionsView);
+    const messages = document.getElementById('telegramMessages');
+    if (!messages) return;
+    const errorHint = document.getElementById('telegramError');
 
     // индикатор связи с сервером для опроса фрагмента: вешаем на
     // #telegramMessages — этот узел htmx не подменяет (подмена идёт oob-блоками
     // #telegramEmpty/#telegramList внутри него), поэтому слушатель переживает
     // все обновления и не нужен htmx:oobAfterSwap для переподхвата
-    const messages = view.querySelector('#telegramMessages');
-    const errorHint = view.querySelector('#telegramError');
     messages.addEventListener('htmx:sendError', () => { errorHint.hidden = false; });
     messages.addEventListener('htmx:responseError', () => { errorHint.hidden = false; });
     messages.addEventListener('htmx:afterRequest', (e) => {
@@ -80,9 +41,5 @@
         firstLoad = false;
         messages.scrollTop = messages.scrollHeight;
     });
-
-    // горячая перезагрузка этого скрипта: снимаем вкладку, которую он нарисовал, —
-    // свежая копия вставит свою на то же место
-    window.App?.registerHotReload('PROJECTS/Telegram/telegram.js', () => view.remove());
 
 })();

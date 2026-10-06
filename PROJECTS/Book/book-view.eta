@@ -1,0 +1,21 @@
+<%/* Разметка вкладки Book: панель карточек разделов слева, README справа.
+   Подставляется сервером в страницу ({{BOOK_VIEW}}) и маршрутом /api/fragment/book-view. */ %>
+        <nav class="side-nav" id="bookNav" aria-label="Book">
+            <h2 class="side-nav__title side-nav__title--nav"><span>Book</span></h2>
+            <ul class="session-list" id="bookList"></ul>
+            <div class="panel-resize" id="bookResize" aria-hidden="true"></div>
+        </nav>
+        <div class="view__content">
+            <p class="book-empty" id="bookEmpty">Select a section on the left</p>
+            <div class="chat-file-editor" id="bookFileEditor" hidden>
+                <div class="chat-file-editor-header">
+                    <h2 class="chat-file-editor-title" id="bookFileEditorTitle"></h2>
+                    <p class="file-modal__meta" id="bookFileEditorMeta"></p>
+                </div>
+                <div class="file-modal__links" id="bookFileEditorLinks"></div>
+                <textarea class="file-modal__text" id="bookFileEditorText" spellcheck="false" aria-label="File contents"></textarea>
+                <div class="file-modal__footer">
+                    <span class="file-modal__status" id="bookFileEditorStatus"></span>
+                </div>
+            </div>
+        </div>

@@ -278,6 +278,10 @@ function createRoutes() {
             sendJson(res, state());
         },
 
+        '/api/fragment/telegram-view': (req, res) => {
+            sendHtml(res, eta.render('telegram-view', {}));
+        },
+
         // лента вкладки Telegram (#telegramMessages): те же сообщения, что
         // ушли человеку notifyTurnFinished'ом — последний ответ каждой
         // завершившейся сессии, самые свежие снизу
@@ -386,4 +390,5 @@ module.exports = {
     createRoutes,
     stop,
     handleUpdate: (...args) => inbox.handleUpdate(...args),
+    renderView: () => eta.render('telegram-view', {}),
 };
