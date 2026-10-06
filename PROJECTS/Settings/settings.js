@@ -1,7 +1,8 @@
 // Settings: вход в раздел. Сам файл самодостаточным быть перестал — он держит одну
-// вещь: разметку (её рисует settings-markup.js) плюс то, чем её наполняют и кто этим
-// управляет: меню-шестерёнка, общий api(), горячая перезагрузка и сборка частей
-// раздела. Сами части вынесены по темам в соседние файлы с init(...):
+// вещь: разметку (её рендерит PROJECTS/Settings/settings-modal.eta) плюс то, чем её
+// наполняют и кто этим управляет: меню-шестерёнка, общий api(), горячая
+// перезагрузка и сборка частей раздела. Сами части вынесены по темам в соседние
+// файлы с init(...):
 //   settings-providers.js      список провайдеров, Connect/Disconnect, оба каскада
 //   settings-screenshot.js     экран для скриншотов Karandash
 //   settings-telegram.js       подключение Telegram
@@ -13,10 +14,10 @@
 // и меняют его через window.App.
 //
 // Грузится раньше app.js (см. порядок <script> в index.html): app.js на старте
-// сразу ищет #settingsModal/#pickerModal в DOM, поэтому разметку должен успеть
-// вставить settings-markup.js — первый в списке. Сам этот файл на своём верхнем
-// уровне к window.App не обращается — только внутри обработчиков, которые сработают
-// уже после того, как app.js его определит.
+// сразу ищет #settingsModal/#pickerModal в DOM — они приходят с серверной сборкой
+// страницы, раньше их вставлял settings-markup.js (удалён). Сам этот файл на своём
+// верхнем уровне к window.App не обращается — только внутри обработчиков, которые
+// сработают уже после того, как app.js его определит.
 (function () {
 
     // Слушатели файла — на одном сигнале, и снимаются разом: шестерёнка и её меню
@@ -26,22 +27,25 @@
     const listeners = new AbortController();
     const ON = { signal: listeners.signal };
 
-    // Разметку рисует settings-markup.js: он подключён раньше всех и отдал функцию
-    // mount(), а не готовые узлы — при горячей перезагрузке settings.js разметка
-    // должна появиться заново (иначе свежая копия добавит вторую поверх первой).
-    const { settingsRoot, settingsButton, settingsMenu, pickerModal, settingsModal } = window.SettingsMarkup.mount();
+    // Разметка приходит сервером: settings-modal.eta рендерит оба модала в страницу,
+    // поэтому достаточно найти узлы по id — вставлять ничего не надо, а настройку
+    // верхнего меню (#settingsRoot) строит topbar.eta.
+    const settingsRoot = document.getElementById('settings');
+    const settingsButton = settingsRoot ? settingsRoot.querySelector('#settingsButton') : null;
+    const settingsMenu = settingsRoot ? settingsRoot.querySelector('#settingsMenu') : null;
+    const pickerModal = document.getElementById('pickerModal');
+    const settingsModal = document.getElementById('settingsModal');
+    if (!settingsRoot || !settingsButton || !settingsMenu || !pickerModal || !settingsModal) return;
 
     // Открытие окна живёт в settings-modal.js и появляется только в конце файла,
     // а вызвать его можно из меню-шестерёнки выше. Поэтому через переменную: сначала
     // пусто, после сборки частей — готовая функция (слушатели сработают позже).
     let openSettings = null;
 
-    // горячая перезагрузка этого скрипта: снимаем всё, что он нарисовал (обе
-    // модалки) и свои слушатели, иначе свежая копия добавит вторые модалки поверх
-    // первых, а на общих узлах — вторые обработчики. Дальше скрипт выполняется
-    // обычным порядком и рисует себя заново сам. Шестерёнку в топбаре не снимаем:
-    // она теперь из шаблона (SYSTEM/topbar.eta), и снятая уехала бы из меню до
-    // перерисовки страницы.
+    // горячая перезагрузка этого скрипта: снимаем только наши слушатели. Модалки
+    // остаются — их рисует сервер (settings-modal.eta), и на скрипт они не реагируют.
+    // Шестерёнку в топбаре не снимаем: она из шаблона topbar.eta, правка уходит
+    // отдельным событием шаблона.
     //
     // Через очередь на окне, а не через window.App: этот файл подключён раньше
     // app.js, и App там ещё undefined — вызов через App молча ничего не делал, а
@@ -50,8 +54,6 @@
         'PROJECTS/Settings/settings.js',
         () => {
             listeners.abort();
-            pickerModal.remove();
-            settingsModal.remove();
         },
         null,
         null,

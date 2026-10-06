@@ -12,6 +12,7 @@ const topbar = require('../topbar-server.js');
 const sessionsServer = require('../../PROJECTS/Sessions/sessions-server.js');
 const telegramServer = require('../../PROJECTS/Settings/telegram-server.js');
 const bookServer = require('../../PROJECTS/Book/book-server.js');
+const settingsServer = require('../../PROJECTS/Settings/settings-server.js');
 
 // корень проекта на два уровня выше: модуль лежит в SYSTEM/core
 const ROOT = path.join(__dirname, '..', '..');
@@ -50,6 +51,7 @@ function renderPage(html, tail) {
         .replace('{{SESSION_VIEW}}', () => sessionsServer.renderView())
         .replace('{{TELEGRAM_VIEW}}', () => telegramServer.renderView())
         .replace('{{BOOK_VIEW}}', () => bookServer.renderView())
+        .replace('{{SETTINGS_MODAL}}', () => settingsServer.renderView())
         .replace('{{APP_VERSION}}', currentVersion())
         .replace('{{VERSION_LIST}}', versionHistory());
     if (!tail) return page;

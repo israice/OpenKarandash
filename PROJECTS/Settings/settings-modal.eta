@@ -1,33 +1,5 @@
-// Разметка окна Settings вынесена в отдельный файл: два её куска (окно выбора
-// окружения CLI и окно настроек с четырьмя вкладками) — половина прежнего
-// settings.js. Логики здесь нет вообще.
-//
-// Кнопку-шестерёнку с её меню скрипт не рисует: они лежат в SYSTEM/topbar.eta рядом
-// с остальным верхним меню, а вторая копия в тулбаре — это как раз тот дубль,
-// из-за которого шестерёнка и кнопка Karandash оказывались на странице по две.
-// Берём их из шаблона, ровно как Karandash берёт свою кнопку (karandash.js).
-//
-// Подключён с defer раньше settings.js: app.js на старте сразу ищет
-// #settingsModal/#pickerModal в DOM (порядок <script> в SYSTEM/index.html), а рисовать их
-// обязан кто-то до ядра. Сама разметка едет функцией mount(), а не прямо в файле: при
-// горячей перезагрузке settings.js разметка должна нарисоваться заново (свежий экземпляр
-// зовёт mount() сам), иначе свежая копия добавит вторую такую же поверх первой.
-window.SettingsMarkup = (function () {
-
-    function mount() {
-        // ---------- разметка: кнопка-шестерёнка и меню — из шаблона ----------
-
-        const settingsRoot = document.getElementById('settings');
-        const settingsButton = settingsRoot.querySelector('#settingsButton');
-        const settingsMenu = settingsRoot.querySelector('#settingsMenu');
-
-        // ---------- разметка: окно выбора окружения CLI ----------
-
-        const pickerModal = document.createElement('div');
-        pickerModal.className = 'modal modal--top';
-        pickerModal.id = 'pickerModal';
-        pickerModal.hidden = true;
-        pickerModal.innerHTML = `
+<%/* Модалка настроек + окно выбора окружения CLI (подставляется сервером, SETTINGS_MODAL). */ %>
+<div class="modal modal--top" id="pickerModal" hidden>
         <div class="modal__backdrop" data-close-modal></div>
         <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
             <div class="modal__header">
@@ -36,19 +8,8 @@ window.SettingsMarkup = (function () {
             <p class="modal__hint" id="pickerHint"></p>
             <ul class="picker" id="pickerList"></ul>
         </div>
-    `;
-        document.body.append(pickerModal);
-
-        // ---------- разметка: окно настроек ----------
-
-        const settingsModal = document.createElement('div');
-        // modal--top-align: диалог настроек не центрируется по высоте, а прибит к верху
-        // контейнера (сразу под топбаром) — иначе смена вкладки на менее высокую
-        // (Router/Network/Sandglass) утягивает всё окно вниз вслед за центровкой
-        settingsModal.className = 'modal modal--top-align';
-        settingsModal.id = 'settingsModal';
-        settingsModal.hidden = true;
-        settingsModal.innerHTML = `
+</div>
+<div class="modal modal--top-align" id="settingsModal" hidden>
         <div class="modal__backdrop" data-close-modal></div>
         <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
             <div class="settings-tabs" id="settingsTabs" role="tablist" aria-label="Settings sections">
@@ -125,10 +86,4 @@ window.SettingsMarkup = (function () {
                 </div>
             </div>
         </div>
-    `;
-        document.body.append(settingsModal);
-        return { settingsRoot, settingsButton, settingsMenu, pickerModal, settingsModal };
-    }
-
-    return { mount };
-})();
+</div>

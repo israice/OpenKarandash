@@ -144,7 +144,10 @@
 
     <div class="worker-tooltip" id="workerTooltip"></div>
 
-    <!-- Окно выбора окружения Claude CLI (#pickerModal) — в PROJECTS/Settings/settings.js -->
+    <!-- Модалка настроек и окно выбора CLI: шаблон PROJECTS/Settings/settings-modal.eta,
+         подставляется сервером на место заглушки SETTINGS_MODAL; логика —
+         settings.js и входящие модули Settings. -->
+    {{SETTINGS_MODAL}}
 
     <div class="modal file-modal" id="fileModal" hidden>
         <div class="modal__backdrop" data-close-modal></div>
@@ -182,17 +185,15 @@
     <!-- Пути пишутся от корня проекта: страница отдаётся по адресу «/», и браузер
          считает относительные ссылки от него, а не от папки SYSTEM. -->
     <!-- Settings грузится первым: app.js на своём верхнем уровне сразу ищет
-         #settingsModal/#pickerModal в DOM, их должен успеть вставить именно этот файл -->
+         #settingsModal/#pickerModal в DOM — теперь приходят с сервером (settings-modal.eta). -->
     <!-- htmx: серверные фрагменты подменяют куски страницы без своего JS.
          Файл ставится через npm (package.json), поэтому путь ведёт в node_modules -->
     <script src="node_modules/htmx.org/dist/htmx.min.js" defer></script>
-    <!-- Части Settings грузятся перед settings.js и в том же порядке: разметку рисует
-         settings-markup.js (app.js ищет #settingsModal/#pickerModal на старте), остальные
+    <!-- Части Settings грузятся перед settings.js и в том же порядке: остальные
          только заводят window.Settings* с init(...) — сами ничего не выполняют. -->
     <!-- Заслон первой сборки: самый первый отложенный скрипт, чтобы разделы,
          идущие ниже, могли звать window.MissionBoot.task (SYSTEM/boot.js). -->
     <script src="SYSTEM/boot.js" type="module"></script>
-    <script src="PROJECTS/Settings/settings-markup.js" defer></script>
     <script src="PROJECTS/Settings/settings-providers.js" defer></script>
     <script src="PROJECTS/Settings/settings-screenshot.js" defer></script>
     <script src="PROJECTS/Settings/settings-telegram.js" defer></script>
