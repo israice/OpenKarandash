@@ -51,7 +51,7 @@ A session note is named `<date> <title> <id prefix>`, and the title is the user'
 | --- | --- |
 | `/api/obsidian/graph` | The vault's nodes and links. The canvas is gone; now the file editor takes them for a node's list of links |
 | `/api/search` | Search: `{ q, limit }` → a list of hits with snippets |
-| `/api/complexity` | Project complexity report: file sizes over 400 lines, requires per file, folder depth (`DOCS/decisions/111`) |
+| `/api/complexity` | Project complexity report, POST: file sizes over 400 lines, requires per file, folder depth (`DOCS/decisions/111`) |
 | `/api/file/read` | A file's contents for the panel: text, size, the `binary` and `editable` flags |
 | `/api/file/write` | Saving an edit; vault notes and binary files are rejected |
 
