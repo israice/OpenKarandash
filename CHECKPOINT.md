@@ -10,11 +10,12 @@
 | Что | Значение |
 |---|---|
 | Версия | **v0.0.171** (берётся последней строкой `vX.Y.Z` в `VERSION.md`, читает `SYSTEM/core/version.js`) |
-| Последний коммит | `ad3e028` — v0.0.170 (sharp-миграция + AGENTS.md-консолидация + чистка _scratch); **v0.0.171 — в рабочем дереве, не закоммичена** |
+| Закоммичено v0.0.171 | `e7ba786` — hx-get трио на topbar/telegramView/chatView/bookView/settingsSlot, VERSION.md, этот файл |
+| Последний коммит | `e7ba786` — v0.0.171 (точечная перезагрузка hx-get-фрагментов) |
 | Закоммичено v0.0.170 | `ad3e028` — sharp-фикс скриншотов, VERSION.md, CHECKPOINT, decision 110, package.json (sharp), settings-screenshot.js, AGENTS.md/override |
 | Подтверждение живьём | **v0.0.167**: сервер был поднят владельцем, `npm run ui` чисто, `live-check` — все вьюшки на месте, 14 пунктов сессий. Миграции 1–6 подтверждены |
 | Миграции 3 и 4 | **закоммичены** (`22c6dc3` v0.0.163 Telegram+Book, `e1bf282` v0.0.164 Settings-модалка) |
-| Незакоммичено | `CHECKPOINT.md` (обновление после коммита v0.0.170 — этот файл), `PROJECTS/Page 9/`, `test.jpg`, `test_thumb.jpg`, `_scratch/build-settings-eta.js`, `_scratch/tb-check.txt` — см. «Хвосты» |
+| Незакоммичено | `CHECKPOINT.md` (этот файл, строчка про e7ba786 ещё не в git), `PROJECTS/Page 9/`, `test.jpg`, `test_thumb.jpg`, `_scratch/` (2 хвоста) — см. «Хвосты» |
 | `SYSTEM/index.html` | 260 строк |
 | `server.js` | 292 строки |
 | Разделов в `PROJECTS/` | 16 (`Feed`, `Kanban`, `Penpot`, `Page 3`–`Page 8` — заготовки) |
