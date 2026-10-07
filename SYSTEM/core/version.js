@@ -2,9 +2,17 @@
 // VERSION.md. Отдельный модуль, потому что её читают в двух разных местах:
 // подстановка в разметку при отдаче файла (http-server.js) и предпросмотр
 // ветки (core/branch-preview.js).
+//
+// Рядом с версией подставляется и коммит (data-head на <html>). Это не украшение:
+// по нему страница решает, перезагружать ли её. Правило «перезагрузка раз в
+// коммит» (DOCS/decisions/117) держит именно сравнение: сервер шлёт в канал
+// свой коммит, а страница — тот, каким загрузилась сама. Пока коммиты совпадают,
+// вкладка молчит: перезапуск сервера, открытая заново вкладка и событие,
+// пришедшее в ту же секунду, не выглядят новым коммитом.
 const fs = require('fs');
 const path = require('path');
 const { escapeHtml } = require('./http.js');
+const gitHead = require('./git-head.js');
 // верхнее меню страницы — тоже подстановка, и по той же причине здесь, а не в
 // http-server.js: предпросмотр ветки должен показать то же меню, а он заходит
 // в renderPage мимо первого. Сам шаблон и его маршрут — SYSTEM/topbar-server.js
@@ -25,6 +33,13 @@ function currentVersion() {
     } catch {
         return '';
     }
+}
+
+// коммит, которым собрана страница. Хеш не длинный — короткого хватает: он
+// попадает в атрибут data-head и в канал перезагрузки, а различать надо всего
+// два состояния — «загружено этим» и «загружено предыдущим»
+function currentHead() {
+    return gitHead.head(ROOT);
 }
 
 // строки VERSION.md попадают прямо в HTML, а в сообщениях коммитов встречается
@@ -53,9 +68,10 @@ function renderPage(html, tail) {
         .replace('{{BOOK_VIEW}}', () => bookServer.renderView())
         .replace('{{SETTINGS_MODAL}}', () => settingsServer.renderView())
         .replace('{{APP_VERSION}}', currentVersion())
+        .replace('{{APP_HEAD}}', currentHead())
         .replace('{{VERSION_LIST}}', versionHistory());
     if (!tail) return page;
     return page.includes('</body>') ? page.replace('</body>', `${tail}</body>`) : page + tail;
 }
 
-module.exports = { currentVersion, versionHistory, renderPage };
+module.exports = { currentVersion, currentHead, versionHistory, renderPage };

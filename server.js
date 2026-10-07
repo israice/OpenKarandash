@@ -96,7 +96,7 @@ const {
 
 // карта проекта (vault Obsidian) живёт в PROJECTS/Graph; здесь остаётся только её
 // запуск — маршруты папка отдаёт сама (graph.createRoutes в featureRoutes ниже)
-const { prepareVault, projectFiles } = graph.init({
+const { prepareVault, scheduleMapUpdate } = graph.init({
     listSessions,
     listMessages,
     sessionTitle,
@@ -112,17 +112,19 @@ const runs = require('./SYSTEM/core/runs.js').create({
     releaseTelegram: () => telegram.stop(),
 });
 
-// живая перезагрузка: канал до страницы, её скрипт и опрос файлов, по которому
-// события возникают. Карту пересобирает он же, но через переданные функции —
-// и пересборку, и «занят ли кто-то ходом» знает только сервер
+// Пересборка карты под тем именем, под каким её знают остальные (run-turn,
+// sessions-routes): звать им «график» не нужно, нужен один способ сказать
+// «карта стала неправдой». Занятость ходом знает только сервер, поэтому она
+// подставляется здесь, а не спрашивается у каждого зовущего
+const map = { scheduleMapUpdate: () => scheduleMapUpdate(() => runs.busyCount() > 0) };
+
+// живая перезагрузка: канал до страницы, её скрипт и опрос коммитов, по которому
+// события возникают. Карту он не собирает — этим владеет PROJECTS/Graph: по
+// коммиту карта стала неправдой, но собирать её не его дело
 const watch = require('./SYSTEM/core/watch.js').create({
     root: ROOT,
-    serverFile: __dirname,
     pollMs: POLL_MS,
-    dataDir: graph.DATA_DIR,
-    listProjectFiles: () => projectFiles(),
-    rebuildMap: () => prepareVault(),
-    isBusy: () => runs.busyCount() > 0,
+    onCommit: () => map.scheduleMapUpdate(),
 });
 
 // слой CLI и телеграм-мост замыкают друг на друга: ход зовёт подхват исполнителя,
@@ -166,7 +168,7 @@ const runTurn = require('./SYSTEM/core/run-turn.js').create({
     turnJudgment,
 notifyTurnFinished: (letter) => bridge.notifyTurnFinished(letter),
 runs,
-    map: watch,
+    map,
     live: watch,
 });
 
@@ -243,13 +245,17 @@ const featureRoutes = {
         turnJudgment,
         runs,
     }),
+    // разведка установленных CLI для строки выбора в шапке сессии: одним запросом
+    // спрашивает сервер про все имена сразу, чтобы строка могла красить доступные
+    // пункты (SYSTEM/cli/scan-server.js, SYSTEM/cli-scan.js)
+    ...require('./SYSTEM/cli/scan-server.js').createRoutes({ agents: cli.agents }),
     ...require('./SYSTEM/core/sessions-routes.js').createRoutes({
         db: {
             resetSessions, deleteSession, setSessionThumb, getSessionThumb, getMessageRole, setMessageText,
             getSessionMeta, listMessages, sumSessionUsage,
         },
         list: sessionList,
-        map: watch,
+        map,
         runs,
     }),
 };
@@ -288,6 +294,6 @@ server.listen(PORT, '127.0.0.1', () => {
 
     if (LIVE_RELOAD) {
         watch.start();
-        console.log('Auto-reload is on — the page will reload after a file is saved.');
+        console.log('Auto-reload is on — the page reloads once per commit.');
     }
 });

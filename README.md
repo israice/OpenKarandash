@@ -86,24 +86,28 @@ normal work there is no need to touch the environment.
 
 ## Auto-reload
 
-The server watches the project files. Save `index.html` (or any other file) and the open tab reloads by itself — no manual refresh needed.
+The page reloads **once per commit**. The server watches the commit of the main working copy, not the files: commit something and the open tab picks it up by itself. Save a file and nothing happens — code that is not committed yet never reaches the interface.
 
-It works like this: a small script is mixed into the served HTML on the fly, and it keeps an SSE connection to `/__reload`. The project files themselves are not modified.
+How it works: a small script is mixed into the served HTML on the fly and keeps an SSE connection to `/__reload`. The commit the page was loaded with sits in `data-head` on `<html>`, and the server sends its current commit with every event, so the tab reloads only when the two differ. The project files themselves are not modified.
 
-While a request to Claude is in flight, auto-reload is deferred — both in the browser and on the server. Claude from the chat edits project files, `server.js` included, and reloading the tab would break reading the stream while restarting the server would break the CLI process itself. Both updates fire as soon as the request is finished: the child process tells the parent it is busy over IPC, and the page does the same through `window.__holdReload`.
+Consequences worth knowing:
+
+- A **server restart does not reload the page**. It changes no code, so the tab stays as it is. If you edited a server file and its contract changed, refresh by hand until you commit.
+- A tab opened after the commit does not reload pointlessly — its own commit already matches.
+- While a request to Claude is in flight, the reload is deferred: the page does the same through `window.__holdReload`. Claude from the chat edits project files and `server.js` included, and reloading the tab would break reading the stream.
 
 If the tab was closed or refreshed by hand mid-work anyway, the CLI does not stop: the request is carried to completion, and the question, the steps and the answer go into the database.
 
 More than that, the refreshed page **reattaches to the work in progress**: `/api/sessions` marks such sessions with a `running` field, and `POST /api/sessions/attach` with a session id returns the stream of its remaining events — the same ones `/api/claude/ask` sends. The feed keeps filling live from where you left it. If the session has already finished, the answer comes back as ordinary JSON (`{"ok":true,"running":false}`) and the page simply shows the conversation from the database.
 
-Edits to the server's own files are also applied without a manual restart: the server runs in a child process, the parent (`SYSTEM/core/watchdog.js`) watches `server.js`, `SYSTEM/core/*`, `SYSTEM/cli/*` and every `*-server.js` and brings the child back up, and the tab reloads once the connection is restored. In the console it looks like this:
+Edits to the server's own files are applied without a manual restart: the server runs in a child process, the parent (`SYSTEM/core/watchdog.js`) watches `server.js`, `SYSTEM/core/*`, `SYSTEM/cli/*` and every `*-server.js` and brings the child back up. It waits for the current turns to finish first — the child tells the parent it is busy over IPC. In the console it looks like this:
 
 ```
-server file changed — restarting the server...
+server file changed — restarting as soon as the current turns finish...
 Server started: http://localhost:3001
 ```
 
-To disable auto-reload (then both the restart and the page refresh are manual):
+To disable the commit watcher (then the page refreshes only by hand, while the restart stays automatic):
 
 ```powershell
 $env:NO_RELOAD=1
@@ -112,6 +116,7 @@ node server.js
 
 ## If the page does not refresh by itself
 
+- Check that the commit actually happened **in the main working copy** — a commit in an executor's worktree (`/branch/<name>/` preview) is a different working copy, and the tab reads the main one.
 - The address bar must show `http://localhost:...`, not `file:///C:/...`. When a file is opened by double-clicking, the server is not involved.
 - Do not keep many tabs with the same page open: each one holds a persistent connection, and the browser allows no more than six per host — the seventh tab simply will not load.
 
@@ -174,7 +179,7 @@ The server only answers requests from this same machine: requests from other add
 
 The Sessions panel on the Chat tab shows the sessions started from this interface. Clicking a session opens its conversation and continues that exact one: the next question goes to the CLI with `--resume`. The "+ New" button clears the feed, and the next question starts a separate history. A comment from Karandash mode also starts a new session — the element selector and the comment text become the question.
 
-Storage is SQLite in the file `DATA/.sessions.db` (the `node:sqlite` module, no dependencies). File watching skips the `DATA/` folder, so writing to the database does not trigger a page reload.
+Storage is SQLite in the file `DATA/.sessions.db` (the `node:sqlite` module, no dependencies). Writing to the database never reloads the page: the page follows commits, not file writes.
 
 Where the sessions come from: the server writes every exchange that went through `/api/claude/ask` into the database — the question, the answer and the `session_id` the CLI returned. The server does not read the Claude CLI's own history (`~/.claude/projects/*/*.jsonl`), so interactive sessions launched in a terminal in the same directory do not appear in the list.
 
@@ -261,7 +266,19 @@ curl -i http://localhost:3001/
 
 ## Automated checks
 
-There are none. The smoke test was removed (`DOCS/decisions/025`): keeping it in step with the routes
-cost more than it caught. A server file is checked by parsing it — `node --check <file>` — and whether
-a feature actually works is checked by hand in the browser, on the server the user starts themselves.
-The client-side checklist is in `PLAN.md`.
+`npm run check` — five stages: keys in the git index, unknown names (`eslint`), cycles (`madge`), file
+size, and screen units. Whether a feature actually works is checked by hand in the browser, on the
+server the user starts themselves; the client-side checklist is in `PLAN.md`. The smoke test was
+removed (`DOCS/decisions/025`): keeping it in step with the routes cost more than it caught.
+
+**Keys in the index** runs first (`SYSTEM/secrets-scan.js`, `DOCS/decisions/112`) — a key that reached
+git is the most expensive find there is, since removing the file later does not revoke it. It reads
+exactly the set a commit would take (`git ls-files --cached --others --exclude-standard`), so `.env`
+and `DATA/` are never opened. Two levels: a match with no innocent twin (private key block, `AKIA…`,
+provider tokens) fails the check; a value assigned to a variable with a secret-looking name is only
+printed for you to look at, because that form exists in docs and examples too. Matched values are
+never printed — the report of a find is itself the leak. It also runs standalone:
+
+```bash
+node SYSTEM/secrets-scan.js [--root <folder>]
+```

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-head="{{APP_HEAD}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -109,14 +109,14 @@
          (шестерёнка настроек, кнопка Karandash), и верхний ряд дёргался на глазах.
          Здесь остаётся только сама полка: её высота заложена в тело каждой
          вкладки через --topbar-height, поэтому она должна быть в разметке страницы. -->
-    <!-- hx-get + hx-swap="innerHTML" + hx-trigger="fragment-reload": правка
-         topbar.eta доезжает точечной подменой innerHTML (событие fragment:topbar,
-         htmx.ajax в SYSTEM/core/watch.js). hx-trigger намеренно не «load»:
-         тогда htmx перефетчит фрагмент при загрузке страницы и подменит
-         SSR-разметку свежей копией; «fragment-reload» — событие, которое
-         никто не шлёт, оно только перебивает дефолтный click-триггер htmx
-         на div. -->
-    <div class="topbar" id="topbar" hx-get="/api/fragment/topbar" hx-swap="innerHTML" hx-trigger="fragment-reload">{{TOPBAR}}</div>
+    <!-- hx-get + hx-swap="innerHTML" + hx-trigger="none": разметку этих полок
+         присылает сервер при отдаче страницы (topbar.eta, session-view.eta и
+         другие — {{TOPBAR}}, {{SESSION_VIEW}} ниже), и второй раз её брать
+         незачем: htmx перефетчил бы фрагмент при загрузке страницы и подменил
+         SSR-разметку себе под ногу. hx-trigger="none" выключает и дефолтный
+         click-триггер htmx на div. Живой подмены фрагмента здесь больше нет
+         (DOCS/decisions/117): перезагрузка приходит по новому коммиту. -->
+    <div class="topbar" id="topbar" hx-get="/api/fragment/topbar" hx-swap="innerHTML" hx-trigger="none">{{TOPBAR}}</div>
 
     <div class="view view--side" id="flowView" hidden>
         <!-- Разметка полотна живёт в PROJECTS/Flow/flow.eta и подставляется сервером:
@@ -133,17 +133,17 @@
          в PROJECTS/Settings, сервер — telegram-server.js): разметка приходит
          готовой из серверной сборки страницы, telegram.js только вешает
          обработчики и индикатор связи. Стоит перед Sessions, как и раньше. -->
-    <div class="view view--telegram" id="telegramView" hidden hx-get="/api/fragment/telegram-view" hx-swap="innerHTML" hx-trigger="fragment-reload">{{TELEGRAM_VIEW}}</div>
+    <div class="view view--telegram" id="telegramView" hidden hx-get="/api/fragment/telegram-view" hx-swap="innerHTML" hx-trigger="none">{{TELEGRAM_VIEW}}</div>
 
     <!-- Вкладка Sessions целиком живёт в PROJECTS/Sessions: разметка —
          session-view.eta сервером подставляется на место заглушки,
          стили лежат рядом. -->
-    <div class="view view--sessions" id="chatView" hidden hx-get="/api/fragment/session-view" hx-swap="innerHTML" hx-trigger="fragment-reload">{{SESSION_VIEW}}</div>
+    <div class="view view--sessions" id="chatView" hidden hx-get="/api/fragment/session-view" hx-swap="innerHTML" hx-trigger="none">{{SESSION_VIEW}}</div>
 
     <!-- Вкладка Book: разметка — book-view.eta; сервер подставляет её на
          место заглушки BOOK_VIEW и раздаёт моментный маршрут; book-tab.js
          только карточки и README. -->
-    <div class="view view--side view--book" id="bookView" hidden hx-get="/api/fragment/book-view" hx-swap="innerHTML" hx-trigger="fragment-reload">{{BOOK_VIEW}}</div>
+    <div class="view view--side view--book" id="bookView" hidden hx-get="/api/fragment/book-view" hx-swap="innerHTML" hx-trigger="none">{{BOOK_VIEW}}</div>
 
     <div class="shot-lightbox" id="shotLightbox" hidden>
         <img id="shotLightboxImg" src="" alt="">
@@ -154,7 +154,7 @@
     <!-- Модалка настроек и окно выбора CLI: шаблон PROJECTS/Settings/settings-modal.eta,
          подставляется сервером на место заглушки SETTINGS_MODAL; логика —
          settings.js и входящие модули Settings. -->
-    <div id="settingsSlot" hx-get="/api/fragment/settings-modal" hx-swap="innerHTML" hx-trigger="fragment-reload">{{SETTINGS_MODAL}}</div>
+    <div id="settingsSlot" hx-get="/api/fragment/settings-modal" hx-swap="innerHTML" hx-trigger="none">{{SETTINGS_MODAL}}</div>
 
     <div class="modal file-modal" id="fileModal" hidden>
         <div class="modal__backdrop" data-close-modal></div>
@@ -206,63 +206,63 @@
     <script src="PROJECTS/Settings/settings-telegram.js" defer></script>
     <script src="PROJECTS/Settings/settings-sandglass-tab.js" defer></script>
     <script src="PROJECTS/Settings/settings-modal.js" defer></script>
-    <script src="PROJECTS/Settings/settings.js" data-hot-src="PROJECTS/Settings/settings.js" defer></script>
+    <script src="PROJECTS/Settings/settings.js" defer></script>
     <!-- 3D-рендер песочных часов вкладки Sandglass: ES-модуль (import three), поэтому type="module" -->
-    <script src="PROJECTS/Settings/settings-sandglass.js" data-hot-src="PROJECTS/Settings/settings-sandglass.js" type="module"></script>
+    <script src="PROJECTS/Settings/settings-sandglass.js" type="module"></script>
     <!-- book-tab.js раньше app.js был обязан: он строил #bookView сам, а app.js ищет
          его на старте для App.VIEWS. Теперь элемент приходит с разметкой страницы,
          но порядок оставлен — переставлять без нужды нечего -->
-    <script src="PROJECTS/Book/book-tab.js" data-hot-src="PROJECTS/Book/book-tab.js" defer></script>
+    <script src="PROJECTS/Book/book-tab.js" defer></script>
     <!-- telegram.js — по той же причине и с тем же оговорением, что book-tab.js -->
-    <script src="PROJECTS/Telegram/telegram.js" data-hot-src="PROJECTS/Telegram/telegram.js" defer></script>
+    <script src="PROJECTS/Telegram/telegram.js" defer></script>
     <!-- ядро и вкладка Sessions — модули (DOCS/decisions/022): app.js импортирует
          SYSTEM/providers.js, sessions.js — свои ./sessions-*.js. Модульные скрипты
          без async выполняются в порядке документа наравне с defer, поэтому цепочка
          app.js → sessions.js → остальные файлы сохраняется -->
     <!-- общий механизм: пометку суждения рисуют все три отображения ленты -->
-    <script src="SYSTEM/judgment-badge.js" data-hot-src="SYSTEM/judgment-badge.js" defer></script>
+    <script src="SYSTEM/judgment-badge.js" defer></script>
     <!-- тег модели над ответом — тем же порядком, до всех потребителей -->
-    <script src="SYSTEM/model-tag.js" data-hot-src="SYSTEM/model-tag.js" defer></script>
-    <script src="SYSTEM/app.js" data-hot-src="SYSTEM/app.js" type="module"></script>
-    <script src="PROJECTS/Sessions/sessions.js" data-hot-src="PROJECTS/Sessions/sessions.js" type="module"></script>
-    <script src="PROJECTS/Graph/file-editor.js" data-hot-src="PROJECTS/Graph/file-editor.js" defer></script>
-    <script src="PROJECTS/Graph/vendor/easymde/easymde.min.js" data-hot-src="PROJECTS/Graph/vendor/easymde/easymde.min.js" defer></script>
-    <script src="PROJECTS/Graph/md-editors.js" data-hot-src="PROJECTS/Graph/md-editors.js" defer></script>
+    <script src="SYSTEM/model-tag.js" defer></script>
+    <script src="SYSTEM/app.js" type="module"></script>
+    <script src="PROJECTS/Sessions/sessions.js" type="module"></script>
+    <script src="PROJECTS/Graph/file-editor.js" defer></script>
+    <script src="PROJECTS/Graph/vendor/easymde/easymde.min.js" defer></script>
+    <script src="PROJECTS/Graph/md-editors.js" defer></script>
     <!-- Вкладка Flow разбита по темам (DOCS/decisions/022): flow.js — только
          сборка модулей и отложенные вызовы, всё предметное лежит рядом по
          одному вопросу на файл. Порядок тегов обязателен — flow.js зовёт
          модули по именам и в этом порядке. -->
-    <script src="PROJECTS/Flow/flow-nav.js" data-hot-src="PROJECTS/Flow/flow-nav.js" defer></script>
-    <script src="PROJECTS/Flow/flow-canvas.js" data-hot-src="PROJECTS/Flow/flow-canvas.js" defer></script>
-    <script src="PROJECTS/Flow/flow-node-state.js" data-hot-src="PROJECTS/Flow/flow-node-state.js" defer></script>
-    <script src="PROJECTS/Flow/flow-node-tree.js" data-hot-src="PROJECTS/Flow/flow-node-tree.js" defer></script>
-    <script src="PROJECTS/Flow/flow-panel-data.js" data-hot-src="PROJECTS/Flow/flow-panel-data.js" defer></script>
-    <script src="PROJECTS/Flow/flow-panels.js" data-hot-src="PROJECTS/Flow/flow-panels.js" defer></script>
-    <script src="PROJECTS/Flow/flow-selects.js" data-hot-src="PROJECTS/Flow/flow-selects.js" defer></script>
-    <script src="PROJECTS/Flow/flow-edges.js" data-hot-src="PROJECTS/Flow/flow-edges.js" defer></script>
-    <script src="PROJECTS/Flow/flow-layout.js" data-hot-src="PROJECTS/Flow/flow-layout.js" defer></script>
-    <script src="PROJECTS/Flow/flow-session-node.js" data-hot-src="PROJECTS/Flow/flow-session-node.js" defer></script>
-    <script src="PROJECTS/Flow/flow-session-build.js" data-hot-src="PROJECTS/Flow/flow-session-build.js" defer></script>
-    <script src="PROJECTS/Flow/flow-edit.js" data-hot-src="PROJECTS/Flow/flow-edit.js" defer></script>
-    <script src="PROJECTS/Flow/flow-panels-edit.js" data-hot-src="PROJECTS/Flow/flow-panels-edit.js" defer></script>
-    <script src="PROJECTS/Flow/flow.js" data-hot-src="PROJECTS/Flow/flow.js" defer></script>
+    <script src="PROJECTS/Flow/flow-nav.js" defer></script>
+    <script src="PROJECTS/Flow/flow-canvas.js" defer></script>
+    <script src="PROJECTS/Flow/flow-node-state.js" defer></script>
+    <script src="PROJECTS/Flow/flow-node-tree.js" defer></script>
+    <script src="PROJECTS/Flow/flow-panel-data.js" defer></script>
+    <script src="PROJECTS/Flow/flow-panels.js" defer></script>
+    <script src="PROJECTS/Flow/flow-selects.js" defer></script>
+    <script src="PROJECTS/Flow/flow-edges.js" defer></script>
+    <script src="PROJECTS/Flow/flow-layout.js" defer></script>
+    <script src="PROJECTS/Flow/flow-session-node.js" defer></script>
+    <script src="PROJECTS/Flow/flow-session-build.js" defer></script>
+    <script src="PROJECTS/Flow/flow-edit.js" defer></script>
+    <script src="PROJECTS/Flow/flow-panels-edit.js" defer></script>
+    <script src="PROJECTS/Flow/flow.js" defer></script>
     <!-- 3D-персонаж в ноде QA: ES-модуль (import three), поэтому type="module" -->
-    <script src="PROJECTS/Flow/flow-minion.js" data-hot-src="PROJECTS/Flow/flow-minion.js" type="module"></script>
-    <script src="PROJECTS/Flow/flow-session-sync.js" data-hot-src="PROJECTS/Flow/flow-session-sync.js" defer></script>
-    <script src="PROJECTS/Kanban/kanban.js" data-hot-src="PROJECTS/Kanban/kanban.js" defer></script>
+    <script src="PROJECTS/Flow/flow-minion.js" type="module"></script>
+    <script src="PROJECTS/Flow/flow-session-sync.js" defer></script>
+    <script src="PROJECTS/Kanban/kanban.js" defer></script>
     <!-- описание элемента идёт раньше режима: тот его вызывает при клике -->
-    <script src="PROJECTS/Karandash/element-desc.js" data-hot-src="PROJECTS/Karandash/element-desc.js" defer></script>
+    <script src="PROJECTS/Karandash/element-desc.js" defer></script>
     <!-- место элемента в коде: спрашивает индекс, поэтому тоже до режима -->
-    <script src="PROJECTS/Karandash/element-code.js" data-hot-src="PROJECTS/Karandash/element-code.js" defer></script>
+    <script src="PROJECTS/Karandash/element-code.js" defer></script>
     <!-- вычисленные стили элемента: тоже до режима, он зовёт их при отправке -->
-    <script src="PROJECTS/Karandash/element-style.js" data-hot-src="PROJECTS/Karandash/element-style.js" defer></script>
+    <script src="PROJECTS/Karandash/element-style.js" defer></script>
     <!-- сборка запроса: нужна и element-desc, и element-style, поэтому позже обоих -->
-    <script src="PROJECTS/Karandash/comment-prompt.js" data-hot-src="PROJECTS/Karandash/comment-prompt.js" defer></script>
-    <script src="PROJECTS/Karandash/karandash.js" data-hot-src="PROJECTS/Karandash/karandash.js" defer></script>
-    <script src="SYSTEM/tabs.js" data-hot-src="SYSTEM/tabs.js" defer></script>
-    <script src="SYSTEM/new-button.js" data-hot-src="SYSTEM/new-button.js" defer></script>
-    <script src="SYSTEM/toolbar-reorder.js" data-hot-src="SYSTEM/toolbar-reorder.js" defer></script>
-    <script src="SYSTEM/toolbar-menu.js" data-hot-src="SYSTEM/toolbar-menu.js" defer></script>
-    <script src="SYSTEM/sidebar-resize.js" data-hot-src="SYSTEM/sidebar-resize.js" defer></script>
+    <script src="PROJECTS/Karandash/comment-prompt.js" defer></script>
+    <script src="PROJECTS/Karandash/karandash.js" defer></script>
+    <script src="SYSTEM/tabs.js" defer></script>
+    <script src="SYSTEM/new-button.js" defer></script>
+    <script src="SYSTEM/toolbar-reorder.js" defer></script>
+    <script src="SYSTEM/toolbar-menu.js" defer></script>
+    <script src="SYSTEM/sidebar-resize.js" defer></script>
 </body>
 </html>

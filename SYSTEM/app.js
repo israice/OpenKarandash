@@ -21,10 +21,6 @@ import {
     PROVIDERS, providerById, registerProvider, connections, saveProviderState, saveActiveProvider, loadActiveProvider,
     activateExclusive, DEFAULT_AGENT,
 } from './providers.js';
-// Горячая перезагрузка скриптов — отдельный модуль: правило переисполнения,
-// перерисовки и поставщиков к ядру отношения не имеет, а app.js подходит к
-// четырёмстам строкам (DOCS/decisions/022)
-import * as HotReload from './hot-reload.js';
 // Каскад выбора модели — из model-cascade.js: строка в шапке сессии берёт оттуда
 // выбор и пишет его одним способом, а модель при отправке хода читается оттуда же
 import {
@@ -34,6 +30,9 @@ import {
 import {
     renderSessionBarControls, getActiveProviderId, getActiveModel, getActiveEffort,
 } from './session-model-bar.js';
+// разведка установленных CLI (SYSTEM/cli-scan.js): подключение привозит каталог
+// моделей, и по нему видно, есть ли у CLI из чего выбирать
+import { markEmptyCatalogue } from './cli-scan.js';
 
 // общий помощник для POST-запросов к серверу — им пользуются и остальные
 // файлы через window.App.api, каждый второй экран так или иначе ходит на сервер
@@ -205,6 +204,11 @@ export async function ensureConnected(providerId) {
     // другую — ровно тот случай, когда настройки «перестают работать»
     const chosen = modelOf(providerId);
     provider.models = Array.isArray(result.models) ? result.models : [];
+    // подключился, а каталог моделей пуст (OpenClaw, Cline, Codex на этой машине
+    // так): пункт CLI в строке выбора желтеет, и это видно до выбора, а не после
+    // отказа хода. Пустой каталог не мешает подключению — ход уходит как есть,
+    // и поведение хода этим не меняется
+    if (!provider.models.length) markEmptyCatalogue(providerId);
     connections.set(providerId, {
         installId: result.id,
         label: result.label,
@@ -276,18 +280,6 @@ function init() {
     // композера — на Windows, где скроллбар накладывается, это уводило
     // композер на 15px влево от ленты (--sbw).
 
-    // ---------- горячая перезагрузка скриптов ----------
-    // Правка клиентского скрипта приходит событием `script:<путь>`. Раздел, который
-    // умеет перерисовать себя на месте, регистрирует крючок под свой файл: крючок
-    // снимает то, что скрипт нарисовал в прошлый раз, а свежая копия выполняется
-    // обычным порядком и рисует себя заново сама. Крючка нет — раздел за собой не
-    // умеет убираться, и клиент откатывается к полной перезагрузке страницы: это
-    // честнее, чем оставить два экземпляра раздела один поверх другого.
-    //
-    // Само правило живёт в SYSTEM/hot-reload.js: там же перерисовка уже нарисованных
-    // узлов и поставщики, которые рисует чужой скрипт (DOCS/decisions/090).
-    const hot = HotReload.create(window);
-
     // что берут вынесенные файлы: вкладки (tabs.js), Flow, Kanban, Karandash, Settings.
     // Остальные имена (setSessionId, renderObsConnection, chatMessages,
     // deselectSession, startCommentSession, openSession, getSessionId)
@@ -306,6 +298,10 @@ function init() {
         loadActiveProvider,
         activateExclusive,
         renderSessionBarControls,
+        // разведка установленных CLI: настройки подключают CLI тем же запросом,
+        // что и строка выбора, и должны помечать пункт с пустым каталогом так же,
+        // как строка, — одним словом из одного места
+        markEmptyCatalogue,
         ensureConnected,
         getActiveProviderId,
         getActiveModel,
@@ -320,13 +316,6 @@ function init() {
         confirmModal,
         closeModal,
         escapeHtml,
-        // Регистрация крючка не зависит от порядка загрузки: до готовности ядра крючок
-        // ждёт в очереди на окне, после — попадает в карту (см. SYSTEM/hot-reload.js)
-        registerHotReload: hot.registerHotReload,
-        registerHotRedraw: hot.registerHotRedraw,
-        declareDependent: hot.declareDependent,
-        canReloadScript: hot.canReloadScript,
-        reloadScript: hot.reloadScript,
     };
 }
 

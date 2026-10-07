@@ -44,6 +44,19 @@ function init(options) {
 // нельзя (DOCS/decisions/079)
 let compacted = false;
 
+// Пересборку карты просят три независимые вещи: конец хода агента (run-turn),
+// удаление или сброс сессии (sessions-routes) и новый коммит (SYSTEM/core/watch).
+// Раньше таймер и паузу держал сторож файлов — карта была его заботой по пути,
+// хотя владелец у неё здесь. Теперь правило живёт рядом с prepareVault: одна карта,
+// одно место, где решено, когда её пересобирать, и карта не знает ни про канал, ни
+// про страницу.
+//
+// Пауза нужна потому, что запросы приходят пачками (ход пишет файлы подряд), а
+// сборка занимает секунды. Второе условие — не посреди хода: карта собирается
+// синхронно и занимает event loop, и агент, ожидающий ответа, не должен висеть
+const MAP_DEBOUNCE_MS = 3000;
+let mapTimer = null;
+
 function prepareVault() {
     try {
         fs.mkdirSync(VAULT, { recursive: true });
@@ -61,6 +74,21 @@ function prepareVault() {
         compactSearchIndex(); // мёртвые страницы FTS5 копятся месяцами — место возвращает VACUUM
     }
     state.deps.onMapReady(); // карта пересобралась — страница заберёт её заново
+}
+
+// отложенная пересборка: зовут те, кто знает, что карта стала неправдой, но не
+// занимается её сборкой. isBusy приходит аргументом, потому что состояние ходов
+// знает только сервер
+function scheduleMapUpdate(isBusy) {
+    if (mapTimer) clearTimeout(mapTimer);
+    mapTimer = setTimeout(() => {
+        mapTimer = null;
+        if (isBusy()) {
+            scheduleMapUpdate(isBusy); // агент ещё работает — пересоберём, когда закончит
+            return;
+        }
+        prepareVault();
+    }, MAP_DEBOUNCE_MS);
 }
 
 // маршруты: карта проекта, поиск и файловая панель. Данных снаружи
@@ -96,10 +124,10 @@ function createRoutes() {
 }
 
 module.exports = {
-    DATA_DIR, // им пользуется server.js: путь до базы сессий и сторож файлов (SYSTEM/core/watch.js)
+    DATA_DIR, // им пользуется server.js: путь до базы сессий и папка данных карты
     VAULT_DIR,
     init,
     createRoutes,
     prepareVault,
-    projectFiles, // нужен сторожу файлов в SYSTEM/core/watch.js: состав папки проекта
+    scheduleMapUpdate,
 };

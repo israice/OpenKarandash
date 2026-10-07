@@ -70,7 +70,7 @@ Endpoints (all `POST`, localhost only):
 
 **The queue.** Jobs from all CLIs run strictly one at a time: no more than one turn runs in parallel. A new run waits until the ones already going have finished.
 
-**Storage.** SQLite in the file `DATA/.sessions.db` (`node:sqlite`, no dependencies, `journal_mode = WAL`). The tables are `sessions` and `messages`; the `tool` role holds the work steps. File watching skips the `DATA/` folder, so writing to the database does not reload the tab.
+**Storage.** SQLite in the file `DATA/.sessions.db` (`node:sqlite`, no dependencies, `journal_mode = WAL`). The tables are `sessions` and `messages`; the `tool` role holds the work steps. Writing to the database never reloads the tab: the page follows commits, not file writes.
 
 **Tab state.** The CLI environment, the model and the current session id live in `localStorage`. After a reload the page restores the connection on the server, and if the same session is still running it opens it by itself and watches the rest of the stream. The session list refreshes every 8 seconds.
 

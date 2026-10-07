@@ -79,7 +79,7 @@ https address, and the server lives on localhost. Details — `DOCS/decisions/02
 | `TELEGRAM_USER_IDS` | not set | The ids the bot writes to and accepts messages from, comma separated. Also filled from Settings. |
 | `PI_BIN` | not set | The path to the pi executable if it is not in `PATH`. If set, its search in `PATH` is disabled. |
 | `OBSIDIAN_VAULT` | the `vault/` folder in the project | An external Obsidian vault instead of the built-in one: this is where the server writes the project map that feeds search and the file editor. |
-| `NO_RELOAD` | not set | `NO_RELOAD=1` disables the server's self-restart on edits to `server.js`. It is not part of the `.env` template but is read from there like the rest. |
+| `NO_RELOAD` | not set | `NO_RELOAD=1` disables both the server's self-restart on edits to `server.js` and the page reload on commits (the page then refreshes by hand). It is not part of the `.env` template but is read from there like the rest. |
 | `SERVER_CHILD` | — | Internal: the server sets it on the child process itself. Do not touch by hand. |
 
 The format is simple: `KEY=value`, lines starting with `#` and empty lines are skipped, and quotes around the value are optional.

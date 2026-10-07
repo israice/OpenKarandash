@@ -27,13 +27,13 @@
 //
 //   page   — её <main>, всё нарисованное живёт внутри;
 //   panel  — пустой слот в топбаре, если странице нужна панель рядом с табами;
-//   signal — снимается при пересборке страницы: с ним подписывают слушателей
-//            (addEventListener(…, { signal })) и потоки (fetch(…, { signal })).
+//     signal — снимается при разборке страницы: с ним подписывают слушателей
+//              (addEventListener(…, { signal })) и потоки (fetch(…, { signal })).
 //
 // Всё, что страница делает, обязано попадать в эти три вещи: тогда снять её
 // целиком — это очистить два узла и дёрнуть abort, что и делает unmount ниже.
-// На этом же держится горячая перезагрузка одной страницы: правка её page.js
-// не трогает остальную страницу (SYSTEM/core/reload.js → событие `page:<папка>`).
+// Точечной перезагрузки одной страницы больше нет (DOCS/decisions/117): правка
+// page.js видна после коммита, как и любая другая правка.
 (function () {
     const newButton = document.getElementById('newButton');
     const toolbar = newButton.closest('.toolbar');
@@ -41,8 +41,6 @@
     const generatedPages = [];
     // id страницы → функция её открытия: по ним восстанавливаем последнюю открытую
     const openers = new Map();
-    // папка страницы → её пересборка: этим ключом приходит событие живой перезагрузки
-    const rebuilders = new Map();
 
     function hideGeneratedPages() {
         for (const page of generatedPages) {
@@ -57,18 +55,7 @@
     // сгенерированные страницы: SYSTEM/tabs.js зовёт hideAll внутри showView,
     // поэтому покрыты и программные переключения (MissionTabs.show из app.js)
     //
-    // rebuildPage зовёт живая перезагрузка (см. connect() в SYSTEM/core/watch.js) на правку
-    // PROJECTS/<папка>/page.js. false — такой страницы здесь нет (её успели
-    // переименовать или список ещё не пришёл), и звавший перезагружает всё целиком
-    window.MissionPages = {
-        hideAll: hideGeneratedPages,
-        rebuildPage(folder) {
-            const rebuild = rebuilders.get(folder);
-            if (!rebuild) return false;
-            rebuild();
-            return true;
-        },
-    };
+    window.MissionPages = { hideAll: hideGeneratedPages };
 
     function addPageButton(title, id, folder) {
         const page = document.createElement('main');
@@ -86,9 +73,9 @@
         topbar.prepend(panel);
         page.__panel = panel;
 
-        // стили страницы подключаем сразу, не дожидаясь открытия: тогда правка
-        // page.css подменяется на лету (css:… в SYSTEM/core/watch.js), а не перезагружает
-        // страницу целиком из-за того, что <link> ещё нет в документе
+        // стили страницы подключаем сразу, не дожидаясь открытия: иначе первая же
+        // правка page.css пришла бы в страницу, где <link> ещё нет в документе,
+        // и видна была бы только после перезагрузки
         const css = document.createElement('link');
         css.rel = 'stylesheet';
         css.href = `PROJECTS/${folder}/page.css`;
@@ -135,17 +122,13 @@
             .catch(() => {}); // нет иконки или сервер не отдал — остаётся номер
 
         let mounted = null; // AbortController собранной страницы; null — не собрана
-        let version = 0;    // ?v= в адресе модуля: без него браузер отдаёт старый из кэша
 
         async function mount() {
             const controller = new AbortController();
             mounted = controller;
             // путь от адреса самой страницы, а не от корня: в предпросмотре ветки
             // (`/branch/<ветка>/`) корневой адрес увёл бы модуль в главную копию
-            const url = new URL(
-                `PROJECTS/${encodeURIComponent(folder)}/page.js${version ? `?v=${version}` : ''}`,
-                document.baseURI,
-            ).href;
+            const url = new URL(`PROJECTS/${encodeURIComponent(folder)}/page.js`, document.baseURI).href;
             try {
                 const mod = await import(url);
                 mod.default(page, { panel, signal: controller.signal });
@@ -197,15 +180,6 @@
             if (!mounted) await mount();
             else showPanel();
         }
-
-        rebuilders.set(folder, () => {
-            if (!mounted) return; // ещё не открывали — свежий модуль возьмёт при открытии
-            unmount();
-            version += 1;
-            // закрытую страницу не собираем заново: откроют — соберётся сама,
-            // уже из нового файла, и до тех пор не ходит за данными впустую
-            if (!page.hidden) mount();
-        });
 
         btn.addEventListener('click', openPage);
         toolbar.insertBefore(btn, newButton);

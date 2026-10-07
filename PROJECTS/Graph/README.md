@@ -25,7 +25,7 @@ The links are not invented from matching names. An edge appears only where the c
 - **Project-wide search.** Full-text (FTS5 with BM25 ranking) across code, vault notes and the conversations of past sessions.
 - **A file editor.** Text files can be edited and saved with a button, with `Ctrl+S`, or automatically after a pause in typing. For a section node and a function node the text is already scrolled to the right line. Vault notes open read-only — they are rebuilt by the server, and an edit would not survive the next rebuild. Binary files show only their size.
 - **A stale marker.** If the files a session touched have changed since, its note is marked `stale`: a past decision should not read as the current one.
-- **Updates without a reload.** Edits in the project rebuild the map, and the page is told to fetch it again next time it needs it.
+- **Updates without a reload.** Commits in the project rebuild the map, and the page is told to fetch it again next time it needs it.
 
 ## 🔬 How it works
 

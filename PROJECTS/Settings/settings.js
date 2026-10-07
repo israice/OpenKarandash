@@ -20,13 +20,6 @@
 // сработают уже после того, как app.js его определит.
 (function () {
 
-    // Слушатели файла — на одном сигнале, и снимаются разом: шестерёнка и её меню
-    // теперь из шаблона верхнего меню (SYSTEM/topbar.eta) и переживают горячую
-    // перезагрузку этого файла. Без снятия второй экземпляр навесил бы на них свои
-    // обработчики поверх старых, и меню открывалось бы со второго раза.
-    const listeners = new AbortController();
-    const ON = { signal: listeners.signal };
-
     // Разметка приходит сервером: settings-modal.eta рендерит оба модала в страницу,
     // поэтому достаточно найти узлы по id — вставлять ничего не надо, а настройку
     // верхнего меню (#settingsRoot) строит topbar.eta.
@@ -41,46 +34,6 @@
     // а вызвать его можно из меню-шестерёнки выше. Поэтому через переменную: сначала
     // пусто, после сборки частей — готовая функция (слушатели сработают позже).
     let openSettings = null;
-
-    // горячая перезагрузка этого скрипта: снимаем только наши слушатели. Модалки
-    // остаются — их рисует сервер (settings-modal.eta), и на скрипт они не реагируют.
-    // Шестерёнку в топбаре не снимаем: она из шаблона topbar.eta, правка уходит
-    // отдельным событием шаблона.
-    //
-    // Через очередь на окне, а не через window.App: этот файл подключён раньше
-    // app.js, и App там ещё undefined — вызов через App молча ничего не делал, а
-    // правка файла перезагружала страницу целиком.
-    (window.__hotReloads || (window.__hotReloads = [])).push([
-        'PROJECTS/Settings/settings.js',
-        () => {
-            listeners.abort();
-        },
-        null,
-        null,
-    ]);
-
-    // Мои поставщики. Каждый публикует init() и ничего не рисует сам — окно
-    // настроек собираю я, поэтому правка поставщика должна перерисовать окно,
-    // а не страницу. Объявляю здесь, а не в поставщиках: кто кого рисует, знает
-    // тот, кто рисует (DOCS/decisions/090).
-    //
-    // Ключ записи — сам поставщик: dependent кладётся под ключом первого
-    // элемента, а «кто рисует этот файл» — это второй. Регистрация идёт через
-    // очередь на окне, а не через window.App: этот файл подключён раньше app.js.
-    for (const supplier of [
-        'settings-providers.js',
-        'settings-screenshot.js',
-        'settings-telegram.js',
-        'settings-sandglass-tab.js',
-        'settings-modal.js',
-    ]) {
-        (window.__hotReloads || (window.__hotReloads = [])).push([
-            `PROJECTS/Settings/${supplier}`,
-            null,
-            null,
-            'PROJECTS/Settings/settings.js',
-        ]);
-    }
 
     async function api(path, body) {
         const res = await fetch(path, {
@@ -106,7 +59,7 @@
     settingsButton.addEventListener('click', () => {
         if (settingsMenu.hidden) openMenu();
         else closeMenu();
-    }, ON);
+    });
 
     document.addEventListener('click', (e) => {
         if (settingsRoot.contains(e.target)) return;
@@ -115,14 +68,14 @@
         const karandashButton = document.getElementById('karandashButton');
         if (karandashButton && e.composedPath().includes(karandashButton)) return;
         closeMenu();
-    }, ON);
+    });
 
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && !settingsMenu.hidden) {
             closeMenu();
             settingsButton.focus();
         }
-    }, ON);
+    });
 
     settingsMenu.addEventListener('click', (e) => {
         const item = e.target.closest('.settings__item');
@@ -131,7 +84,7 @@
         closeMenu();
         if (label === 'Settings') openSettings();
         else console.log('Selected:', label);
-    }, ON);
+    });
 
     // ---------- части раздела ----------
 

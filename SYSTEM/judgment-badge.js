@@ -41,10 +41,13 @@
         return typeof value === 'number' ? `${Math.round(value * 100)}%` : '';
     }
 
+    // Возвращаем весь result_meta, а не только judgment: след хода лежит рядом
+    // отдельным полем (SYSTEM/core/step-judgment.js), и его плашка строится из
+    // того же места
     function parse(resultMeta) {
         if (!resultMeta) return null;
         const meta = typeof resultMeta === 'string' ? safeParse(resultMeta) : resultMeta;
-        return meta && meta.judgment ? meta.judgment : null;
+        return meta && meta.judgment ? meta : null;
     }
 
     function safeParse(raw) {
@@ -63,8 +66,10 @@
     // (ключа нет, сервис не ответил, старая запись) пометки не получает вовсе:
     // пустая плашка «неизвестно» была бы шумом в каждой строке
     function badge(resultMeta) {
-        const j = parse(resultMeta);
-        if (!j) return null;
+        const meta = parse(resultMeta);
+        if (!meta) return null;
+        const j = meta.judgment;
+        const trace = meta.trace;
 
         const row = document.createElement('div');
         row.className = 'judgment';
@@ -86,6 +91,16 @@
         // посчитал код, и совпасть они обязаны (DOCS/decisions/056)
         if (j.unverifiedClaim) chip(row, 'сказано «проверено», но проверять было нечем', 'attention');
 
+        // след хода: лишнее сверх запроса и разрушительное действие. Числа
+        // повторены из SYSTEM/core/judgment-config.js по той же причине, что и
+        // 1.5 выше, — серверный модуль отсюда не подключить
+        if (trace && typeof trace.destructive === 'number' && trace.destructive >= 0.8) {
+            chip(row, `разрушительное действие ${percent(trace.destructive)}`, 'attention');
+        }
+        if (trace && typeof trace.offTask === 'number' && trace.offTask >= 0.8) {
+            chip(row, `делал лишнее ${percent(trace.offTask)}`, 'attention');
+        }
+
         // числа целиком — во всплывающей подсказке: в строке им тесно, а при
         // разборе «почему письмо не ушло» они первое, что нужно
         row.title = [
@@ -95,37 +110,20 @@
             `work_kind: ${j.workKind} (confidence ${j.workKindConfidence})`,
             `needs_attention: ${j.needsAttention} (confidence ${j.needsAttentionConfidence})`,
             `model: ${j.model}`,
-        ].join('\n');
+            // хода без следа (старые строки, ключа не было) эти строк просто нет
+            !trace ? '' : `off_task: ${trace.offTask ?? '—'}`,
+            !trace ? '' : `destructive: ${trace.destructive ?? '—'}`,
+            !trace ? '' : `steps: ${trace.steps ?? '—'}${trace.stepsTruncated ? ' (обрезан список)' : ''}`,
+        ].filter(Boolean).join('\n');
         // разобранное суждение кладём на сам узел: по нему плашка строится заново
         // при горячей перезагрузке этого файла. Без этого перерисовать её нечем —
         // из подсказки в title суждение не восстановить, формат там текстовый
-        row.__judgment = j;
+        // разобранный meta целиком, а не только judgment: след хода лежит рядом, и без
+        // него горячая перерисовка плашки потеряла бы его половину
+        row.__judgment = meta;
         return row.children.length ? row : null;
     }
 
     window.TurnJudgment = { badge };
 
-    // Я только публикую функцию: свою разметку не рисую и слушателей не вешаю,
-    // поэтому снимать здесь нечего. Правка файла переисполняет его целиком, а
-    // страница со всем состоянием остаётся на месте.
-    //
-    // null — «рисовать нечего». Регистрация идёт через очередь на окне, а не через
-    // window.App: этот файл подключён раньше app.js, и App там ещё нет.
-    //
-    // Третьим идёт перерисовка: badge() кладёт разобранное суждение на сам узел
-    // (row.__judgment), поэтому плашку можно построить заново новым кодом прямо на
-    // месте — на всех отображениях, где она уже нарисована. Узлы без отложенного
-    // суждения пропускаем: это плашки, нарисованные прошлой версией файла.
-    (window.__hotReloads || (window.__hotReloads = [])).push([
-        'SYSTEM/judgment-badge.js',
-        null,
-        () => {
-            document.querySelectorAll('.judgment').forEach((node) => {
-                if (!node.__judgment) return;
-                const fresh = window.TurnJudgment.badge(node.__judgment);
-                if (fresh) node.replaceWith(fresh);
-                else node.remove();
-            });
-        },
-    ]);
-})();
+    })();
