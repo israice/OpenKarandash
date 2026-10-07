@@ -81,9 +81,11 @@ function commandCandidates(name) {
 }
 
 // npm-шим Windows — .cmd/.bat, а он не исполняем: внутри лежит настоящий вход
-// пакета на node, и его путь из шима вычитывается. Это единственный способ
-// запустить незнакомый CLI на Windows без shell, и он одинаков для pi, kilo и
-// всего, что дальше поставят через npm
+// пакета, и его путь из шима вычитывается. Это единственный способ добраться до
+// входа неизвестного CLI на Windows без shell, и он одинаков для pi, kilo и
+// всего, что дальше поставят через npm. Входом пакет может быть и JS-файл
+// (тогда его запускает node), и нативный бинарник .exe (тогда он запускается
+// сам — см. resolveCommand)
 function nodeEntryFromShim(shimPath) {
     let text;
     try {
@@ -110,7 +112,12 @@ function nodeEntryFromShim(shimPath) {
 // (KILO_BIN, PI_BIN — имя слова заглавными), потом PATH. В Windows `where`
 // печатает и .exe, и .cmd, и шим без расширения: берём .exe как есть, а .cmd
 // раскрываем до входа пакета. Ничего не нашлось — цели нет в списке вовсе,
-// а не «найдена и падает при первом запуске»
+// а не «найдена и падает при первом запуске».
+//
+// Вход из шима бывает двух родов: JS-файл пакета (его запускает node) и
+// нативный бинарник. У opencode это `opencode-ai/bin/opencode.exe`, и node,
+// которому скормили exe, читает его как JavaScript и падает с `SyntaxError`
+// вместо версии (решение 116) — исполняемый файл запускаем как есть
 function resolveCommand(name) {
     const override = process.env[slugOf(name).toUpperCase() + '_BIN'];
     if (override && fs.existsSync(override)) {
@@ -130,7 +137,10 @@ function resolveCommand(name) {
             if (exe) return { cmd: exe, args: [] };
             for (const shim of found) {
                 const entry = nodeEntryFromShim(shim);
-                if (entry) return { cmd: process.execPath, args: [entry] };
+                if (!entry) continue;
+                return /\.(exe|com)$/i.test(entry)
+                    ? { cmd: entry, args: [] }
+                    : { cmd: process.execPath, args: [entry] };
             }
         }
         return { cmd: found[0], args: [] };
