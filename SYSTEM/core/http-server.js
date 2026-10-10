@@ -20,8 +20,13 @@ const MIME = {
     '.glb': 'model/gltf-binary', // 3D-модели (персонаж в ноде QA на Flow)
 };
 
-// сервер запускает локальный CLI, поэтому обслуживаем только запросы с этой машины
+// сервер запускает локальный CLI, поэтому обслуживаем только запросы с этой машины.
+// ALLOW_CONTAINER=1 открывает запросы из docker-сети: в контейнере соединение приходит
+// с адреса шлюза (172.17.0.1), а не loopback, — и без флага каждый запрос снаружи
+// получал 403. Режим задаётся владельцем осознанно, в контейнере порт всё равно
+// слушает только тот адрес, на который смотрит проброс портов
 function isLocalRequest(req) {
+    if (process.env.ALLOW_CONTAINER === '1') return true;
     const address = req.socket.remoteAddress || '';
     return address === '127.0.0.1'
         || address === '::1'
@@ -41,7 +46,8 @@ function isLocalHost(req) {
     const name = host.startsWith('[')
         ? host.slice(1, host.indexOf(']') > 0 ? host.indexOf(']') : host.length)
         : host.replace(/:\d+$/, '');
-    return name === 'localhost' || name === '::1' || /^127\./.test(name);
+    return name === 'localhost' || name === '::1' || /^127\./.test(name)
+        || name === 'host.docker.internal'; // шлюз Docker: так к контейнеру обращаются с хоста
 }
 
 // Служебные пути статикой не отдаются: .env и .git в любом месте дерева,

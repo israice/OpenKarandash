@@ -19,7 +19,7 @@ const {
 } = require('./graph-vault-core.js');
 const { projectFiles, readText, parseUnits, resolveRef, section } = require('./graph-vault-project.js');
 const { gitHistory } = require('./graph-vault-git.js');
-const { writeNote, dropStaleNotes, collectNotes, resetWrittenNotes } = require('./graph-vault-notes.js');
+const { writeNote, dropStaleNotes, collectNotes, resetWrittenNotes, noteName } = require('./graph-vault-notes.js');
 
 function syncProjectMap() {
     const files = projectFiles();
@@ -48,7 +48,7 @@ function syncProjectMap() {
         for (const match of text.matchAll(API_REF)) {
             const route = match[1];
             if (!routeImpl.has(route)) continue;
-            links.add(`${MAP_DIR}/${API_SUBDIR}/${require('./graph-vault-core.js').noteName(route.slice(5))}`);
+            links.add(`${MAP_DIR}/${API_SUBDIR}/${noteName(route.slice(5))}`);
             if (routeImpl.get(route) !== file) {
                 const callers = routeCallers.get(route) || new Set();
                 callers.add(file);
@@ -109,7 +109,7 @@ function syncProjectMap() {
 
     for (const [route, impl] of routeImpl) {
         const callers = [...(routeCallers.get(route) || [])].sort();
-        writeNote(path.join(mapRoot, API_SUBDIR, `${require('./graph-vault-core.js').noteName(route.slice(5))}.md`), {
+        writeNote(path.join(mapRoot, API_SUBDIR, `${noteName(route.slice(5))}.md`), {
             kind: 'route',
             route,
         }, [

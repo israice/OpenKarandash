@@ -1,0 +1,10 @@
+node_modules
+.git
+DATA
+DATA-docker
+vault
+json-renderer
+json-render
+.env
+*.log
+_scratch
