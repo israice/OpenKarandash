@@ -10,7 +10,7 @@ import globals from 'globals';
 // серверная половина — CommonJS с глобалами Node; всё остальное в PROJECTS/ и
 // SYSTEM/ — браузерный код (обычные скрипты и ES-модули разбираем одинаково,
 // sourceType: 'module' понимает и то и другое)
-const SERVER = ['server.js', '**/*-server.js', 'SYSTEM/core/**/*.js', 'SYSTEM/cli/**/*.js', 'SYSTEM/checks.js',
+const SERVER = ['server.js', '**/*-server.js', 'SYSTEM/core/**/*.js', 'SYSTEM/cli/**/*.js', 'SYSTEM/checks.js', 'SYSTEM/secrets-scan.js',
     'PROJECTS/Graph/graph-*.js', 'PROJECTS/Graph/search.js', 'PROJECTS/Browser/chrome-bridge.js', 'PROJECTS/Browser/sync-user-profile.js',
     // вспомогательные скрипты TOOLS — обычный Node; сценарии live-verify сюда не входят:
     // это тела функций для страницы пульта (верхнеуровневые await/return), а не модули
@@ -37,7 +37,13 @@ export default [
         // проверка, которая всегда красная, не учит ничему)
         ignores: ['node_modules/**', 'DATA/**', 'hermes/**', 'hermes-home/**',
             'PROJECTS/Graph/vendor/**', '**/*.min.js',
-            'TOOLS/penpot-mcp/**'],
+            'TOOLS/penpot-mcp/**',
+            // json-render и json-renderer — вложенные чужие репозитории, у каждого
+            // свой .git и свой конфиг. Без этих строк eslint читал ИХ eslint.config.js
+            // и падал на отсутствующем пакете @internal/eslint-config, из-за чего
+            // наш код не проверялся вовсе (см. SKIP в SYSTEM/checks.js — те же папки
+            // выпадали из счётчиков размера и vh/vw)
+            'json-render/**', 'json-renderer/**'],
     },
     {
         files: ['PROJECTS/**/*.js', 'SYSTEM/**/*.js'],

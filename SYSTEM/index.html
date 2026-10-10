@@ -111,7 +111,7 @@
          вкладки через --topbar-height, поэтому она должна быть в разметке страницы. -->
     <!-- hx-get + hx-swap="innerHTML" + hx-trigger="none": разметку этих полок
          присылает сервер при отдаче страницы (topbar.eta, session-view.eta и
-         другие — {{TOPBAR}}, {{SESSION_VIEW}} ниже), и второй раз её брать
+         другие — заглушки TOPBAR и SESSION_VIEW ниже), и второй раз её брать
          незачем: htmx перефетчил бы фрагмент при загрузке страницы и подменил
          SSR-разметку себе под ногу. hx-trigger="none" выключает и дефолтный
          click-триггер htmx на div. Живой подмены фрагмента здесь больше нет
@@ -263,6 +263,9 @@
     <script src="SYSTEM/new-button.js" defer></script>
     <script src="SYSTEM/toolbar-reorder.js" defer></script>
     <script src="SYSTEM/toolbar-menu.js" defer></script>
+    <!-- после toolbar-menu.js: рисует иконку заготовки его каталогом
+         (window.ToolbarIcons), а не своей копией списка -->
+    <script src="SYSTEM/new-icon-button.js" defer></script>
     <script src="SYSTEM/sidebar-resize.js" defer></script>
 </body>
 </html>

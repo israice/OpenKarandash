@@ -24,8 +24,25 @@ const MAX_LINES = 400;
 // гигабайта и состоят из чужих пакетов, и их файлы попадали в счёт «наших
 // длинных» (DOCS/decisions/034). `.kilo` — рабочие копии веток того же проекта
 // внутри репозитория: их файлы это копии наших файлов, а не код главной копии,
-// и посторонний worktree не должен краснить проверку главного дерева
-const SKIP = new Set(['node_modules', 'DATA', '.git', '.venv', 'hf-cache', 'vendor', '.kilo']);
+// и посторонний worktree не должен краснить проверку главного дерева.
+//
+// json-render и json-renderer — вложенные ЧУЖИЕ git-репозитории (у каждого
+// свой .git), поэтому главному git они не видны: git status помечает их как
+// untracked, и их файлы попадали в наши счётчики. Причина не косметическая:
+// проверки врали. «Размер файлов» насчитывал 55 сборочных файлов из
+// json-renderer/.next (по 20 тысяч строк), «размер от экрана» — CSS и чанки
+// Next, а eslint падал на json-render/apps/web/eslint.config.js из-за
+// отсутствующего пакета @internal/eslint-config. Краснело всё это из-за чужого
+// сборочного мусора, а наш код оставался непроверенным.
+//
+// Папки пропускаются целиком: они чужие, их размер и ошибки не наши, а
+// rightmost-уровень у них один — это репозитории. Удалять их нельзя: в
+// json-renderer есть незакоммиченные правки (AGENTS.md, bun.lock), которых
+// главный git не хранит.
+const SKIP = new Set([
+    'node_modules', 'DATA', '.git', '.venv', 'hf-cache', 'vendor', '.kilo',
+    'json-render', 'json-renderer',
+]);
 
 let failed = false;
 
@@ -104,11 +121,108 @@ function checkScreenUnits() {
     for (const hit of hits) console.log(`  ${hit}`);
 }
 
+// Заглушка должна встречаться в SYSTEM/index.html ровно один раз
+// (DOCS/decisions/106). Причина не в эстетике: renderPage подставляет строкой,
+// а String.replace берёт ПЕРВОЕ вхождение, — литерал в HTML-комментарии съедает
+// подстановку, и настоящая полка остаётся с текстом «{{TOPBAR}}» на странице.
+// Так случилось дважды: 2026-10-05 с {{SESSION_VIEW}} и снова с {{TOPBAR}} и
+// {{SESSION_VIEW}} в комментарии index.html:114 — верхнее меню уезжало в
+// невидимый комментарий, а панель сессий оставалась пустой. Список заглушек не
+// зашит сюда, а читается из renderPage, иначе проверка врала бы после правки
+// подстановок. Шаблоны .eta проверяются тем же: литерал заглушки в шаблоне
+// опасен, потому что подставленный раньше шаблон попадёт под чужую замену
+function checkPlaceholders() {
+    process.stdout.write('заглушки страницы... ');
+    const INDEX = path.join(ROOT, 'SYSTEM', 'index.html');
+    const version = fs.readFileSync(path.join(TOOLS, 'SYSTEM', 'core', 'version.js'), 'utf8');
+    const names = [...version.matchAll(/\.replace\('\{\{([A-Z_]+)\}\}'/g)].map((m) => m[1]);
+    if (names.length === 0) {
+        failed = true;
+        console.log('НАШЛОСЬ: в renderPage не найдено ни одной подстановки {{...}} — проверка молча вышла бы из строя');
+        return;
+    }
+    const index = fs.readFileSync(INDEX, 'utf8');
+    const problems = [];
+    for (const name of names) {
+        // считаем вхождения, а не проверяем наличие: лишнее в комментарии
+        // снаружи и есть тот самый случай, из-за которого полка пустеет
+        const count = index.split(`{{${name}}}`).length - 1;
+        if (count !== 1) problems.push(`SYSTEM/index.html: {{${name}}} встречается ${count} раз, а должна ровно один`);
+    }
+    (function walk(dir) {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (SKIP.has(entry.name)) continue;
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) { walk(full); continue; }
+            if (!entry.name.endsWith('.eta')) continue;
+            // Комментарии выкидываем: литерал в блоке <% /* … */ %> или в <!-- … -->
+            // в разметку не попадает, а написан там в объяснении — из-за него проверка
+            // врала бы на всех трёх шаблонах сразу. Ищем по тому, что Eta отдаёт
+            const text = fs.readFileSync(full, 'utf8')
+                .replace(/<%[\s\S]*?%>/g, '')
+                .replace(/<!--[\s\S]*?-->/g, '');
+            for (const name of names) {
+                if (text.includes(`{{${name}}}`)) {
+                    problems.push(`${path.relative(ROOT, full)}: литерал {{${name}}} в шаблоне — подставленный раньше шаблон попадёт под чужую замену`);
+                }
+            }
+        }
+    }(ROOT));
+    if (problems.length === 0) { console.log('чисто'); return; }
+    failed = true;
+    console.log(`НАШЛОСЬ: заглушка должна встречаться в index.html ровно один раз (DOCS/decisions/106):`);
+    for (const problem of problems) console.log(`  ${problem}`);
+}
+
+// Кнопка верхнего меню без id ломает скрытие: SYSTEM/toolbar-menu.js скрывает по
+// id (btn.hidden = hidden.has(btn.id)), а переключатель в меню «+» пишет id в
+// localStorage. У кнопки без id он '', и все такие кнопки делят один ключ —
+// переключатель одной прятал их все, а вернуть по одной уже нельзя. Нашлось на
+// четырёх кнопках Search/Refresh/Favorite/Notifications. Проверяем только
+// .btn-group__btn: у кнопок вне групп id не обязателен и там скрытие не работает
+function checkTopbarButtonIds() {
+    process.stdout.write('id кнопок тулбара... ');
+    const TEMPLATE = path.join(ROOT, 'SYSTEM', 'topbar.eta');
+    const text = fs.readFileSync(TEMPLATE, 'utf8')
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/<%[\s\S]*?%>/g, '');
+    const bad = [...text.matchAll(/<button[^>]*class="[^"]*btn-group__btn[^"]*"[^>]*>/g)]
+        .filter((m) => !/\bid="/.test(m[0]));
+    if (bad.length === 0) { console.log('чисто'); return; }
+    failed = true;
+    console.log('НАШЛОСЬ: у кнопки верхнего меню нет id — скрытие через меню «+» сработает по всем таким кнопкам сразу:');
+    for (const [, tag] of bad) {
+        const label = (tag.match(/aria-label="([^"]*)"/) || [])[1] || '(без подписи)';
+        console.log(`  SYSTEM/topbar.eta: <button> без id, aria-label="${label}"`);
+    }
+}
+
+// Ключи в индексе git — самая дорогая находка из возможных: файл уже в истории,
+// и «удалить его» не отзывает ключ. Поэтому скан идёт первым: дешевле упредить,
+// чем объяснять потом. Сам скан — SYSTEM/secrets-scan.js, он же запускается и
+// отдельно; сбой скана (код 2, сканировать не удалось) проверку не пропускает:
+// молчаливый «чисто» от инструмента, который не отработал, хуже его отсутствия
+process.stdout.write('секреты в индексе... ');
+try {
+    const scan = execFileSync(process.execPath, [path.join(TOOLS, 'SYSTEM', 'secrets-scan.js'), '--root', ROOT], {
+        cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    console.log('чисто');
+    const advice = String(scan).trim();
+    if (advice) console.log(advice);
+} catch (error) {
+    failed = true;
+    console.log('НАШЛОСЬ:');
+    console.log(String(error.stdout || '') + String(error.stderr || '') + String(error.message || ''));
+}
+
 run('неизвестные имена', process.execPath, [path.join(TOOLS, 'node_modules', 'eslint', 'bin', 'eslint.js')]);
 // не .bin/madge — это shell-скрипт (#!/bin/sh), node напрямую его не исполнит,
 // он ищет настоящий вход в самом пакете
 run('циклические связи', process.execPath, [path.join(TOOLS, 'node_modules', 'madge', 'bin', 'cli.js'), '--circular', 'server.js']);
 checkSize();
 checkScreenUnits();
+checkPlaceholders();
+checkTopbarButtonIds();
 
 process.exit(failed ? 1 : 0);

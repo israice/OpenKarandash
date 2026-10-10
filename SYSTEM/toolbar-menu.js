@@ -27,6 +27,16 @@
     if (!addButton) return;
     const toolbar = addButton.closest('.toolbar');
 
+    // Каталог иконок нужен и за пределами этого файла: кнопки-заготовки
+    // (SYSTEM/new-icon-button.js) рисуются сразу, при создании, и своей копии
+    // каталога заводить нельзя — разъедутся при правке. Отдаём наружу пару
+    // «нарисуй иконку по ключу»; тот же путь, что и у pickIcon ниже.
+    window.ToolbarIcons = {
+        apply(btn, iconKey) {
+            applyIcon(btn, iconKey);
+        },
+    };
+
     function loadHidden() {
         try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY)) || []); }
         catch { return new Set(); }
@@ -324,6 +334,10 @@
             const btn = document.getElementById(del.dataset.target);
             if (btn) {
                 if (btn.dataset.pageId) App.api('/api/pages/delete', { id: btn.dataset.pageId });
+                // кнопка-заготовка: на диске за ней ничего нет, но запись в базе
+                // есть, и без её удаления кнопка вернулась бы при перезагрузке
+                // страницы — удаление было бы видимым, но не настоящим
+                if (btn.dataset.toolbarButtonId) App.api('/api/toolbar/buttons/delete', { id: btn.dataset.toolbarButtonId });
                 if (btn.dataset.page) document.getElementById(btn.dataset.page)?.remove();
                 btn.remove();
             }

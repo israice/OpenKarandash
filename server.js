@@ -233,6 +233,10 @@ const featureRoutes = {
     ...require('./PROJECTS/Book/book-server.js').createRoutes(),
     ...require('./PROJECTS/Settings/settings-server.js').createRoutes(),
     ...require('./SYSTEM/toolbar-icons-server.js').createRoutes({ db }),
+    // кнопки-заготовки группы «Actions»: их заводит «+» этой группы
+    // (SYSTEM/new-icon-button.js). В отличие от страниц (pages-server.js выше)
+    // ничего на диске не создаётся — кнопка это только иконка и название
+    ...require('./SYSTEM/toolbar-buttons-server.js').createRoutes({ db }),
     // верхнее меню страницы: шаблон SYSTEM/topbar.eta подставляется в страницу
     // ещё и при отдаче (SYSTEM/core/version.js), маршрут отдаёт его же
     ...require('./SYSTEM/topbar-server.js').createRoutes(),

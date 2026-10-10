@@ -261,6 +261,40 @@ function create(deps) {
                     // (DOCS/decisions/097), и письмо об ошибке всегда уходит
                     // именно тем, кто выбрал исполнителя
                     if (ctx.errorText) await turnJudgment.classifyFailure(ctx.errorText).catch(() => null);
+                    // Пометка о следе хода: делал ли агент лишнее и не было ли
+                    // разрушительного действия. Считается здесь, а не в разборе
+                    // потока, потому что список шагов целиком есть только в базе,
+                    // и ход к этому моменту уже отдан в ленту. Ничего не
+                    // блокирует — ход неинтерактивен и спрашивать некому
+                    // (DOCS/decisions/101, DOCS/decisions/112)
+                    //
+                    // Решение о метке принимается здесь, а не внутри judgeSteps:
+                    // суждение отвечает на вопрос «лишнее?», а порог — политика,
+                    // и политика должна быть видна в коде, который её применяет
+                    const trace = await turnJudgment.judgeSteps({
+                        request: prompt,
+                        steps: listToolSteps.all(ctx.session, ctx.userPosition).map((row) => row.text),
+                    }).catch(() => null);
+                    if (trace) {
+                        meta.resultMeta = { ...(meta.resultMeta || {}), trace };
+                        // пороги берём у суждения, а не импортом judgment-config:
+                        // этот модуль и так отдаёт их наружу, а лишний require
+                        // в ядре хода — лишняя зависимость
+                        const destructive = (trace.destructive ?? 0) >= turnJudgment.THRESHOLDS.stepDestructive;
+                        const offTask = (trace.offTask ?? 0) >= turnJudgment.THRESHOLDS.stepOffTask;
+                        if (destructive || offTask) {
+                            // Пометка идёт строкой в ленту, а не остаётся в
+                            // result_meta: в метаданных её не видно, а суждение,
+                            // которого никто не видит, не отличается от его
+                            // отсутствия. Разрушительное важнее лишнего, поэтому
+                            // при обоих сразу читается оно одно. Имя с префиксом
+                            // server. — по нему noticeOrigin относит пометку к
+                            // серверу, а не к агенту, который её не выдавал
+                            ctx.notice('server.trace', destructive
+                                ? 'Ход содержал разрушительное действие — посмотрите шаги (только помечено, не остановлено)'
+                                : 'Ход делал лишнее сверх запроса — посмотрите шаги (только помечено, не остановлено)');
+                        }
+                    }
                     const notify = turnJudgment.shouldNotify(judgment, { errorText: ctx.errorText });
                     if (judgment) meta.resultMeta = { ...(meta.resultMeta || {}), judgment: { ...judgment, notified: notify } };
                     // что было подложено в запрос и с какими оценками. Это то, по

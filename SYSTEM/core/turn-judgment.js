@@ -35,6 +35,8 @@ function pickDecisionHints(request) {
 const { classifyInbox, matchPollReply } = require('./inbox-judgment.js');
 const { classifyFailure, knownFailure } = require('./failure-judgment.js');
 const { pickRelevantTurns, judgeSkill, judgeBranch } = require('./work-judgment.js');
+// суждение о следе хода (только помечает, ничего не блокирует — см. файл)
+const { judgeSteps } = require('./step-judgment.js');
 
 
 // ---------- суждение о законченном ходе ----------
@@ -250,4 +252,4 @@ function shouldNotify(judgment, { errorText }) {
     return { send: false, reason: 'intermediate' };
 }
 
-module.exports = { judgeBranch, judgeSkill, matchPollReply, pickRelevantTurns, classifyFailure, knownFailure, judgeTurn, shouldNotify, pickDecisionHints, hintPreamble, classifyInbox, THRESHOLDS, TURN_QUESTIONS };
+module.exports = { judgeBranch, judgeSkill, judgeSteps, matchPollReply, pickRelevantTurns, classifyFailure, knownFailure, judgeTurn, shouldNotify, pickDecisionHints, hintPreamble, classifyInbox, THRESHOLDS, TURN_QUESTIONS };

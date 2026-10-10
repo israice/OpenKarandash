@@ -16,6 +16,12 @@
 // оно и закреплено здесь явно. Тот же список у карты (graph-vault.js, MAP_SKIP)
 // и у сторожа (watch.js, SKIP); у сторожа сверх того есть правило на всё,
 // начинающееся с точки, но на карту оно не распространяется
-const SKIP_NAMES = ['node_modules', '.git', '.kilo', 'DATA', 'logs', '.worktrees', 'worktrees'];
+// json-render и json-renderer — вложенные чужие репозитории (у каждого свой
+// .git). Обход идёт по папкам и сравнивает имя точно, dot-папки он не отсекает
+// и правила «начинается с точки» у него нет, поэтому без этих имён обе папки
+// уехали бы в карту целиком — 46 тысяч чужих файлов, свои версии, свой код.
+// Тот же список у проверок (SKIP в SYSTEM/checks.js, ignores в eslint.config.mjs).
+const SKIP_NAMES = ['node_modules', '.git', '.kilo', 'DATA', 'logs', '.worktrees', 'worktrees',
+    'json-render', 'json-renderer'];
 
 module.exports = { SKIP_NAMES };
