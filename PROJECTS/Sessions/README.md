@@ -86,7 +86,7 @@ The section is split by concern, so that a change in one thing does not touch th
 | `sessions.js` | the entry point: send modes, the composer, panel handlers, restoring the connection and the last session on load. A module right after `app.js`, so it imports the core from there and adds its own functions to `window.App` |
 | `sessions-state.js` | the section's shared mutable state in one object (`export const state`) plus `PENDING_SESSION_ID`; imports nothing |
 | `sessions-panel.js` | The Sessions panel: the list, selection and deletion, drafts, the "running" indicator, composer busy state, the live duration counter, the re-hook after htmx swaps the list. Also `copySessionRef` — what the copy button puts on the clipboard |
-| `sessions-feed.js` | drawing rows into the feed: markdown, replies, tool steps and thoughts, the waiting row with its clock, scroll and accordion rules |
+| `sessions-feed.js` | drawing rows into the feed: markdown, replies, tool steps and thoughts (thoughts open in full, no accordion — `DOCS/decisions/121`), the waiting row with its clock, scroll rules and the tool-step accordion |
 | `sessions-details.js` | the fullness of a session row: field summary, raw event, result images, the step body and the `Details` block under a reply |
 | `sessions-history.js` | a row from the database → the feed: one role → one kind, plus "this turn was not finished" |
 | `sessions-ndjson.js` | reading the NDJSON stream, surviving a dropped connection (`followRun`), stopping a turn |

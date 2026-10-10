@@ -134,17 +134,6 @@ function setStepOpen(step, open) {
     }
 }
 
-// Блок мыслей открывается той же гармошкой, что и шаги: открыт может быть
-// только один — раскрытый блок закрывает остальные блоки мыслей и раскрытый
-// шаг (список снимается до изменений, поэтому спрятанные не мешают обходу)
-function setThinkingOpen(block) {
-    for (const prev of state.list.querySelectorAll('.chat-message--thinking[open]')) {
-        if (prev !== block) prev.open = false;
-    }
-    const step = state.list.querySelector('.chat-message--tool.is-open');
-    if (step) setStepOpen(step, false);
-}
-
 // Строка шага: что агент сделал (Read index.html, Bash npm test).
 // text приходит уже склеенным «имя деталь» (toolLabel на сервере) — имя
 // инструмента выделяем цветным тегом, разбирая первое слово.
@@ -193,17 +182,19 @@ export function addStep(text, before, row) {
 // все абзацы блока по порядку. Собирает его сервер (одна строка базы на блок,
 // ctx.think в SYSTEM/core/run-turn.js), лента только рисует: текст приходит
 // уже целиком, поэтому блок не растёт по кускам, а заменяется целиком.
-// Свёрнут он по умолчанию — мыслей в ходе много, а читают ответ и шаги
+// Гармошки здесь нет: блок открыт всегда (решение владельца, 2026-10-10),
+// сворачивается только шаг инструмента
 let openThinking = null;
 
 // тег блока мыслей — тот же, что имя инструмента у шага: он и называет блок,
-// и заменяет стрелку <details>, которой в ленте нет ни у одного шага. Мысль
+// и стоит слева от текста, как имя инструмента у шага. Мысль
 // субагента приходит с «↳ » в начале (renderStored в sessions-history.js так же
 // помечает шаги вложенного хода) — у шага эта метка уезжает в тег, здесь тоже
 const THINKING_TAG = 'thinking';
 
-// метка строки промпта — та же серая, что у мыслей: это не действие агента,
-// а то, что ушло в CLI. Название по-английски, как и у остальных тегов ленты
+// метка строки промпта — серая, как прежде была у мыслей: это не действие
+// агента, а то, что ушло в CLI. Название по-английски, как и у остальных
+// тегов ленты
 const INPUT_TAG = 'prompt';
 const NESTED = /^\u21b3\s+/;
 
@@ -221,27 +212,26 @@ export function addThinking(text, before) {
     // блок из прошлой сессии или прошлого хода к списку не подключён: мысли
     // дописывать в него нельзя, следующая встанет своим блоком
     if (!openThinking?.isConnected) {
-        const block = document.createElement('details');
+        // не <details>: складная гармошка здесь не нужна — блок открыт всегда
+        // (решение владельца, 2026-10-10), поэтому голова и тело — обычные
+        // слои, как у тела шага инструмента, а не строка переключателя
+        const block = document.createElement('div');
         block.className = 'chat-message chat-message--thinking';
 
-        const head = document.createElement('summary');
+        // в голове только метка: прежняя строка предпросмотра жила за тем,
+        // что тело было свёрнуто, а теперь тело видено целиком, и последний
+        // абзац дублировался бы сразу в двух местах
+        const head = document.createElement('div');
         head.className = 'chat-thinking-head';
-        const preview = document.createElement('span');
-        preview.className = 'chat-thinking-preview';
-        // у метки размышления свой серый цвет (chat-tag--muted в messages.css):
-        // она не действие, а рамка мысли, и оттенок от хэша здесь спорит с
-        // курсивом заголовка. Остальные теги остаются цветными по инструменту
+        // у метки размышления свой белый цвет (chat-tag--thinking в
+        // messages.css): она не действие, и серый оттенок был плохо виден.
+        // Остальные теги остаются цветными по инструменту
         const tag = makeTag(nested ? `\u21b3 ${THINKING_TAG}` : THINKING_TAG, THINKING_TAG);
-        tag.classList.add('chat-tag--muted');
-        head.append(tag, document.createTextNode(' '), preview);
+        tag.classList.add('chat-tag--thinking');
+        head.append(tag);
 
         const body = document.createElement('div');
         body.className = 'chat-thinking-body';
-
-        // toggle, а не click: событие приходит и от раскрытия по Enter/пробелу
-        block.addEventListener('toggle', () => {
-            if (block.open) setThinkingOpen(block);
-        });
 
         block.append(head, body);
         if (before && before.parentNode === state.list) state.list.insertBefore(block, before);
@@ -250,11 +240,6 @@ export function addThinking(text, before) {
     }
 
     if (thoughts.length) {
-        const head = openThinking.querySelector('.chat-thinking-head');
-        const preview = head.querySelector('.chat-thinking-preview');
-        preview.textContent = thoughts[thoughts.length - 1];
-        head.title = preview.textContent;
-
         const body = openThinking.querySelector('.chat-thinking-body');
         body.replaceChildren(...thoughts.map((part) => {
             const paragraph = document.createElement('p');
@@ -270,14 +255,14 @@ export function addThinking(text, before) {
 
 // Блок мыслей закончен: следующая мысль встанет своим блоком. Зовут его
 // addStep (действие) и addMessage (ответ или реплика человека) — там мысли
-// и заканчиваются по смыслу; сам блок остаётся в ленте свёрнутым
+// и заканчиваются по смыслу; сам блок остаётся в ленте открытым
 // ---------- промпт хода ----------
 
 // Промпт, который реально ушёл модели: не только вопрос человека, но и
 // преамбула хода целиком (записки решений, приём из памяти работника, отчёт
 // разведки, пересказ истории). В ленте он стоит своей строкой сразу за
 // вопросом человека — иначе промпт не виден вовсе, а по нему судят, чего
-// агент не понял. Свёрнут по подобию блока мыслей: текста много, а читают
+// агент не понял. Свёрнут подобием блока шага: текста много, а читают
 // его при разборе хода
 export function addInput(text, before) {
     const stick = isNearBottom();
@@ -289,7 +274,7 @@ export function addInput(text, before) {
     const tag = makeTag(INPUT_TAG, INPUT_TAG);
     tag.classList.add('chat-tag--muted');
     const preview = document.createElement('span');
-    preview.className = 'chat-thinking-preview';
+    preview.className = 'chat-prompt-preview';
     const body = document.createElement('div');
     body.className = 'chat-input-body';
     block.append(head, body);
