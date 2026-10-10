@@ -12,6 +12,12 @@
 # jev-ultrafast (browser-use) — чужой код для управления браузером, клонируем сами
 # (PROJECTS/Browser/README.md); в git — только наша обвязка в PROJECTS/Browser
 /jev-ultrafast/
+# json-render и json-renderer — чужие репозитории для проверок jeв/типизированного
+# UI (TypeSafe System One). Каждый со своим .git; в git нашего проекта не идут и
+# из всех обходов исключены (SKIP в SYSTEM/checks.js, SYSTEM/core/scan.js,
+# ignores в eslint.config.mjs) — имён не хватало только здесь
+/json-render/
+/json-renderer/
 claude-bridge/__pycache__/
 /hermes-home/
 /logs/
