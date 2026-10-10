@@ -14,7 +14,7 @@ import {
     providerById, connections, saveProviderState, saveLevelChoice, loadLevelChoice,
 } from './providers.js';
 import { cliLevelNames } from './cli-agents.js';
-import { modelLevels, modelPath } from './model-path.js';
+import { modelLevels, modelPath, cliShortName, gatewayNameOf } from './model-path.js';
 import { levelWithAdd, ignoreAdd } from './model-add-option.js';
 import { fillEffortLevel, saveEffort } from './model-effort.js';
 import { fillLevel, levelValues, HIDDEN_GATEWAYS, modelsFor } from './model-cascade-fill.js';
@@ -164,14 +164,25 @@ const fillLevelWithAdd = (select, values, emptyLabel, wanted, label) =>
         // путь целиком вместо имени модели
         const asked = modelLevels(wanted, cliId);
         const remembered = levelTriplet();
-        // Шлюз, который человек поставил. У CLI, чей путь начинается с его
-        // имени (kilo, opencode), уровня шлюза в пути нет вовсе: там у всех
-        // моделей gateway пуст, и фильтровать по нему нельзя — иначе каталог
-        // отсекается целиком и строка встаёт на прочерки, потеряв выбор
-        const hasGateway = models.some((m) => modelLevels(m, cliId).gateway);
+        // Шлюз, который человек поставил, и список шлюзов, какие есть у этого
+        // CLI на самом деле. Считаются они одной функцией (gatewayNameOf): у
+        // модели, путь которой начинается с имени самого CLI (opencode/…,
+        // kilo/…), шлюза в пути нет, и в списке шлюзов такой модели отвечает
+        // имя этого CLI. Раньше она в список не попадала вовсе — значение пустое,
+        // а пустые уровни в список не идут, — и вместе с ней исчезали и её
+        // модели: у opencode это его собственные бесплатные, до которых после
+        // появления чужих шлюзов было не добраться вовсе.
+        const ownGateway = cliShortName(cliId);
+        const gatewayOf = (path) => gatewayNameOf(path, cliId);
         const wantedGateway = gateway ?? (asked.gateway || remembered.gateway);
         const gateways = levelValues(models, null, (l) => l.gateway, cliId)
             .filter((value) => !HIDDEN_GATEWAYS.has(value));
+        // Модели самого CLI — первый пункт списка шлюзов: у каталога с чужими
+        // шлюзами они тоже есть (у opencode — свои бесплатные), и без
+        // отдельного пункта до них не добраться, потому что фильтр шлюза их
+        // отсекал
+        const hasOwnModels = models.some((m) => !modelLevels(m, cliId).gateway);
+        if (hasOwnModels && !gateways.includes(ownGateway)) gateways.unshift(ownGateway);
         // пустым списком шлюзов строка встала бы на прочерк, поэтому в каталог
         // без шлюзов добавляется тот, что поставил человек
         if (!gateways.length && wantedGateway) gateways.push(wantedGateway);
@@ -185,8 +196,7 @@ const fillLevelWithAdd = (select, values, emptyLabel, wanted, label) =>
         // «claude-fable-5». Одинаковые имена у разных поставщиков подписью
         // различаются, а склеивать их в одно значение нельзя — у CLI это разные
         // модели
-        const inPath = models.filter((m) => !hasGateway
-            || modelLevels(m, cliId).gateway === selects.gateway.value);
+        const inPath = models.filter((m) => gatewayOf(m) === (selects.gateway.value || ownGateway));
         const modelLabel = (path) => {
             const levels = modelLevels(path, cliId);
             return [levels.provider, levels.model].filter(Boolean).join('/');
@@ -205,12 +215,14 @@ const fillLevelWithAdd = (select, values, emptyLabel, wanted, label) =>
             || modelPath(cliId, selects.gateway.value, asked.provider || remembered.provider,
                 asked.model || remembered.model, models);
         fillLevel(selects.model, inPath, '—', wantedPath, modelLabel);
-        // Выбранного значения может не оказаться в списке: у CLI, чей каталог
-        // не называет этого шлюза (путь начинается с имени CLI — kilo,
-        // opencode), и у неподключённого, у которого каталога нет вовсе. Такое
-        // значение возвращается в уровень пунктом, иначе выбор человека пропал
-        // бы с экрана и вернулся бы прочерком по reload
-        keepAbsent(selects.gateway, wantedGateway);
+        // Шлюз, который человек поставил, в списке нового CLI может не
+        // оказаться: переключил CLI — а у него своего шлюза с таким именем нет.
+        // Раньше такое значение возвращалось в уровень пунктом, и строка
+        // показывала рядом шлюз, которого у CLI нет, и модели уже другого
+        // шлюза (список считался до того, как уровень дописывали). Теперь
+        // шлюзов без каталога не бывает: у неподключённого CLI список пуст, и
+        // тогда прежнее имя добавляется в него строкой выше, а строка встаёт на
+        // первый настоящий шлюз CLI — как и сказано у HIDDEN_GATEWAYS
         keepAbsent(selects.model, wantedPath);
     }
 
@@ -325,12 +337,15 @@ export function applyModelChoice(cliId, model, sourceRow, effort) {
         // уровня затрёт остальные.
         // Разбор — с именем CLI: у kilo путь начинается с «kilo/…», и без
         // этого «kilo» записался бы в шлюз, а модель — с именем CLI в хвосте.
-        // Шлюз такого пути в нём не значится, поэтому остаётся прежний — тот,
-        // что поставил человек
+        // Шлюз берётся тем же чтением, каким его показывает строка
+        // (gatewayNameOf): у модели самого CLI шлюза в пути нет, и разбор по
+        // уровням оставлял бы прежний шлюз — выбрал «opencode», а после
+        // перезагрузки строка встала бы на прежний openrouter. Прежний шлюз
+        // остаётся только на случай пути, который этой форме не отвечает вовсе
         const asked = modelLevels(model, cliId);
         const remembered = loadLevelChoice();
         saveLevelChoice({
-            gateway: asked.gateway || remembered.gateway || '',
+            gateway: gatewayNameOf(model, cliId) || remembered.gateway || '',
             provider: asked.provider || '',
             model: asked.model || '',
         });
