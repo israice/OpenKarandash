@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Restart Desktop
+Name[ru]=Перезапустить рабочий стол
+Comment=Restart the LXDE desktop session
+Comment[ru]=Перезапуск сеанса LXDE
+Exec=lxde-restart
+Icon=application-x-executable
+Terminal=false
+Categories=System;

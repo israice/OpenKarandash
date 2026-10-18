@@ -1,0 +1,16 @@
+# LXDE session autostart
+#
+# Copied into each session home on first run. These entries are executed by
+# lxsession in order. The two LXDE components below are mandatory - without
+# them there is no panel and no desktop.
+#
+# The stock Debian file also starts xscreensaver, which is intentionally not
+# installed here: an idle screensaver is a liability in a VNC session, and the
+# logout menu's lock action (lxlock) covers manual locking.
+
+@lxpanel --profile LXDE
+@pcmanfm --desktop --profile LXDE
+
+# Keep the desktop alive: if pcmanfm --desktop dies, the icons, the wallpaper
+# and the desktop context menu disappear.
+sh -c 'while true; do pgrep -f "pcmanfm --desktop" >/dev/null || pcmanfm --desktop --profile LXDE; sleep 5; done'

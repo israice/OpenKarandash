@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Settings
+Name[ru]=Настройки рабочего стола
+Comment=Desktop appearance, theme and file manager preferences
+Comment[ru]=Оформление, темы и настройки файлового менеджера
+Exec=lxappearance
+Icon=preferences-desktop-theme
+Terminal=false
+Categories=Settings;DesktopSettings;
+StartupNotify=true

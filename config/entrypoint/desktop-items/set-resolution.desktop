@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Set Screen Resolution
+Name[ru]=Разрешение экрана
+Comment=Change the virtual screen resolution (Xvfb RandR)
+Comment[ru]=Изменить разрешение виртуального экрана
+Exec=set-resolution
+Icon=preferences-desktop-display
+Terminal=true
+Categories=Settings;DesktopSettings;
+StartupNotify=true
