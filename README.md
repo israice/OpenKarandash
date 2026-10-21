@@ -41,8 +41,11 @@ One command from the project root, the same in PowerShell and in WSL:
 
 ```powershell
 cd C:\0_PROJECTS\OpenKarandash
-node server.js
+npm start
 ```
+
+`npm start` is `node server.js` — the same thing, named so that starting and
+stopping are one pair of commands.
 
 Before starting the server the watchdog brings the whole stack into shape (`SYSTEM/core/hermes-stack.js`):
 installs or updates what is missing (npm packages per `package.json`; `hermes/` — the upstream
@@ -230,13 +233,20 @@ OBSIDIAN_VAULT="C:/path/to/vault" node server.js
 
 ## Stopping
 
-`Ctrl+C` in the terminal running the server.
+`Ctrl+C` in the terminal running the server — it stops the server and the
+watchdog, and leaves nothing behind.
+
+`npm stop` stops it from anywhere else: it reads `DATA/server.lock` (the one
+record of what is running), stops the watchdog and the server, removes the
+lock and says whether the port is free. It also cleans up a lock left by a
+server that died — the case where a fresh start would otherwise answer
+"Another OpenKarandash server is already holding …".
 
 ## Structure
 
 | Path | Purpose |
 | --- | --- |
-| `server.js` | A thin entry point: `.env`, module wiring, route table, `listen`. Everything with a topic of its own lives in a module: `SYSTEM/core/` is the shared plumbing (`env`, `watchdog`, `watch`, `version`, `http-server`, `api`, `runs`, `run-turn`, `handoff`, `session-list`, `sessions-routes`, `agent-routes`, `sessions-db`), `SYSTEM/cli/` is the agent layer (connectors, process spawn, the turn itself, memory of what broke, turns started outside the browser) |
+| `server.js` | A thin entry point: `.env`, module wiring, route table, `listen`. Everything with a topic of its own lives in a module: `SYSTEM/core/` is the shared plumbing (`env`, `watchdog`, `server-lock`, `watch`, `version`, `http-server`, `api`, `runs`, `run-turn`, `handoff`, `session-list`, `sessions-routes`, `agent-routes`, `sessions-db`), `SYSTEM/cli/` is the agent layer (connectors, process spawn, the turn itself, memory of what broke, turns started outside the browser) |
 | `SYSTEM/` | The client shell: `index.html`, `app.js`, `tabs.js`, the toolbar and panel scripts, `core/` (server plumbing), `cli/` (CLI connectors), `styles/`, `assets/` |
 | `PROJECTS/<Section>/*.eta` | Templates for the server fragments that htmx pulls in — next to the feature that renders them |
 | `PROJECTS/<Section>/` | One folder per interface section — client, styles, the server half and its own README. A page created by the toolbar's «+» button is one of these too: its `page.js` *is* the page |

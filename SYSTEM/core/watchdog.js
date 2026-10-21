@@ -1,5 +1,9 @@
 // Родительский процесс: сторож, который перезапускает сервер после правок
-// серверных файлов, и общий замок от параллельного запуска.
+// серверных файлов.
+//
+// Замок от параллельного запуска и остановка сервера живут отдельно
+// (SYSTEM/core/server-lock.js) — ими пользуется не только сторож, но и сервер,
+// и команда остановки. Здесь только перезапуск.
 //
 // Почему это отдельный модуль, а не кусок server.js: в проекте работают два
 // процесса. Родительский не обслуживает запросы — он только следит за файлами и
@@ -10,16 +14,15 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const hostDeps = require('./host-deps.js');
+const serverLock = require('./server-lock.js');
 
-// коды выхода, по которым родительский процесс понимает, чего ждать бессмысленно:
-// порт занят и занята DATA/server.lock. Правкой серверных файлов это не лечится
+// код выхода, по которому родительский процесс понимает, чего ждать бессмысленно:
+// порт занят. Правкой серверных файлов это не лечится. Второй такой же код —
+// «замок занят» — живёт рядом с замком (SYSTEM/core/server-lock.js)
 const EXIT_PORT_BUSY = 3;
-const EXIT_LOCK_HELD = 4;
 
 // корень проекта на два уровня выше: модуль лежит в SYSTEM/core
 const ROOT = path.join(__dirname, '..', '..');
-// общий замок: им пользуются и сторож (снимает мёртвому ребёнку), и сам сервер
-const LOCK_FILE = path.join(ROOT, 'DATA', 'server.lock');
 
 // ---------- сторож перезапуска ----------
 //
@@ -32,12 +35,13 @@ const LOCK_FILE = path.join(ROOT, 'DATA', 'server.lock');
 function run({ serverFile, pollMs, logExit }) {
     // папка данных: её раньше заводил модуль карты, а он подключается уже в
     // дочернем процессе. Родительскому она нужна для журнала выключений
-    fs.mkdirSync(path.dirname(LOCK_FILE), { recursive: true });
+    fs.mkdirSync(path.dirname(serverLock.LOCK_FILE), { recursive: true });
 
     let child = null;
     let restarting = false;    // перезапуск запрошен: ждём от сервера «можно»
     let retryTimer = null;     // отложенный повторный запуск после падения
     let retries = 0;           // сколько раз подряд сервер упал — основа паузы
+    let stopping = false;      // идёт остановка: новый сервер не поднимаем
 
     // сервер подключает через require и серверные модули вне себя самого — их
     // правки тоже должны рестартовать сервер, иначе Node продолжает работать со
@@ -107,7 +111,9 @@ function run({ serverFile, pollMs, logExit }) {
         retries = 0;
         child = spawn(process.execPath, [serverFile], {
             stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
-            env: { ...process.env, SERVER_CHILD: '1' },
+            // свой pid ребёнку нужен, чтобы тот записал его в замок: по замку
+            // остановка находит всё дерево, а не только сервер
+            env: { ...process.env, SERVER_CHILD: '1', SERVER_WATCHDOG_PID: String(process.pid) },
         });
 
         // Агент из чата правит файлы проекта, в том числе серверные. перезапуск
@@ -125,10 +131,14 @@ function run({ serverFile, pollMs, logExit }) {
             // следом в эти секунды отказывал «другая копия уже работает». Ребёнок
             // мёртв — значит, его замок заведомо ничей, снимаем его сами (только
             // свой: в файле лежит pid держателя)
-            try {
-                if (fs.readFileSync(LOCK_FILE, 'utf8').trim() === String(child.pid)) fs.unlinkSync(LOCK_FILE);
-            } catch { /* замка нет или он чужой — не трогаем */ }
+            serverLock.release(child.pid);
             child = null;
+            // остановка: сервер погашен по команде человека, новый не поднимаем
+            // (иначе Ctrl+C поднял бы его снова и страница ожила бы сама)
+            if (stopping) {
+                logExit('watchdog stopped');
+                process.exit(0);
+            }
             // Правку самого сторожа ребёнок не исполнит: его код мы только что
             // погасили. Поднимаем новую копию себя и уходим — она берёт порт и
             // замок сама (замок ребёнка мы уже сняли строкой выше) и смотрит за
@@ -154,7 +164,7 @@ function run({ serverFile, pollMs, logExit }) {
             // порт занят: правкой серверных файлов это не лечится, ждать нечего. иначе
             // сторож жил бы вечно — крутил опрос файлов и держал cwd проекта, из-за
             // чего папку проекта нельзя переименовать, пока процесс не убьют вручную
-            if (code === EXIT_PORT_BUSY || code === EXIT_LOCK_HELD) process.exit(code);
+            if (code === EXIT_PORT_BUSY || code === serverLock.EXIT_LOCK_HELD) process.exit(code);
             // упал сам (например, ошибка в коде): раньше сторож просто ждал правки
             // серверного файла, и страница оставалась мёртвой минутами — выглядело
             // именно как «перестала запускаться». Теперь поднимаем сервер сами,
@@ -228,12 +238,26 @@ function run({ serverFile, pollMs, logExit }) {
 
     process.on('exit', (code) => logExit(`watchdog exit: code=${code}`));
 
-    // Ctrl+C — кнопка «стоп» для сервера. Остановка синхронная: process.exit
-    // не ждёт промисов
+    // Ctrl+C — кнопка «стоп» для сервера. Раньше сторож гасил ребёнка и сразу
+    // выходил: обработчик 'exit' ребёнка, который снимает замок, не успевал
+    // отработать, и следующий запуск отказывал «замок держит другой сервер»,
+    // хотя никто не работал (DOCS/decisions/125). Теперь ждём смерти ребёнка
+    // и уходим после неё — тогда и порт свободен, и замок снят.
     const shutdown = (why) => {
         logExit(`watchdog got ${why}`);
-        if (child) child.kill('SIGTERM');
-        process.exit(0);
+        stopping = true;
+        if (!child) {
+            process.exit(0);
+            return;
+        }
+        const dead = child;
+        dead.kill('SIGTERM');
+        // ребёнок не умер (завис) — уходим, но замок снимаем сами
+        setTimeout(() => {
+            if (dead.exitCode === null && dead.signalCode === null) dead.kill('SIGKILL');
+            serverLock.release(dead.pid);
+            process.exit(0);
+        }, 10000).unref();
     };
     for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => shutdown(signal));
 
@@ -259,38 +283,7 @@ function run({ serverFile, pollMs, logExit }) {
     start();
 }
 
-// ---------- замок от параллельного запуска ----------
-// Порт-гвард в http-server.js ловит вторую копию только на том же порту. Если у
-// копий разные PORT в .env (например, Windows и WSL запущены одновременно с
-// разными портами) или .env вовсе разные — обе поднимаются молча и дерутся за
-// общие DATA/sessions.db, vault и телеграм-токен (Conflict от getUpdates). Порт
-// тут не судья, а вот файл в DATA/ виден обеим сторонам одинаково — на нём и
-// делаем общий замок, независимый от PORT.
-//
-// PID в замке не помогает: Windows и WSL — разные пространства процессов,
-// чужой PID в них ничего не значит. Вместо этого держим «пульс» — раз в
-// HEARTBEAT_MS обновляем время правки файла. Свежий пульс при старте значит
-// «кто-то уже работает» — отказываем. Пульс не обновлялся дольше STALE_MS —
-// прошлый процесс упал, не подчистив за собой, замок можно перехватить
-const HEARTBEAT_MS = 3000;
-const STALE_MS = HEARTBEAT_MS * 4;
-
-function acquireLock() {
-    const lockFile = LOCK_FILE;
-    try {
-        const age = Date.now() - fs.statSync(lockFile).mtimeMs;
-        if (age < STALE_MS) {
-            console.error(`Another OpenKarandash server is already holding ${lockFile} (last heartbeat ${Math.round(age / 1000)}s ago).`);
-            console.error('Stop that instance first — running two at once fights over the database, the vault and the Telegram bot token.');
-            process.exit(EXIT_LOCK_HELD);
-        }
-    } catch { /* замка ещё нет — первый запуск */ }
-    fs.mkdirSync(path.dirname(lockFile), { recursive: true });
-    fs.writeFileSync(lockFile, String(process.pid));
-    setInterval(() => {
-        try { fs.utimesSync(lockFile, new Date(), new Date()); } catch { /* пропустим удар — догоним следующим */ }
-    }, HEARTBEAT_MS).unref();
-}
-
-// сторож снимает замок упавшего ребёнка — путь к нему знает и он сам
-module.exports = { run, acquireLock, EXIT_PORT_BUSY, EXIT_LOCK_HELD };
+// Замок от параллельного запуска живёт отдельно (SYSTEM/core/server-lock.js):
+// им пользуются и сервер, и команда остановки, и он не про перезапуск. Здесь
+// остаётся только то, что читает родительский процесс, — код его выхода
+module.exports = { run, EXIT_PORT_BUSY };

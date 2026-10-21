@@ -14,6 +14,7 @@
 // подключается после неё: родительский процесс базу открывать не должен.
 const env = require('./SYSTEM/core/env.js');
 const watchdog = require('./SYSTEM/core/watchdog.js');
+const serverLock = require('./SYSTEM/core/server-lock.js');
 const turnJudgment = require('./SYSTEM/core/turn-judgment.js');
 const branchPreview = require('./SYSTEM/core/branch-preview.js');
 const cliIndex = require('./SYSTEM/cli/index.js');
@@ -45,7 +46,15 @@ if (LIVE_RELOAD && !process.env.SERVER_CHILD) {
 
 // ---------- дочерний процесс: сервер ----------
 
-watchdog.acquireLock();
+// Замок: второй экземпляр на той же папке подниматься не должен — они делят
+// базу, vault и телеграм-токен (DOCS/decisions/001). Сторож передаёт свой pid:
+// по замку остановка находит всё дерево, а не только сервер.
+const lock = serverLock.acquire({ watchdogPid: Number(process.env.SERVER_WATCHDOG_PID) || null });
+if (!lock.ok) {
+    console.error(`Another OpenKarandash server is already holding ${serverLock.LOCK_FILE} (last heartbeat ${Math.round(lock.age / 1000)}s ago).`);
+    console.error(serverLock.hintFor(lock.holder));
+    process.exit(serverLock.EXIT_LOCK_HELD);
+}
 
 // исключение вне обработчика запроса (таймер пересборки карты, колбэк процесса CLI)
 // иначе гасит сервер без следа: сторож видит только код выхода, а стек уходит
@@ -202,6 +211,10 @@ bridge = telegram.init({
         titles: runs.activeTitles((id) => getSessionTitle.get(id)?.title),
     }),
 });
+
+// Сторож исчез — сервер умирает вместе с ним, иначе он остался бы один:
+// порт и база заняты, второй экземпляр не поднять (DOCS/decisions/125)
+serverLock.dieWithParent(() => telegram.stop());
 
 // сводка по сессиям для списков и панелей — её читают Sessions и маршруты
 const sessionList = require('./SYSTEM/core/session-list.js').create({

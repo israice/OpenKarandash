@@ -11,7 +11,7 @@ import globals from 'globals';
 // SYSTEM/ — браузерный код (обычные скрипты и ES-модули разбираем одинаково,
 // sourceType: 'module' понимает и то и другое)
 const SERVER = ['server.js', '**/*-server.js', 'SYSTEM/core/**/*.js', 'SYSTEM/cli/**/*.js', 'SYSTEM/checks.js', 'SYSTEM/secrets-scan.js',
-    'SYSTEM/esm-links.js',
+    'SYSTEM/esm-links.js', 'SYSTEM/stop.js', 'SYSTEM/server-lock-check.js',
     'PROJECTS/Graph/graph-*.js', 'PROJECTS/Graph/search.js', 'PROJECTS/Browser/chrome-bridge.js', 'PROJECTS/Browser/sync-user-profile.js',
     // вспомогательные скрипты TOOLS — обычный Node; сценарии live-verify сюда не входят:
     // это тела функций для страницы пульта (верхнеуровневые await/return), а не модули

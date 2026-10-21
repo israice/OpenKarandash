@@ -5,6 +5,8 @@
   "description": "Локальный оркестратор агентных CLI: сервер на Node + веб-интерфейс",
   "type": "commonjs",
   "scripts": {
+    "start": "node server.js",
+    "stop": "node SYSTEM/stop.js",
     "check": "node SYSTEM/checks.js",
     "ui": "node SYSTEM/ui-walk.mjs",
     "ui-agent": "node SYSTEM/ui-agent.mjs",
