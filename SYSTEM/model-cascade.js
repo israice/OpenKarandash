@@ -17,7 +17,7 @@ import { cliLevelNames } from './cli-agents.js';
 import { modelLevels, modelPath, cliShortName, gatewayNameOf } from './model-path.js';
 import { levelWithAdd, ignoreAdd } from './model-add-option.js';
 import { fillEffortLevel, saveEffort } from './model-effort.js';
-import { fillLevel, levelValues, HIDDEN_GATEWAYS, modelsFor } from './model-cascade-fill.js';
+import { fillLevel, levelValues, HIDDEN_GATEWAYS, modelsFor, keepAbsent } from './model-cascade-fill.js';
 import { markCliLevel, watchCliLevel, remarkCliLevels } from './cli-mark.js';
 import { scanMarkOf, onCliScan } from './cli-scan.js';
 
@@ -224,18 +224,6 @@ const fillLevelWithAdd = (select, values, emptyLabel, wanted, label) =>
         // тогда прежнее имя добавляется в него строкой выше, а строка встаёт на
         // первый настоящий шлюз CLI — как и сказано у HIDDEN_GATEWAYS
         keepAbsent(selects.model, wantedPath);
-    }
-
-    // Значение уровня, которого нет в списке: добавляем его пунктом обратно и
-    // выбираем. Так каскад показывает и каталог CLI, и то, что выбрано, а
-    // переход на другой CLI не стирает ни одну из половин выбора
-    function keepAbsent(select, value) {
-        if (!value || [...select.options].some((o) => o.value === value)) return;
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = value;
-        select.append(option);
-        select.value = value;
     }
 
     // Объявление о выборе — по любому изменению строки. CLI в списке без

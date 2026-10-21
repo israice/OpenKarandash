@@ -28,6 +28,25 @@ export function fillLevel(select, values, emptyLabel, wanted, label = (value) =>
     select.value = values.includes(previous) ? previous : (values[0] || '');
 }
 
+// Значение уровня, которого нет в списке: добавляем его пунктом обратно и
+// выбираем. Так каскад показывает и каталог CLI, и то, что выбрано, а переход
+// на другой CLI не стирает ни одну из половин выбора.
+//
+// Уровень с настоящим значением не может остаться выключенным: список пуст,
+// когда у CLI нет каталога (CLI не подключён), но выбор человека в уровне
+// есть, и он должен быть доступен — раньше уровень оставался выключенным с
+// готовым значением внутри, и список не открывался вовсе
+// (DOCS/decisions/124)
+export function keepAbsent(select, value) {
+    if (!value || [...select.options].some((o) => o.value === value)) return;
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.append(option);
+    select.value = value;
+    select.disabled = false;
+}
+
 // Шлюзы, которых в меню Gateway нет: список шлюзов приходит из моделей CLI и
 // там есть openai, а владелец его из меню убрал. Строка просто не
 // показывается — модели openai/… в списке CLI остаются, а если выбран был

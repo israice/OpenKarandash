@@ -78,12 +78,34 @@ export function renderSessionBarControls() {
             // (getActiveProviderId читает его отсюда), поэтому он же становится
             // активным провайдером: без этого строка после перезагрузки вернула
             // бы прежнего, а ход пошёл бы иначе
+            const cliChanged = cliId !== barCliId;
             barCliId = cliId;
             saveActiveProvider(cliId);
             applyModelChoice(cliId, model, sourceRow, effort);
+            // Каталог моделей приходит от самого CLI, а у неподключённого CLI его
+            // нет: список Model пуст, и выбрать модель не из чего — список выбора
+            // молча мёртв. Подключение делает ход (ensureConnected), но ход — это
+            // уже после выбора, а человек меняет CLI именно затем, чтобы выбрать
+            // модель. Поэтому при смене CLI каталог берём сразу: то же
+            // подключение, что и перед ходом, только раньше. Каталог пришёл —
+            // строка перерисовалась сама (ensureConnected зовёт
+            // renderSessionBarControls), и выбор в ней сохранился
+            if (cliChanged) fillCatalog(cliId);
         },
     });
     bar.append(barRow);
+}
+
+// Каталог моделей выбранного CLI: то же подключение, что и перед ходом
+// (ensureConnected в SYSTEM/app.js — из window.App, прямой импорт дал бы круг
+// app.js ↔ session-model-bar.js). Ошибка тут не беда: список останется пустым,
+// а ход разберётся и скажет, что CLI недоступен
+function fillCatalog(cliId) {
+    try {
+        Promise.resolve(App.ensureConnected(cliId)).catch(() => {});
+    } catch {
+        // сервер недоступен — строка остаётся как есть
+    }
 }
 
 // Перерисовка под новый список агентов с сайта (publishModelChoice) и под
