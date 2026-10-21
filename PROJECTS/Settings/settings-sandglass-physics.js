@@ -2,12 +2,12 @@
 import * as THREE from 'three';
 import * as RAPIER_NS from '@dimforge/rapier3d-simd-compat';
 import {
-    H, THROAT_H, NECK_R, CAP_R, GRAIN_R, GRAINS_N, BANDS,
+    H, THROAT_H, NECK_R, CAP_R, GRAINS_N, BANDS,
     WBANDS, SEGS, WALL_T,
     Y_HOLD_MULT, HOLD_R_MULT, FEED_Y_MULT, FEED_R_MULT,
     DT, V_MAX, SLEEP_SP2, REL_CAP,
 } from './settings-sandglass-constants.js';
-import { profileR } from './settings-sandglass-geometry.js';
+import { profileR, GRAIN_R } from './settings-sandglass-geometry.js';
 
 const RAPIER = RAPIER_NS.default ?? RAPIER_NS;
 

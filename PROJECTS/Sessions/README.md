@@ -86,7 +86,15 @@ The section is split by concern, so that a change in one thing does not touch th
 | `sessions.js` | the entry point: send modes, the composer, panel handlers, restoring the connection and the last session on load. A module right after `app.js`, so it imports the core from there and adds its own functions to `window.App` |
 | `sessions-state.js` | the section's shared mutable state in one object (`export const state`) plus `PENDING_SESSION_ID`; imports nothing |
 | `sessions-panel.js` | The Sessions panel: the list, selection and deletion, drafts, the "running" indicator, composer busy state, the live duration counter, the re-hook after htmx swaps the list. Also `copySessionRef` — what the copy button puts on the clipboard |
-| `sessions-feed.js` | drawing rows into the feed: markdown, replies, tool steps and thoughts (thoughts open in full, no accordion — `DOCS/decisions/121`), the waiting row with its clock, scroll rules and the tool-step accordion |
+| `sessions-feed.js` | the feed's drawing code, gathered in one place: markdown, replies, tool steps and thoughts (thoughts open in full, no accordion — `DOCS/decisions/121`), the waiting row with its clock, scroll rules and the tool-step accordion |
+| `sessions-feed-message.js` | a reply in the feed: the model's answer, the human's line, the error line. The only place an answer becomes HTML |
+| `sessions-feed-steps.js` | a tool step: what the agent did, and the accordion of its body |
+| `sessions-feed-thinking.js` | a block of thoughts: the tag in the head, the paragraphs in the body |
+| `sessions-feed-input.js` | the prompt that actually went to the model, under its own accordion |
+| `sessions-feed-pending.js` | the waiting row with its clock, and the "turn interrupted" notice with the continue button |
+| `sessions-feed-tag.js` | the coloured tag to the left of a row — the one tag for steps, thoughts and prompts |
+| `sessions-feed-markdown.js` | the small markdown parser for the model's answer |
+| `sessions-feed-scroll.js` | the scroll rules: follow to the bottom only if the reader was already there |
 | `sessions-details.js` | the fullness of a session row: field summary, raw event, result images, the step body and the `Details` block under a reply |
 | `sessions-history.js` | a row from the database → the feed: one role → one kind, plus "this turn was not finished" |
 | `sessions-ndjson.js` | reading the NDJSON stream, surviving a dropped connection (`followRun`), stopping a turn |

@@ -46,17 +46,33 @@ const SKIP = new Set([
 
 let failed = false;
 
+// На Windows путь к node может лежать в папке с пробелом («C:\Program
+// Files\nodejs\node.exe»), и cmd без кавычек режет его на два слова —
+// проверка падала с «'C:\Program' is not recognized», молча ничего не
+// проверяя. В оболочке путь всегда в кавычках
+const shell = process.platform === 'win32';
+const quote = (value) => (shell ? `"${value}"` : value);
+
 function run(title, file, args) {
     process.stdout.write(`${title}... `);
     try {
-        // На Windows путь к node может лежать в папке с пробелом («C:\Program
-        // Files\nodejs\node.exe»), и cmd без кавычек режет его на два слова —
-        // проверка падала с «'C:\Program' is not recognized», молча ничего не
-        // проверяя. В оболочке путь всегда в кавычках
-        const shell = process.platform === 'win32';
-        const quote = (value) => (shell ? `"${value}"` : value);
         execFileSync(quote(file), args.map(quote), { cwd: ROOT, stdio: 'pipe', shell });
         console.log('чисто');
+    } catch (error) {
+        failed = true;
+        console.log('НАШЛОСЬ:');
+        console.log(String(error.stdout || '') + String(error.stderr || ''));
+    }
+}
+
+// Стадия со своим выводом: скрипт сам говорит «чисто» или перечисляет находки.
+// Прежняя run() печатает своё слово и вывод скрипта прячет — для madge это
+// годилось, для проверки связей нужно видеть находки как есть
+function runReport(title, file, args) {
+    process.stdout.write(`${title}... `);
+    try {
+        const out = execFileSync(quote(file), args.map(quote), { cwd: ROOT, encoding: 'utf8', stdio: 'pipe', shell });
+        console.log(String(out).trim() || 'чисто');
     } catch (error) {
         failed = true;
         console.log('НАШЛОСЬ:');
@@ -220,6 +236,10 @@ run('неизвестные имена', process.execPath, [path.join(TOOLS, 'no
 // не .bin/madge — это shell-скрипт (#!/bin/sh), node напрямую его не исполнит,
 // он ищет настоящий вход в самом пакете
 run('циклические связи', process.execPath, [path.join(TOOLS, 'node_modules', 'madge', 'bin', 'cli.js'), '--circular', 'server.js']);
+// браузерные ES-модули: именованные импорты и круги в их графе. madge смотрит
+// только граф server.js, а браузерный код он не грузит — и импорт несуществующего
+// экспорта не ловит ни одна из прежних проверок (DOCS/decisions/123)
+runReport('связи браузерных модулей', process.execPath, [path.join(TOOLS, 'SYSTEM', 'esm-links.js')]);
 checkSize();
 checkScreenUnits();
 checkPlaceholders();

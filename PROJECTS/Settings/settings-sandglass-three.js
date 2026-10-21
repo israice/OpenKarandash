@@ -2,7 +2,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { glassGeo, glassMat, cheapGlassMat, woodMat, woodDark, capGeo, lipGeo, grainGeo, grainMat, envTexture, GRAINS_N } from './settings-sandglass-geometry.js';
+import { glassGeo, glassMat, cheapGlassMat, woodMat, woodDark, capGeo, lipGeo, grainGeo, grainMat, envTexture } from './settings-sandglass-geometry.js';
+import { GRAINS_N } from './settings-sandglass-constants.js';
 
 export function buildThreeScene(canvas, w, h) {
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
