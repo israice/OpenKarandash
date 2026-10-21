@@ -50,7 +50,12 @@ function familyOf(help) {
     // без этой проверки он уходил в plain, а тот слал `hermes run "…"`
     if (/--oneshot\s+PROMPT|--usage-file\s+PATH/.test(text)) return 'hermes';
     if (/--mode\s*[=<]/.test(text) && /--print/.test(text)) return 'pi';
-    if (/run \[message/i.test(text) && /--format/.test(text)) return 'opencode';
+    // opencode-схема: ход делает подкоманда run, у неё есть --format (json) и
+    // --model. Прежний признак «run [message]» в новой справке не встречается:
+    // там «opencode run [flags] [<message...>]», — поэтому ищем по usage-строке
+    // подкоманды и её флагам. Без этого opencode уходил в plain: ход шёл без
+    // --model и без потока событий, а каталог моделей был пуст
+    if (/run \[/i.test(text) && /--format/.test(text)) return 'opencode';
     return 'plain';
 }
 

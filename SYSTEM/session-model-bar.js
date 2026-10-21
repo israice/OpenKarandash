@@ -14,7 +14,7 @@
 // приходит с сайта и меняется, а ждать, пока человек нажмёт Connect в
 // настройках, не должен ни один выбор.
 import { state as sessionsState } from '../PROJECTS/Sessions/sessions-state.js';
-import { saveActiveProvider, loadActiveProvider } from './providers.js';
+import { saveActiveProvider, loadActiveProvider, providerById } from './providers.js';
 import {
     modelCascadeRow, applyModelChoice, modelOf, onModelChoice, publishModelChoice,
 } from './model-cascade.js';
@@ -94,13 +94,27 @@ export function renderSessionBarControls() {
         },
     });
     bar.append(barRow);
+    // Каталог выбранного CLI в клиенте живёт только до перезагрузки страницы:
+    // в localStorage лежит подключение (цель, версия), а список моделей — нет,
+    // и после перезагрузки он пуст. Уровни Gateway и Model без каталога стоят
+    // пустыми, а выбрать из них нечего — поэтому пустой каталог берём сразу,
+    // тем же подключением, что и перед ходом
+    if (barCliId && !providerById(barCliId).models.length) fillCatalog(barCliId);
 }
 
 // Каталог моделей выбранного CLI: то же подключение, что и перед ходом
 // (ensureConnected в SYSTEM/app.js — из window.App, прямой импорт дал бы круг
 // app.js ↔ session-model-bar.js). Ошибка тут не беда: список останется пустым,
 // а ход разберётся и скажет, что CLI недоступен
+//
+// Один раз на CLI за страницу: строка перерисовывается часто, а у CLI без
+// каталога (OpenClaw, Cline) его не будет никогда — и каждый перерисовка
+// звал бы сервер
+const askedCatalog = new Set();
+
 function fillCatalog(cliId) {
+    if (!cliId || askedCatalog.has(cliId)) return;
+    askedCatalog.add(cliId);
     try {
         Promise.resolve(App.ensureConnected(cliId)).catch(() => {});
     } catch {
