@@ -209,6 +209,10 @@ export function applyRunningIndicator() {
     if (badge) badge.textContent = runningCount;
 
     syncPendingWithIndicator();
+    // круг в списке — источник истины о том, что сессия идёт, и кнопка Stop
+    // смотрит на тот же признак: ход может начаться не отсюда (соседняя
+    // вкладка, Telegram, Flow), и без круга о нём не знает никто
+    syncComposerBusy();
 }
 
 // Три точки в ленте живут только вместе с оранжевым кругом этой же сессии в
@@ -229,18 +233,34 @@ function syncPendingWithIndicator() {
 
 export function setRunningSessionId(id) {
     state.runningSessionId = id;
+    // круг в списке и busy-состояние кнопки Stop пересчитываются вместе:
+    // и то и другое смотрит на один и тот же признак «сессия идёт»
     applyRunningIndicator();
-    syncComposerBusy();
     // сигнал остальным страницам (слушает PROJECTS/Flow/flow-session-sync.js):
     // по этой сессии начался ход — можно подключиться к её живому потоку
     document.body.dispatchEvent(new CustomEvent('session-running-changed', { detail: { id } }));
 }
 
 // Stop-кнопка нужна только той сессии, что сейчас реально выполняется —
-// при переключении на другую сессию busy-состояние пересчитывается заново
+// при переключении на другую сессию busy-состояние пересчитывается заново.
+// Истина о том, что сессия идёт, у круга в списке: ход может начаться не
+// отсюда (соседняя вкладка, Telegram, Flow), и без круга о нём не знал
+// никто — кнопка Stop тогда не появлялась вовсе. Свой ход вкладка знает и
+// сама, поэтому и он в счёт: он начинается мгновенно, а круг обновится
+// списком через несколько секунд.
 export function syncComposerBusy() {
     const viewingId = state.sessionId || PENDING_SESSION_ID;
-    setComposerBusy(state.runningSessionId !== null && state.runningSessionId === viewingId);
+    const own = state.runningSessionId !== null && state.runningSessionId === viewingId;
+    setComposerBusy(own || rowIsRunning(viewingId));
+}
+
+// круг в списке у сессии: помечена ли она как идущая
+function rowIsRunning(id) {
+    for (const btn of state.sessionList.querySelectorAll('.session-item')) {
+        const btnId = btn.dataset.sessionId || (btn.classList.contains('session-item--placeholder') ? PENDING_SESSION_ID : null);
+        if (btnId === id) return btn.classList.contains('session-item--running');
+    }
+    return false;
 }
 
 export function setComposerBusy(busy) {
