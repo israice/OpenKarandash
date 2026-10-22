@@ -17,6 +17,9 @@
 #    ./scripts/desktop-session.sh restart <id>
 #    ./scripts/desktop-session.sh logs    <id> [tail]
 #    ./scripts/desktop-session.sh delete  <id> [--delete-data]
+#    ./scripts/desktop-session.sh make-main   <id>   # new sessions are cloned from it
+#    ./scripts/desktop-session.sh unmake-main <id>
+#    ./scripts/desktop-session.sh template            # what new sessions are cloned from
 #    ./scripts/desktop-session.sh resources
 #    ./scripts/desktop-session.sh usage
 #    ./scripts/desktop-session.sh open    <id>        # print the browser URL
@@ -80,11 +83,12 @@ if not rows:
     print("no sessions")
     raise SystemExit(0)
 w = max(len(r["id"]) for r in rows)
-print("ID".ljust(w), "OWNER".ljust(12), "STATE".ljust(10), "RESOLUTION".ljust(11), "LIMITS".ljust(14), "URL")
+print("ID".ljust(w), "OWNER".ljust(12), "STATE".ljust(10), "ROLE".ljust(8), "RESOLUTION".ljust(11), "LIMITS".ljust(14), "URL")
 for r in rows:
     limits = "%sM/%sc" % (r.get("memory_limit_mb"), r.get("cpu_limit"))
     print(r["id"].ljust(w), str(r.get("owner","")).ljust(12),
-          str(r.get("state","")).ljust(10), str(r.get("resolution","")).ljust(11),
+          str(r.get("state","")).ljust(10), str(r.get("role","")).ljust(8),
+          str(r.get("resolution","")).ljust(11),
           limits.ljust(14), r.get("url",""))
 '
 }
@@ -184,6 +188,17 @@ cmd_url()   { jget "$(api GET "/api/sessions/$1/url")" url; }
 cmd_open()  { cmd_url "$1"; }
 cmd_status(){ api GET "/api/sessions/$1"; }
 
+# The main session is the template: every new session is cloned from it.
+cmd_make_main() {
+  api POST "/api/sessions/$1/make-main" >/dev/null
+  echo "session $1 is now the main session - new sessions are cloned from it"
+}
+cmd_unmake_main() {
+  api POST "/api/sessions/$1/unmake-main" >/dev/null
+  echo "session $1 is no longer the main session"
+}
+cmd_template() { api GET /api/template; echo; }
+
 [ $# -gt 0 ] || { sed -n '2,32p' "$0"; exit 1; }
 sub="$1"; shift
 
@@ -203,6 +218,9 @@ case "$sub" in
   usage)      api GET /api/resources/sessions | python3 -m json.tool ;;
   backup)     cmd_backup "$@" ;;
   restore)    cmd_restore "$@" ;;
+  make-main)   cmd_make_main "$@" ;;
+  unmake-main) cmd_unmake_main "$@" ;;
+  template)    cmd_template ;;
   wait)       wait_ready "$1" "${2:-90}" ;;
   *)          die "unknown command '$sub' (see the header of this script)" ;;
 esac

@@ -1,12 +1,17 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Settings
+Name=Desktop Preferences
 Name[ru]=Настройки рабочего стола
-Comment=Desktop appearance, theme and file manager preferences
-Comment[ru]=Оформление, темы и настройки файлового менеджера
-Exec=lxappearance
-Icon=preferences-desktop-theme
+Comment=Wallpaper, desktop icons and file manager preferences
+Comment[ru]=Обои, значки рабочего стола и настройки файлового менеджера
+# lxappearance is a separate package on Debian trixie (it is NOT part of
+# lxde-core) and it is a GTK3 app that drags in the whole GTK3 + systemd
+# stack, so this shortcut pointed at a binary that does not exist and every
+# click died with "Failed to execute child process". pcmanfm's own desktop
+# preferences dialog is already installed and does the same job.
+Exec=pcmanfm --desktop-pref
+Icon=preferences-desktop-wallpaper
 Terminal=false
 Categories=Settings;DesktopSettings;
 StartupNotify=true

@@ -2,14 +2,21 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import time
+from pathlib import Path
 from typing import Any
 
 from docker.errors import DockerException
 
 from . import store as st
-from .docker_ctl import DockerControl, DockerUnavailable
+from .docker_ctl import (
+    TEMPLATE_TAG_PREFIX,
+    DockerControl,
+    DockerUnavailable,
+)
 from .store import Session, SessionStore
 
 log = logging.getLogger("manager.service")
@@ -74,6 +81,7 @@ class SessionService:
         resolution: str | None = None,
         vnc_password: str | None = None,
         max_wait: float | None = None,
+        inherit: bool = True,
     ) -> Session:
         per = self._per_session_cfg()
         sess_defaults = self.cfg.get("session_defaults", {})
@@ -95,6 +103,19 @@ class SessionService:
             raise CapacityError(reason, detail)
         self.admission.notify_all()
 
+        # A new session is a clone of the main one: the programs come from the
+        # published template image, the files from the main session's home
+        # directory (copied further down, once the container exists).
+        main = self.store.main_session() if inherit else None
+        template_image: str | None = None
+        if main is not None:
+            try:
+                # Publishing commits an image - seconds of blocking work.
+                template_image = await asyncio.to_thread(self._publish_template, main)
+            except DockerUnavailable as exc:
+                await self.admission.release_reservation(token)
+                raise CapacityError("docker_error", str(exc)) from exc
+
         session_id = SessionStore.new_id()
         resolution = resolution or sess_defaults.get("resolution", "1440x900")
         password = vnc_password if vnc_password is not None else sess_defaults.get("vnc_password", "")
@@ -107,7 +128,7 @@ class SessionService:
             id=session_id,
             owner=owner,
             state=st.CREATING,
-            image=sess_defaults.get("image", "webdesktop:lxde"),
+            image=template_image or sess_defaults.get("image", "webdesktop:lxde"),
             resolution=resolution,
             container_name=self.cfg.container_name(session_id),
             volume_name=self.cfg.volume_name(session_id),
@@ -117,6 +138,12 @@ class SessionService:
             has_vnc_password=bool(password),
             labels={"webdesktop.session": session_id, "webdesktop.owner": owner},
         )
+        # The first desktop is the user's main desktop by default.  Without
+        # this, cloning only starts after the user explicitly presses
+        # "Make main", which makes the additional-desktop button appear to
+        # lose all changes made in the first desktop.
+        if inherit and self.store.main_session() is None:
+            session.role = st.ROLE_MAIN
 
         try:
             # Ports claimed by live containers PLUS ports reserved by sessions
@@ -163,6 +190,13 @@ class SessionService:
                 extra_env={str(k): str(v) for k, v in (sess_defaults.get("extra_env") or {}).items()},
                 labels={"webdesktop.session": session_id, "webdesktop.owner": owner},
             )
+            if main is not None:
+                # The home directory is copied live from the main session, so
+                # files and desktop settings are inherited exactly as they are
+                # right now - no snapshot, no waiting for a publish.
+                await asyncio.to_thread(
+                    self.docker.copy_home, main.container_name, session.container_name
+                )
             self.store.update(session_id, state=st.STARTING)
             self.docker.start(container_id)
             # STARTING sessions are counted by _running_sessions() from here on,
@@ -225,6 +259,103 @@ class SessionService:
         finally:
             self.refresh_resource_ledger()
 
+    # ------------------------------------------------------------- template
+    def set_main(self, session_id: str) -> Session:
+        """Make this session the one new sessions are cloned from."""
+        self.get(session_id)
+        updated = self.store.set_role(session_id, st.ROLE_MAIN)
+        log.info("session %s is now the main session", session_id)
+        return updated  # type: ignore[return-value]
+
+    def unmake_main(self, session_id: str) -> Session:
+        """Stop cloning new sessions from this one."""
+        self.get(session_id)
+        updated = self.store.set_role(session_id, st.ROLE_NORMAL)
+        log.info("session %s is no longer the main session", session_id)
+        return updated  # type: ignore[return-value]
+
+    def _template_state_path(self) -> Path:
+        state_dir = self.cfg.get("manager.state_dir", "/var/lib/session-manager")
+        return Path(state_dir) / "template.json"
+
+    def _load_template(self) -> dict[str, Any]:
+        try:
+            with self._template_state_path().open("r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            return {}
+
+    def _save_template(self, data: dict[str, Any]) -> None:
+        path = self._template_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        with tmp.open("w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
+        os.replace(tmp, path)
+
+    def template_info(self) -> dict[str, Any]:
+        """What new sessions are cloned from right now."""
+        state = self._load_template()
+        main = self.store.main_session()
+        return {
+            "main": main.summary_dict() if main else None,
+            "image": state.get("image"),
+            "published_at": state.get("published_at"),
+            "source": state.get("source"),
+        }
+
+    def _publish_template(self, main: Session) -> str:
+        """Publish the main session as the image every new session starts from.
+
+        The image carries the writable layer of the main session - the
+        programs that were installed in it - so a new session starts with the
+        same software. It is published again only when that layer changed:
+        every publish copies the whole layer, and doing it on every session
+        creation would fill the disk with images nobody uses.
+        """
+        base_image = self.cfg.get("session_defaults.image", "webdesktop:lxde")
+        state = self._load_template()
+        size = self.docker.writable_size(main.container_name)
+        if (
+            state.get("source") == main.id
+            and state.get("image")
+            and size is not None
+            and size == state.get("size_rw")
+            and self.docker.image_exists(state["image"])
+        ):
+            return str(state["image"])
+
+        repository = base_image.rsplit(":", 1)[0] if ":" in base_image else base_image
+        image = f"{repository}:{TEMPLATE_TAG_PREFIX}{time.strftime('%Y%m%d-%H%M%S')}"
+        self.docker.commit_template(main.container_name, image, base_image)
+        self._save_template({
+            "image": image,
+            "source": main.id,
+            "published_at": time.time(),
+            "size_rw": size,
+        })
+        self._drop_stale_templates(repository, keep=image)
+        return image
+
+    def _drop_stale_templates(self, repository: str, keep: str) -> None:
+        """Delete template images that no session was created from.
+
+        Every publish copies the whole writable layer of the main session, so
+        without this the disk fills up with images nobody uses. An image a
+        session was created from cannot be removed - Docker refuses - and is
+        left for `docker image prune`.
+        """
+        try:
+            images = self.docker.client.images.list(repository)
+        except DockerException as exc:
+            log.warning("cannot list the template images: %s", exc)
+            return
+        for image in images:
+            for tag in image.attrs.get("RepoTags") or []:
+                if not tag.startswith(f"{repository}:{TEMPLATE_TAG_PREFIX}") or tag == keep:
+                    continue
+                self.docker.remove_image(tag)
+
     # ------------------------------------------------------------ lifecycle
     def get(self, session_id: str) -> Session:
         s = self.store.get(session_id)
@@ -262,7 +393,16 @@ class SessionService:
             return s
         container_id = self._container_id(s)
         if container_id is None:
-            raise SessionNotFound(f"{session_id}: container is gone")
+            # The container is gone - removed by hand, or pruned because the
+            # image was rebuilt. The home volume is a separate object and is
+            # still there, so the desktop comes back with the CURRENT image
+            # and with the user's files. Without this a session whose
+            # container vanished could never be started again: "Start" would
+            # fail and the only way out would be to delete the session and
+            # lose the data.
+            log.warning("session %s has no container, recreating it", session_id)
+            self._recreate_stale(s)
+            return self.get(session_id)
         self.store.update(session_id, state=st.STARTING, error=None)
         self.docker.start(container_id)
         task = asyncio.create_task(self._await_ready(session_id))
@@ -343,8 +483,14 @@ class SessionService:
                         labels={"adopted": "true"},
                     )
                 )
-        for orphan in self.store.reconcile(known_ids):
-            log.warning("session %s marked stopped: %s", orphan.id, orphan.error)
+        # A session that is still CREATING or STARTING but has no container is
+        # a leftover of a manager that died between the store write and the
+        # container creation. It gets a grace period (the container needs a
+        # moment to appear in the Docker API) and is then marked failed
+        # instead of staying "starting" forever.
+        stale_after = float(self.cfg.get("docker.ready_timeout_s", 90)) + 60.0
+        for orphan in self.store.reconcile(known_ids, stale_after_s=stale_after):
+            log.warning("session %s marked failed: %s", orphan.id, orphan.error)
         self.refresh_resource_ledger()
 
     def shutdown(self, stop_sessions: bool = False) -> None:
@@ -390,6 +536,13 @@ class SessionService:
         for s in self.store.list((st.RUNNING, st.STARTING, st.STOPPING)):
             container_id = self._container_id(s)
             if container_id is None:
+                # The container is gone - removed by hand, or pruned because
+                # the image was rebuilt. The home volume is a separate object
+                # and is still there, so the session comes back with the
+                # CURRENT image and the user's files. Without this the session
+                # would stay in the store as "running" with nothing behind it.
+                log.warning("session %s has no container, recreating it", s.id)
+                self._recreate_stale(s)
                 continue
             if self.docker.container_running(container_id):
                 continue

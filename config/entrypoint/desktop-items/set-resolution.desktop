@@ -6,7 +6,10 @@ Name[ru]=Разрешение экрана
 Comment=Change the virtual screen resolution (Xvfb RandR)
 Comment[ru]=Изменить разрешение виртуального экрана
 Exec=set-resolution
-Icon=preferences-desktop-display
+# "preferences-desktop-display" exists in NEITHER Tango nor Adwaita, so GTK
+# fell back to the generic "preferences-desktop" category icon and every
+# session showed a filing cabinet where a monitor should be.
+Icon=video-display
 Terminal=true
 Categories=Settings;DesktopSettings;
 StartupNotify=true

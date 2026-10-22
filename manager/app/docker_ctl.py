@@ -1,9 +1,14 @@
 """Thin, deliberately narrow wrapper around the Docker API.
 
 This module is the ONLY place that touches the Docker socket, and it only ever
-calls: create_container, start, stop, remove, inspect, list, logs. There is no
-exec, no attach, no commit, no image build - the manager has no way to run code
+calls: create_container, start, stop, remove, inspect, list, logs,
+get_archive (read-only file extraction), put_archive (writing a home directory
+into another session) and commit (publishing the main session as a template
+image). There is no exec and no attach: the manager has no way to RUN code
 inside a session container even if it were compromised through the API.
+Reading a file out of a session is not that: it copies bytes, it does not
+execute them. Committing a container is not that either: it snapshots the
+writable layer into an image, it runs nothing.
 
 The socket is mounted read-only in compose.yaml and fronted by the
 `docker-socket-proxy` container, which additionally blocks POST/DELETE on
@@ -12,7 +17,11 @@ destroy containers through the proxy either.
 """
 from __future__ import annotations
 
+import io
 import logging
+import os
+import tarfile
+import tempfile
 from typing import Any
 
 import docker
@@ -24,6 +33,46 @@ log = logging.getLogger("manager.docker")
 VNC_PORT_BASE = 5900
 VNC_PORT_MAX = 5999
 DISPLAY_BASE = 1
+
+# Capabilities a session container keeps.
+#
+# The desktop itself needs none of them, but `apt-get install` does: dpkg
+# unpacks files as their package owner (CHOWN), writes into /var/lib/dpkg and
+# /etc (DAC_OVERRIDE), sets the setuid bit (FSETID), sets file capabilities
+# (SETFCAP) and runs maintainer scripts as other users (SETUID/SETGID).
+#
+# Everything else stays dropped: no SYS_ADMIN (so no mount, no namespace
+# games), no NET_ADMIN, no SYS_PTRACE, no SYS_MODULE. The set is deliberately
+# the shortest one that makes `sudo apt-get install` work.
+SESSION_CAPABILITIES = [
+    "CHOWN",
+    "DAC_OVERRIDE",
+    "FOWNER",
+    "FSETID",
+    "SETGID",
+    "SETUID",
+    "SETFCAP",
+    "SYS_CHROOT",
+    "KILL",
+    "AUDIT_WRITE",
+]
+
+# Upper bound for one archive extraction (a directory listing or one file).
+# The Docker API has no way to ask for a partial tar, so the whole thing is
+# buffered; this keeps a huge home directory from eating the manager's RAM.
+MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
+
+# Upper bound for the home directory copied from the main session into a new
+# session. A desktop can legitimately keep installers, caches and user files
+# in HOME, so 256 MiB was too small for normal use. The bytes travel through
+# the manager as a tar in a temporary file, so retain a generous safety cap.
+MAX_TEMPLATE_COPY_BYTES = 1024 * 1024 * 1024
+
+# Tag prefix of the published template images.
+TEMPLATE_TAG_PREFIX = "template-"
+
+# The home directory of a session. It is a Docker volume of its own.
+SESSION_HOME = "/home/desktop"
 
 # Label carried by every container the manager creates. It is the ONLY reliable
 # way to tell a session apart from the compose services, and it is what the
@@ -158,6 +207,13 @@ class DockerControl:
             "VNC_RESOLUTION": resolution,
             "VNC_PORT": str(vnc_port),
             "HOME": "/home/desktop",
+            # TMPDIR is the session's own home volume, NOT /tmp. The
+            # container's /tmp is a small RAM-backed tmpfs (noexec), and every
+            # "curl | bash" installer needs hundreds of MB of scratch space
+            # there - the opencode CLI alone unpacks to ~300 MB, which does not
+            # fit in 64 MB and would eat the session's RAM instead. The home
+            # volume is disk-backed and private to this session.
+            "TMPDIR": "/home/desktop/.tmp",
         }
         if vnc_password:
             env["VNC_PASSWORD"] = vnc_password
@@ -188,8 +244,18 @@ class DockerControl:
             "blkio_weight": blkio_weight if blkio_weight and not cgroup_v2 else None,
             "pids_limit": pids_limit if pids_limit > 0 else None,
             "restart_policy": {"Name": "unless-stopped"},
-            "security_opt": ["no-new-privileges:true"],
+            # no-new-privileges is deliberately NOT set on a session: it blocks
+            # setuid binaries, and without it `sudo` cannot become root inside
+            # the session, so `sudo apt-get install` would fail with a
+            # privilege error instead of installing the package. The session
+            # is a throwaway desktop with a volume of its own; it reaches the
+            # internet and the Docker network it is attached to, and nothing
+            # else - no docker socket, no host mounts, hard resource limits.
+            #
+            # CapDrop=ALL stays, and only the capabilities dpkg needs are
+            # added back (see SESSION_CAPABILITIES).
             "cap_drop": ["ALL"],
+            "cap_add": list(SESSION_CAPABILITIES),
             "read_only": False,
             "tmpfs": {"/tmp": f"rw,size={tmpfs_mb}m,mode=1777"} if tmpfs_mb else {},
         }
@@ -412,6 +478,74 @@ class DockerControl:
             "cpu_percent": round(cpu_pct, 2),
         }
 
+    # --------------------------------------------------------------- files
+    def _archive(self, container: str, path: str) -> bytes:
+        """The raw tar the Docker API returns for a path inside a container.
+
+        The tar is rooted at the BASENAME of the requested path, exactly like
+        `docker cp container:/dir/. ./here` does: asking for /home/desktop
+        yields entries named "desktop/...", asking for a file yields that one
+        file. The caller works with that shape.
+        """
+        if not self.available:
+            raise DockerUnavailable("Docker daemon is unavailable")
+        try:
+            stream, _stat = self.client.containers.get(container).get_archive(path)
+            data = b"".join(stream)
+        except NotFound:
+            raise FileNotFoundError(path)
+        except DockerException as exc:
+            raise DockerUnavailable(f"cannot read {path} from {container}: {exc}") from exc
+        if len(data) > MAX_ARCHIVE_BYTES:
+            raise DockerUnavailable(
+                f"{path} is larger than the {MAX_ARCHIVE_BYTES // (1024 * 1024)} MiB "
+                "limit for a single download"
+            )
+        return data
+
+    def list_directory(self, container: str, path: str) -> list[dict[str, Any]]:
+        """The direct children of a directory inside a session container.
+
+        Only the first level is reported: the tar contains the whole subtree
+        (the Docker API offers no partial read), but a file browser must not
+        drown in .cache/fontconfig.
+        """
+        data = self._archive(container, path)
+        root = path.rstrip("/").rsplit("/", 1)[-1]
+        entries: list[dict[str, Any]] = []
+        with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+            for member in tar.getmembers():
+                name = member.name.lstrip("./")
+                if name == root:
+                    continue
+                if not name.startswith(root + "/"):
+                    continue
+                relative = name[len(root) + 1:]
+                if not relative or "/" in relative:
+                    continue          # deeper level: not a direct child
+                entries.append(
+                    {
+                        "name": relative,
+                        "is_dir": member.isdir(),
+                        "size": member.size,
+                        "mode": member.mode,
+                        "mtime": member.mtime,
+                    }
+                )
+        entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
+        return entries
+
+    def read_file(self, container: str, path: str) -> bytes:
+        """The content of one file inside a session container."""
+        data = self._archive(container, path)
+        with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+            for member in tar.getmembers():
+                if member.isfile():
+                    handle = tar.extractfile(member)
+                    if handle is not None:
+                        return handle.read()
+        raise FileNotFoundError(path)
+
     # ------------------------------------------------------------- volumes
     def volume_exists(self, name: str) -> bool:
         if not self.available:
@@ -441,3 +575,167 @@ class DockerControl:
     # NOTE: no network mutation here on purpose. NETWORKS=0 on the socket proxy
     # and the manager only ever attaches a session to a network Compose has
     # already created.
+
+    # ------------------------------------------------------------ templates
+    def image_exists(self, name: str) -> bool:
+        if not self.available:
+            return False
+        try:
+            self.client.images.get(name)
+            return True
+        except (NotFound, DockerException):
+            return False
+
+    def remove_image(self, name: str) -> bool:
+        """Delete an image. Docker refuses while a container was made from it."""
+        if not self.available:
+            return False
+        try:
+            self.client.images.remove(name, force=False)
+            log.info("removed image %s", name)
+            return True
+        except NotFound:
+            return False
+        except DockerException as exc:
+            log.info("image %s is still in use, keeping it: %s", name, exc)
+            return False
+
+    def writable_size(self, container: str) -> int | None:
+        """Size of the container's writable layer, in bytes.
+
+        The writable layer is exactly what `sudo apt-get install` changes, so
+        its size says whether the programs of the main session changed since
+        the template was published. None means "cannot tell" - the caller then
+        republishes.
+        """
+        if not self.available:
+            return None
+        try:
+            # The low-level API is the only one that asks for the sizes.
+            for entry in self.client.api.containers(all=True, size=True):
+                names = entry.get("Names") or []
+                if entry.get("Id") == container or any(
+                    n.lstrip("/") == container for n in names
+                ):
+                    return int(entry.get("SizeRw") or 0)
+        except DockerException as exc:
+            log.warning("cannot read the writable size of %s: %s", container, exc)
+        return None
+
+    def commit_template(self, container: str, image: str, base_image: str) -> str:
+        """Publish a session container as the image new sessions are created from.
+
+        The writable layer of the container - everything `sudo apt-get install`
+        put there - becomes the new image, so a session created from it starts
+        with the same programs.
+
+        The image CONFIGURATION comes from the base image, not from the
+        container: the container carried session-specific variables
+        (VNC_PORT, VNC_PASSWORD, DISPLAY_NUM) and baking them into the
+        template would make every clone ask for a password nobody knows.
+        """
+        if not self.available:
+            raise DockerUnavailable("Docker daemon is unavailable")
+        repository, _, tag = image.partition(":")
+        if not repository or not tag:
+            raise ValueError(f"a template image must be repository:tag, got {image!r}")
+        try:
+            base_config = self.client.images.get(base_image).attrs.get("Config") or {}
+        except (NotFound, DockerException) as exc:
+            raise DockerUnavailable(f"cannot read the base image {base_image}: {exc}") from exc
+        conf: dict[str, Any] = {}
+        for key in ("Cmd", "Entrypoint", "User", "WorkingDir", "Env"):
+            value = base_config.get(key)
+            if value:
+                conf[key] = value
+        try:
+            self.client.api.commit(
+                container,
+                repository=repository,
+                tag=tag,
+                message=f"template published from session {container}",
+                conf=conf,
+                pause=True,
+            )
+        except DockerException as exc:
+            raise DockerUnavailable(f"cannot publish the template image {image}: {exc}") from exc
+        log.info("published template image %s from %s", image, container)
+        return image
+
+    def copy_home(self, src_container: str, dst_container: str, path: str = SESSION_HOME) -> int:
+        """Copy the home directory of one session into another one.
+
+        The Docker API has no "copy between volumes" call, so the bytes travel
+        through the manager as a tar: the source archive is read into a
+        temporary file, the root directory the API adds is stripped (the
+        archive is rooted at the base name of the requested path, while
+        put_archive extracts INTO the target directory), and the result is
+        written into the destination container - where that path IS the
+        destination session's own volume.
+
+        Ownership and timestamps travel with the archive, so the copied files
+        belong to the session user (uid 1000) exactly like the originals.
+        Writing into the volume before the container starts is safe: Docker
+        fills the volume from the image at start, but it does not overwrite
+        files that are already there.
+        """
+        if not self.available:
+            raise DockerUnavailable("Docker daemon is unavailable")
+        try:
+            source = self.client.containers.get(src_container)
+            target = self.client.containers.get(dst_container)
+        except (NotFound, DockerException) as exc:
+            raise DockerUnavailable(f"cannot copy the home directory: {exc}") from exc
+
+        src_tmp = tempfile.NamedTemporaryFile(prefix="wd-src-", suffix=".tar", delete=False)
+        dst_tmp = tempfile.NamedTemporaryFile(prefix="wd-dst-", suffix=".tar", delete=False)
+        try:
+            stream, _ = source.get_archive(path)
+            written = 0
+            for chunk in stream:
+                written += len(chunk)
+                if written > MAX_TEMPLATE_COPY_BYTES:
+                    raise DockerUnavailable(
+                        f"the home directory of {src_container} is larger than the "
+                        f"{MAX_TEMPLATE_COPY_BYTES // (1024 * 1024)} MiB limit for a clone"
+                    )
+                src_tmp.write(chunk)
+            src_tmp.flush()
+            src_tmp.seek(0)
+
+            root = path.rstrip("/").rsplit("/", 1)[-1]
+            count = 0
+            with tarfile.open(fileobj=src_tmp, mode="r|") as tar_in:
+                with tarfile.open(fileobj=dst_tmp, mode="w|") as tar_out:
+                    for member in tar_in:
+                        name = member.name
+                        if name.startswith("./"):
+                            name = name[2:]
+                        if name == root:
+                            continue          # the root directory itself
+                        prefix = root + "/"
+                        if not name.startswith(prefix):
+                            continue
+                        member.name = name[len(prefix):]
+                        if member.isfile():
+                            tar_out.addfile(member, tar_in.extractfile(member))
+                        else:
+                            tar_out.addfile(member)
+                        count += 1
+            dst_tmp.flush()
+            dst_tmp.seek(0)
+
+            target.put_archive(path, dst_tmp)
+            log.info(
+                "copied %d entries of %s from %s to %s",
+                count, path, src_container, dst_container,
+            )
+            return count
+        except DockerException as exc:
+            raise DockerUnavailable(f"cannot copy the home directory: {exc}") from exc
+        finally:
+            for tmp in (src_tmp, dst_tmp):
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass

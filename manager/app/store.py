@@ -34,6 +34,11 @@ FAILED = "failed"
 
 ACTIVE_STATES = {CREATING, STARTING, RUNNING, STOPPING}
 
+# A session is either an ordinary desktop or THE main one - the template every
+# new session is cloned from. At most one session carries the MAIN role.
+ROLE_NORMAL = "normal"
+ROLE_MAIN = "main"
+
 
 @dataclass
 class Session:
@@ -50,6 +55,9 @@ class Session:
     memory_limit_mb: int = 0
     cpu_limit: float = 0.0
     url_path: str = ""
+    # "main" for the one session new sessions are cloned from, "normal" for
+    # everything else.
+    role: str = ROLE_NORMAL
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     stopped_at: float | None = None
@@ -76,6 +84,7 @@ class Session:
             "started_at": self.started_at,
             "memory_limit_mb": self.memory_limit_mb,
             "cpu_limit": self.cpu_limit,
+            "role": self.role,
         }
 
 
@@ -164,18 +173,65 @@ class SessionStore:
     def active(self) -> list[Session]:
         return self.list(ACTIVE_STATES)
 
+    def main_session(self) -> Session | None:
+        """The session new sessions are cloned from, if one was designated."""
+        with self._lock:
+            for s in self._cache.values():
+                if s.role == ROLE_MAIN:
+                    return s
+        return None
+
+    def set_role(self, session_id: str, role: str) -> Session | None:
+        """Give one session the MAIN role (or take it away).
+
+        Promoting demotes the previous main in the same step: there is exactly
+        one template, and two sessions claiming it would make the inheritance
+        depend on the order the sessions were listed in.
+        """
+        with self._lock:
+            target = self._cache.get(session_id)
+            if target is None:
+                return None
+            if role == ROLE_MAIN:
+                for s in self._cache.values():
+                    if s.id != session_id and s.role != ROLE_NORMAL:
+                        s.role = ROLE_NORMAL
+                        self._persist(s)
+            target.role = role
+            self._persist(target)
+            return target
+
     def adopt(self, session: Session) -> None:
         """Put a discovered-but-unknown session into the store."""
         with self._lock:
             self._cache[session.id] = session
             self._persist(session)
 
-    def reconcile(self, known_ids: set[str]) -> list[Session]:
-        """Return sessions whose container vanished; mark them stopped."""
+    def reconcile(self, known_ids: set[str], stale_after_s: float = 0.0) -> list[Session]:
+        """Return sessions whose container vanished; mark them stopped.
+
+        `stale_after_s` also covers the other direction: a session that is
+        still CREATING or STARTING but whose container does not exist (any
+        more) can never become healthy. Without this such a record would stay
+        "creating" forever - the manager was killed between the store write
+        and the container creation - and the UI would show a session that
+        does not exist and never will.
+        """
         orphans: list[Session] = []
+        now = time.time()
         with self._lock:
             for sid, s in list(self._cache.items()):
                 if s.state in (CREATING, STARTING, STOPPING):
+                    if s.state not in (CREATING, STARTING):
+                        continue
+                    if sid in known_ids:
+                        continue
+                    if stale_after_s <= 0 or (now - s.created_at) < stale_after_s:
+                        continue
+                    s.state = FAILED
+                    s.error = "the container was never created"
+                    self._persist(s)
+                    orphans.append(s)
                     continue
                 if sid not in known_ids and s.state == RUNNING:
                     s.state = STOPPED

@@ -14,11 +14,13 @@ import asyncio
 import contextlib
 import logging
 import os
+import posixpath
 import re
 import socket
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, status
@@ -34,7 +36,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import auth, store as st
 from .config import Config
-from .docker_ctl import DockerControl, DockerUnavailable
+from .docker_ctl import SESSION_HOME, DockerControl, DockerUnavailable
 from .resources import ResourceMonitor
 from .scheduler import AdmissionController, periodic_notify
 from .service import CapacityError, SessionNotFound, SessionService
@@ -116,8 +118,12 @@ def build_app() -> FastAPI:
                 "MANAGER_USER/MANAGER_PASSWORD are unset. Set MANAGER_AUTO_LOGIN=1 "
                 "or provide credentials."
             )
-        service.reconcile()
+        # Resume FIRST, reconcile second: a session whose container vanished
+        # (removed by hand, or pruned after an image rebuild) is brought back
+        # with its volume and the current image. Reconcile then only sees the
+        # sessions that really could not be recovered.
         service.resume_interrupted()
+        service.reconcile()
         service.refresh_resource_ledger()
         log.info(
             "manager ready: network=%s image=%s memory/session=%s MiB",
@@ -249,6 +255,8 @@ def build_app() -> FastAPI:
             "sessions": [s.summary_dict() for s in visible],
             "total": len(items),
             "visible_to_you": len(visible),
+            # What a new session would be cloned from.
+            "template": service.template_info(),
         }
 
     @app.post("/api/sessions", status_code=status.HTTP_201_CREATED)
@@ -271,11 +279,20 @@ def build_app() -> FastAPI:
         wait = body.get("wait")
         max_wait = float(wait) if wait not in (None, "") else None
 
+        # A new session is cloned from the main one unless the caller asks
+        # for a clean one.
+        inherit = body.get("inherit", True)
+        if isinstance(inherit, str):
+            inherit = inherit.strip().lower() not in ("0", "false", "no", "off")
+        else:
+            inherit = bool(inherit)
+
         try:
             session = await service.create(
                 owner=p.username,
                 resolution=resolution,
                 max_wait=max_wait,
+                inherit=inherit,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
@@ -343,6 +360,25 @@ def build_app() -> FastAPI:
         _session_or_404(service, session_id, p)
         return service.delete(session_id, delete_data=delete_data)
 
+    @app.post("/api/sessions/{session_id}/make-main")
+    async def make_main(session_id: str, p=Depends(principal_of)) -> dict[str, Any]:
+        """Make this session the one new sessions are cloned from."""
+        _session_or_404(service, session_id, p)
+        session = service.set_main(session_id)
+        return {"session": session.summary_dict(), "template": service.template_info()}
+
+    @app.post("/api/sessions/{session_id}/unmake-main")
+    async def unmake_main(session_id: str, p=Depends(principal_of)) -> dict[str, Any]:
+        """Stop cloning new sessions from this one."""
+        _session_or_404(service, session_id, p)
+        session = service.unmake_main(session_id)
+        return {"session": session.summary_dict(), "template": service.template_info()}
+
+    @app.get("/api/template")
+    async def template_info(p=Depends(principal_of)) -> dict[str, Any]:
+        """The main session and the image new sessions are created from."""
+        return service.template_info()
+
     @app.get("/api/sessions/{session_id}/logs")
     async def session_logs(
         session_id: str,
@@ -358,6 +394,64 @@ def build_app() -> FastAPI:
         raw = docker.client.containers.get(attrs["Id"]).logs(tail=tail)
         text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
         return PlainTextResponse(text)
+
+    # ============================================================ session files
+    @app.get("/api/sessions/{session_id}/files")
+    async def list_session_files(
+        session_id: str,
+        path: str = Query(SESSION_HOME, description="directory inside the session"),
+        p=Depends(principal_of),
+    ) -> dict[str, Any]:
+        """List a directory of the session's home volume.
+
+        This is how a file gets out of the session: the manager reads it out
+        of the container and the browser downloads it.
+        """
+        _session_or_404(service, session_id, p)
+        target = _session_file_path(path)
+        session = service.get(session_id)
+        if docker is None or not docker.available:
+            raise HTTPException(status_code=503, detail="Docker daemon is unavailable")
+        try:
+            entries = await asyncio.to_thread(
+                docker.list_directory, session.container_name, target
+            )
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"no such directory: {target}")
+        except DockerUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {
+            "path": target,
+            "parent": _session_file_parent(target),
+            "entries": entries,
+        }
+
+    @app.get("/api/sessions/{session_id}/files/download")
+    async def download_session_file(
+        session_id: str,
+        path: str = Query(..., description="file inside the session"),
+        p=Depends(principal_of),
+    ) -> Response:
+        """Download one file of the session's home volume to the host."""
+        _session_or_404(service, session_id, p)
+        target = _session_file_path(path)
+        session = service.get(session_id)
+        if docker is None or not docker.available:
+            raise HTTPException(status_code=503, detail="Docker daemon is unavailable")
+        try:
+            data = await asyncio.to_thread(
+                docker.read_file, session.container_name, target
+            )
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"no such file: {target}")
+        except DockerUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        name = target.rsplit("/", 1)[-1]
+        return Response(
+            content=data,
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": _attachment(name)},
+        )
 
     # ============================================================ noVNC UI
     @app.get("/", include_in_schema=False)
@@ -472,6 +566,240 @@ _NOVNC_BOOTSTRAP_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
+# --------------------------------------------------------------------- JS
+# Clipboard bridge, both directions.
+#
+# HOST -> SESSION
+# noVNC never sends the browser's clipboard to the server on its own: the only
+# built-in path is the clipboard panel in the control bar, and the text has to
+# be pasted into that panel by hand.  This bridge hooks the paste gesture
+# instead, so the text copied on the host lands in the session's X clipboard
+# (RFB ClientCutText) and is pasted into whatever has the focus there.
+#
+# The guest chord is Shift+Ctrl+V: that is what LXTerminal means by
+# Edit -> Paste.  GTK applications inside the session take Ctrl+V instead,
+# but the clipboard holds the text either way, so they can paste it too.
+# The browser's own Ctrl+V is translated into the chord above, so the user
+# does not have to know the difference.
+#
+# SESSION -> HOST
+# The other direction has no built-in path at all: x11vnc sends the session's
+# CLIPBOARD selection as an RFB ServerCutText, noVNC catches it and puts the
+# text into its own panel - the browser's clipboard is never touched, so
+# "copy in Linux, paste on the host" does not work.  This bridge writes the
+# text into the browser's clipboard instead.
+#
+# The async Clipboard API only works in a secure context (https, or localhost)
+# and, in some browsers, only with a user gesture.  When it refuses, the text
+# is offered in a small panel with a button: the click is the gesture, and the
+# button also falls back to execCommand('copy') for a plain http page.
+_CLIPBOARD_JS = r"""
+// --- host clipboard -> session -------------------------------------------
+const CLIP_KEYSYM_SHIFT = 0xffe1;      // Shift_L
+const CLIP_KEYSYM_CONTROL = 0xffe3;    // Control_L
+const CLIP_KEYSYM_V = 0x0056;          // 'V', the shifted keysym: x11vnc
+                                       // derives the modifier state from
+                                       // the keysym, so the lowercase one
+                                       // would arrive without Shift.
+let clipKeyHeld = false;               // a swallowed key press still has a
+                                       // key release coming
+let clipHandled = false;               // the paste event of the last gesture
+                                       // has been dealt with
+let clipField = null;                  // the hidden field the browser
+                                       // pastes into
+
+function clipboardSendGuest(rfb) {
+    rfb.sendKey(CLIP_KEYSYM_SHIFT, 'ShiftLeft', true);
+    rfb.sendKey(CLIP_KEYSYM_CONTROL, 'ControlLeft', true);
+    rfb.sendKey(CLIP_KEYSYM_V, 'KeyV', true);
+    rfb.sendKey(CLIP_KEYSYM_V, 'KeyV', false);
+    rfb.sendKey(CLIP_KEYSYM_CONTROL, 'ControlLeft', false);
+    rfb.sendKey(CLIP_KEYSYM_SHIFT, 'ShiftLeft', false);
+}
+
+function clipboardPush(text) {
+    // The text has to be in the session BEFORE the paste key arrives there:
+    // both travel over the same RFB connection, in this order.
+    UI.rfb.clipboardPasteFrom(text);   // ClientCutText -> X clipboard
+    clipboardSendGuest(UI.rfb);        // Shift+Ctrl+V in the session
+    UI.showStatus('Clipboard sent to the session (' + text.length + ' chars)');
+}
+
+function clipboardIsPaste(ev) {
+    if (!UI.rfb) return false;
+    if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) return false;
+    // ev.code is the physical key and works with any keyboard layout, which
+    // matters: on a non-Latin layout ev.key is a letter of that layout.
+    if (ev.code !== 'KeyV' && ev.key !== 'v' && ev.key !== 'V') return false;
+    if (ev.repeat) return false;
+    // A text field keeps the browser's own paste: noVNC's clipboard panel
+    // sends the text to the server by itself.
+    const t = ev.target;
+    if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' ||
+              t.isContentEditable)) return false;
+    return true;
+}
+
+function clipboardFocusField() {
+    // The browser performs its paste into the focused field, and the canvas
+    // is not editable.  A hidden field takes the paste instead, and the
+    // paste event below picks the text up.
+    if (!clipField) {
+        clipField = document.createElement('textarea');
+        clipField.setAttribute('aria-hidden', 'true');
+        clipField.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;'
+                                + 'opacity:0;border:0;padding:0;';
+        document.body.appendChild(clipField);
+    }
+    clipField.focus();
+}
+
+function clipboardReleaseField() {
+    if (clipField) {
+        clipField.remove();
+        clipField = null;
+    }
+    if (UI.rfb) UI.rfb.focus();
+}
+
+document.addEventListener('paste', (ev) => {
+    // The host pasted.  This is the browser's own paste event, so it needs
+    // neither a secure context nor the clipboard-read permission - it works
+    // wherever the user pastes, including noVNC's clipboard panel.
+    const text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
+    if (clipField && ev.target === clipField) {
+        ev.preventDefault();            // the hidden field is ours
+    }
+    if (!text || !UI.rfb) return;
+    clipHandled = true;
+    clipboardPush(text);
+}, true);
+
+document.addEventListener('keydown', (ev) => {
+    if (!clipboardIsPaste(ev)) return;
+    // noVNC must not forward the chord: the text has to be in the session
+    // BEFORE the paste key arrives there.
+    ev.stopImmediatePropagation();
+    clipKeyHeld = true;
+    clipHandled = false;
+    clipboardFocusField();
+
+    // Fallback for the browsers that do not perform a paste into a field
+    // that was focused while the key was being pressed: read the clipboard
+    // through the async API instead.
+    setTimeout(async () => {
+        if (clipHandled) { clipboardReleaseField(); return; }
+        let text = null;
+        try {
+            if (navigator.clipboard && navigator.clipboard.readText) {
+                text = await navigator.clipboard.readText();
+            }
+        } catch (err) {
+            text = null;
+        }
+        clipboardReleaseField();
+        if (!text) {
+            UI.showStatus('Could not read the browser clipboard', 'warning');
+            // The session may still hold something: paste that.
+            clipboardSendGuest(UI.rfb);
+            return;
+        }
+        clipboardPush(text);
+    }, 250);
+}, true);
+
+document.addEventListener('keyup', (ev) => {
+    if (!clipKeyHeld) return;
+    if (ev.code !== 'KeyV' && ev.key !== 'v' && ev.key !== 'V') return;
+    clipKeyHeld = false;
+    ev.stopImmediatePropagation();
+}, true);
+
+// --- session clipboard -> host -------------------------------------------
+let clipOutPanel = null;               // the fallback panel
+let clipRfb = null;                    // the rfb the listener is attached to
+
+function clipboardOutPanel() {
+    if (!clipOutPanel) {
+        clipOutPanel = document.createElement('div');
+        clipOutPanel.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:10000;'
+            + 'max-width:440px;padding:12px 14px;border-radius:8px;display:none;'
+            + 'background:#1b2433;color:#e6ebf2;'
+            + 'box-shadow:0 10px 28px rgba(0,0,0,.55);'
+            + 'font:13px/1.45 system-ui,Segoe UI,Roboto,sans-serif;';
+        document.body.appendChild(clipOutPanel);
+    }
+    return clipOutPanel;
+}
+
+function clipboardOutCopy(text) {
+    // execCommand('copy') is the only thing that works on a plain http page
+    // (an IP address, for instance): the text has to sit in a focused field.
+    const field = document.createElement('textarea');
+    field.value = text;
+    field.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+    document.body.appendChild(field);
+    field.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+    field.remove();
+    if (ok) {
+        clipboardOutPanel().style.display = 'none';
+        UI.showStatus('Clipboard from the session copied to the host');
+    } else {
+        UI.showStatus('Could not write to the browser clipboard', 'warning');
+    }
+}
+
+function clipboardOutOffer(text) {
+    const panel = clipboardOutPanel();
+    panel.textContent = '';
+    const title = document.createElement('div');
+    title.textContent = 'Text copied in the session - put it on the host clipboard:';
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'max-height:160px;overflow:auto;margin:8px 0;padding:8px;'
+        + 'white-space:pre-wrap;word-break:break-word;'
+        + 'background:#111823;border-radius:4px;';
+    pre.textContent = text.length > 2000 ? text.slice(0, 2000) + '...' : text;
+    const copy = document.createElement('button');
+    copy.textContent = 'Copy to clipboard';
+    copy.style.cssText = 'background:#245c40;color:#d9f5e6;border:0;border-radius:6px;'
+        + 'padding:6px 12px;cursor:pointer;font:inherit;';
+    copy.addEventListener('click', () => clipboardOutCopy(text));
+    const close = document.createElement('button');
+    close.textContent = 'Close';
+    close.style.cssText = 'background:#243044;color:#e6ebf2;border:0;border-radius:6px;'
+        + 'padding:6px 12px;margin-left:8px;cursor:pointer;font:inherit;';
+    close.addEventListener('click', () => { panel.style.display = 'none'; });
+    panel.append(title, pre, copy, close);
+    panel.style.display = 'block';
+}
+
+function clipboardOut(text) {
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+            UI.showStatus('Clipboard from the session copied to the host ('
+                          + text.length + ' chars)');
+            clipboardOutPanel().style.display = 'none';
+        }).catch(() => clipboardOutOffer(text));
+    } else {
+        clipboardOutOffer(text);
+    }
+}
+
+// The rfb object appears when the connection is established and is replaced
+// on every reconnect, so the listener is (re)attached by polling for it.
+function clipboardHook() {
+    if (!UI.rfb || UI.rfb === clipRfb) return;
+    clipRfb = UI.rfb;
+    clipRfb.addEventListener('clipboard', (ev) => {
+        clipboardOut(ev.detail ? ev.detail.text : '');
+    });
+}
+setInterval(clipboardHook, 500);
+"""
+
 
 def _novnc_bootstrap(html: str, ws_url: str) -> str:
     """Replace noVNC's startup block with one that always autoconnects.
@@ -505,10 +833,6 @@ def _novnc_bootstrap(html: str, ws_url: str) -> str:
         "    // alive, so retrying is almost always the right answer.\n"
         "    reconnect: true,\n"
         "    reconnect_delay: 2000,\n"
-        "    // noVNC should sync the host clipboard with the X clipboard inside\n"
-        "    // the session (ClientCutText / ServerCutText over RFB). x11vnc on the\n"
-        "    // session side must be started with -clipboard and xclip/xsel installed.\n"
-        "    clipboard: true,\n"
         "};\n"
         "// Scaling is a default, not mandatory: the window is rarely as large as\n"
         "// the session, and without it the browser grows scrollbars around the\n"
@@ -524,7 +848,8 @@ def _novnc_bootstrap(html: str, ws_url: str) -> str:
         "    }\n"
         "}\n"
         "UI.start({ settings: { defaults: defaults, mandatory: mandatory } });\n"
-        "</script>\n"
+        + _CLIPBOARD_JS
+        + "</script>\n"
     )
     if "</head>" in html:
         return html.replace("</head>", script + "</head>", 1)
@@ -578,6 +903,52 @@ def _valid_resolution(value: str) -> bool:
     return 640 <= w <= 3840 and 480 <= h <= 2160 and w % 8 == 0 and h % 8 == 0
 
 
+# The home volume of a session: the only place the file API may read from.
+# The Docker API extracts files as root inside the container, so without this
+# boundary /etc/shadow would be downloadable too.
+# SESSION_HOME itself is defined in docker_ctl, next to the code that copies
+# one session's home into another.
+
+
+def _session_file_path(raw: str) -> str:
+    """Normalise a path and keep it inside the session's home volume."""
+    raw = (raw or "").strip()
+    if not raw:
+        return SESSION_HOME
+    if not raw.startswith("/"):
+        raw = "/" + raw
+    path = posixpath.normpath(raw)
+    if path != SESSION_HOME and not path.startswith(SESSION_HOME + "/"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"path must be inside {SESSION_HOME}",
+        )
+    return path
+
+
+def _session_file_parent(path: str) -> str | None:
+    """The directory to go up to, or None at the top of the home volume."""
+    parent = posixpath.dirname(path)
+    if parent == SESSION_HOME or not parent.startswith(SESSION_HOME):
+        return None
+    return parent
+
+
+def _attachment(name: str) -> str:
+    """Content-Disposition for a download.
+
+    The plain filename has to be ASCII (HTTP headers are latin-1), the real
+    name goes into filename* (RFC 5987), so a file called "шпаргалка.txt"
+    keeps its name in the browser. Characters that could break the header are
+    replaced.
+    """
+    plain = name.encode("ascii", "replace").decode("ascii")
+    plain = "".join(
+        ch if ch.isprintable() and ch not in '"\\' else "_" for ch in plain
+    ) or "download"
+    return f"attachment; filename=\"{plain}\"; filename*=UTF-8''{quote(name, safe='')}"
+
+
 async def _reconcile_loop(service: SessionService) -> None:
     while True:
         await asyncio.sleep(20)
@@ -615,11 +986,27 @@ _SESSIONS_HTML = """<!doctype html>
  .empty{color:#8a97a8;padding:24px 0}
  .age{color:#8a97a8;font-size:12px;white-space:nowrap}
  code{background:#1d2532;padding:2px 6px;border-radius:4px}
+ /* The main session: the one every new session is cloned from. */
+ .card{border:1px solid #2c3a4f;border-radius:10px;padding:14px 16px 6px;
+       margin:0 0 22px;background:#171e2b}
+ .card-head{display:flex;align-items:baseline;gap:12px;margin-bottom:6px}
+ .card-head b{font-size:15px}
+ .card table{max-width:none}
+ .tag{font-size:11px;padding:2px 8px;border-radius:10px;background:#173d2b;color:#63d29a}
 </style></head><body>
 <h1>Web Linux Desktop</h1>
-<p class="sub">Session manager - one LXDE desktop per container, reached over noVNC.</p>
+<p class="sub">Session manager - one LXDE desktop per container, reached over noVNC. The main session above is the template every new session is cloned from.</p>
 <p style="margin:0 0 20px"><button id="mk" style="font-size:15px;padding:8px 16px">+ Start a desktop</button>
  <span id="msg" class="sub" style="margin-left:10px"></span></p>
+ <div class="card">
+ <div class="card-head"><b>Main session</b><span class="tag">template</span>
+ <span class="sub">every new session is cloned from it - its files, its settings and its
+ programs. Sessions that already exist are not touched.</span></div>
+ <table><thead><tr><th>Session</th><th>Owner</th><th>State</th><th>Resolution</th>
+ <th>Limits</th><th>Uptime</th><th>Actions</th></tr></thead><tbody id="main-b">
+ <tr><td colspan="7" class="empty">Loading...</td></tr></tbody></table>
+ <p class="sub" id="main-info" style="margin:10px 0 8px"></p>
+ </div>
 <table id="t"><thead><tr><th>Session</th><th>Owner</th><th>State</th><th>Resolution</th>
 <th>Limits</th><th>Uptime</th><th>Actions</th></tr></thead><tbody id="b">
 <tr><td colspan="7" class="empty">Loading...</td></tr></tbody></table>
@@ -671,6 +1058,10 @@ async function act(id,verb,q){
       (det?(typeof det==='string'?': '+det:': '+JSON.stringify(det)):'');
   }else if(verb==='DELETE'){
     msg.textContent='session '+id+' deleted'+(d&&d.note?' - '+d.note:'');
+  }else if(verb==='make-main'){
+    msg.textContent='session '+id+' is now the main session - new sessions are cloned from it';
+  }else if(verb==='unmake-main'){
+    msg.textContent='session '+id+' is no longer the main session';
   }else{
     msg.textContent=verb+' ok: '+id;
   }
@@ -692,40 +1083,66 @@ function actions(s){
     ${btn('Start','start',!busy&&!running)}
     ${btn('Stop','stop',running)}
     ${btn('Restart','restart',running)}
+    ${s.role==='main'?btn('Unassign','unmake-main',true):btn('Make main','make-main',true)}
     ${btn('Delete','DELETE',true)}
   </div>`;
 }
 
+function row(s){
+  const since=s.started_at||s.created_at;
+  const age=since?Math.max(0,Math.round((Date.now()/1000-since)/60))+' min':'-';
+  return `<tr>
+  <td><code>${s.id}</code></td><td>${s.owner}</td>
+  <td><span class="state ${s.state}">${s.state}</span></td>
+  <td>${s.resolution}</td>
+  <td>${s.memory_limit_mb} MiB / ${s.cpu_limit} CPU</td>
+  <td class="age">${age}</td>
+  <td>${actions(s)}</td></tr>`;
+}
+
+function ago(ts){
+  if(!ts) return 'never';
+  const m=Math.max(0,Math.round((Date.now()/1000-ts)/60));
+  return m<1?'just now':m+' min ago';
+}
+
+// Wire the buttons by delegation: the row HTML is regenerated every 5s,
+// so per-node listeners would have to be re-attached constantly.
+function wire(body){
+  for(const el of body.querySelectorAll('button[data-verb]')){
+    el.addEventListener('click',()=>{
+      const id=el.dataset.id, verb=el.dataset.verb;
+      if(verb==='DELETE'){
+        if(!confirm('Delete session '+id+' completely? The desktop, its home volume and every file in it are deleted forever and cannot be recovered.')) return;
+        act(id,'DELETE','?delete_data=true');
+      }else{
+        act(id,verb,'/'+verb);
+      }
+    });
+  }
+}
+
 async function load(){
-  const b=document.getElementById('b');
+  const b=document.getElementById('b'), mb=document.getElementById('main-b');
   try{
     const r=await fetch('/api/sessions',{headers:{'Accept':'application/json'}});
     if(!r.ok) throw new Error('HTTP '+r.status);
     const d=await r.json();
-    if(!d.sessions.length){b.innerHTML='<tr><td colspan="7" class="empty">No sessions yet.</td></tr>';return;}
-    b.innerHTML=d.sessions.map(s=>{
-      const since=s.started_at||s.created_at;
-      const age=since?Math.max(0,Math.round((Date.now()/1000-since)/60))+' min':'-';
-      return `<tr>
-      <td><code>${s.id}</code></td><td>${s.owner}</td>
-      <td><span class="state ${s.state}">${s.state}</span></td>
-      <td>${s.resolution}</td>
-      <td>${s.memory_limit_mb} MiB / ${s.cpu_limit} CPU</td>
-      <td class="age">${age}</td>
-      <td>${actions(s)}</td></tr>`}).join('');
-    // Wire the buttons by delegation: the row HTML is regenerated every 5s,
-    // so per-node listeners would have to be re-attached constantly.
-    for(const el of b.querySelectorAll('button[data-verb]')){
-      el.addEventListener('click',()=>{
-        const id=el.dataset.id, verb=el.dataset.verb;
-        if(verb==='DELETE'){
-          if(!confirm('Delete session '+id+' completely? The desktop, its home volume and every file in it are deleted forever and cannot be recovered.')) return;
-          act(id,'DELETE','?delete_data=true');
-        }else{
-          act(id,verb,'/'+verb);
-        }
-      });
-    }
+    const sessions=d.sessions||[];
+    // The main session is shown above the list, not inside it.
+    const main=sessions.find(s=>s.role==='main');
+    const rest=sessions.filter(s=>s.role!=='main');
+    if(main){ mb.innerHTML=row(main); }
+    else{ mb.innerHTML='<tr><td colspan="7" class="empty">No main session yet - the first desktop you create will become the template.</td></tr>'; }
+    const t=d.template||{};
+    document.getElementById('main-info').textContent=main
+      ? (t.image
+          ? 'New sessions are cloned from it. Template image '+t.image+', published '+ago(t.published_at)+'.'
+          : 'New sessions are cloned from it. The template image is published when the first new session is created.')
+      : '';
+    if(!rest.length){b.innerHTML='<tr><td colspan="7" class="empty">No sessions yet.</td></tr>';}
+    else{b.innerHTML=rest.map(row).join('');}
+    for(const body of [mb,b]) wire(body);
   }catch(e){b.innerHTML='<tr><td colspan="7" class="empty">'+e.message+'</td></tr>';}
 }
 load(); setInterval(load,5000);
@@ -744,21 +1161,104 @@ def _novnc_html(session_id: str, base: str) -> str:
         color:#8a97a8;font:12px/30px system-ui,sans-serif;z-index:10;
         display:flex;justify-content:space-between;padding:0 12px}}
  #top a{{color:#6fb3ff;text-decoration:none}}
+ #top button{{background:#243044;color:#e6ebf2;border:1px solid #33415a;
+        border-radius:5px;padding:2px 9px;cursor:pointer;font:inherit;
+        line-height:20px;vertical-align:middle}}
  #screen{{position:absolute;top:30px;left:0;right:0;bottom:0;display:flex;
          align-items:center;justify-content:center}}
  iframe{{width:100%;height:100%;border:0;display:block}}
+ /* The Files panel is the way a file gets from the session to the host:
+    the manager reads it out of the container, the browser downloads it. */
+ #files{{position:fixed;top:30px;right:0;bottom:0;width:380px;z-index:20;
+        background:#141a24;color:#e6ebf2;display:flex;flex-direction:column;
+        border-left:1px solid #263041}}
+ #files[hidden]{{display:none}}
+ #files-head{{display:flex;align-items:center;gap:8px;padding:8px 12px;
+        border-bottom:1px solid #263041;font:12px system-ui,sans-serif;
+        color:#8a97a8}}
+ #files-path{{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+ #files-head button{{background:#243044;color:#e6ebf2;border:1px solid #33415a;
+        border-radius:5px;padding:2px 9px;cursor:pointer;font:inherit}}
+ #files-list{{flex:1;overflow:auto;padding:4px 0;font:13px system-ui,sans-serif}}
+ .frow{{display:flex;justify-content:space-between;gap:10px;padding:5px 12px}}
+ .frow:hover{{background:#1d2532}}
+ .frow a{{color:#6fb3ff;text-decoration:none}}
+ .fdir{{color:#d2c063;cursor:pointer}}
+ .fsize{{color:#8a97a8;font-size:11px;white-space:nowrap}}
 </style></head><body>
 <div id="top"><span>Desktop <b>{session_id}</b></span>
- <span><a href="/s/">all sessions</a> &middot; fullscreen works from the noVNC menu</span></div>
+ <span><a href="/s/">all sessions</a> &middot;
+  <button id="files-btn">Files</button> &middot; fullscreen works from the noVNC menu</span></div>
 <div id="screen">
  <iframe id="f" src="/s/{session_id}/vnc.html" allow="clipboard-read; clipboard-write"
          allowfullscreen></iframe>
 </div>
+<div id="files" hidden>
+ <div id="files-head"><span id="files-path">/home/desktop</span>
+  <button id="files-close">Close</button></div>
+ <div id="files-list"></div>
+</div>
 <script>
  // noVNC's own UI is enough; this wrapper only keeps the session list reachable
- // while the desktop fills the rest of the window.
-</script>
-</body></html>"""
+ // while the desktop fills the rest of the window - and adds the file panel
+ // that lets a file leave the session for the host.
+ const SID='{session_id}';
+ const panel=document.getElementById('files'),
+       list=document.getElementById('files-list'),
+       pathLabel=document.getElementById('files-path');
+ document.getElementById('files-btn').addEventListener('click',()=>openFiles(''));
+ document.getElementById('files-close').addEventListener('click',()=>panel.hidden=true);
+
+ function fmtSize(n){{
+   if(n<1024) return n+' B';
+   if(n<1048576) return (n/1024).toFixed(1)+' KB';
+   return (n/1048576).toFixed(1)+' MB';
+ }}
+
+ async function openFiles(path){{
+   panel.hidden=false;
+   list.textContent='Loading...';
+   try{{
+     const r=await fetch('/api/sessions/'+SID+'/files?path='+encodeURIComponent(path));
+     const d=await r.json();
+     if(!r.ok) throw new Error(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));
+     pathLabel.textContent=d.path;
+     list.textContent='';
+     if(d.parent){{
+       const up=document.createElement('span');
+       up.className='fdir'; up.textContent='.. up';
+       up.addEventListener('click',()=>openFiles(d.parent));
+       const row=document.createElement('div'); row.className='frow';
+       row.appendChild(up); list.appendChild(row);
+     }}
+     if(!d.entries.length){{
+       const empty=document.createElement('div');
+       empty.className='fsize'; empty.style.padding='6px 12px';
+       empty.textContent='(empty)';
+       list.appendChild(empty);
+     }}
+     const base=d.path.replace(/\\/$/,'');
+     for(const e of d.entries){{
+       const row=document.createElement('div'); row.className='frow';
+       const name=document.createElement(e.is_dir?'span':'a');
+       if(e.is_dir){{
+         name.className='fdir';
+         name.textContent=e.name+'/';
+         name.addEventListener('click',()=>openFiles(base+'/'+e.name));
+       }} else {{
+         name.href='/api/sessions/'+SID+'/files/download?path='
+                 +encodeURIComponent(base+'/'+e.name);
+         name.download=e.name;
+         name.textContent=e.name;
+       }}
+       const size=document.createElement('span'); size.className='fsize';
+       size.textContent=e.is_dir?'':fmtSize(e.size);
+       row.appendChild(name); row.appendChild(size);
+       list.appendChild(row);
+     }}
+   }}catch(err){{ list.textContent='Error: '+err.message; }}
+ }}
+</script></body></html>"""
 
 
 app = build_app()

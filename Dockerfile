@@ -31,13 +31,31 @@ ARG DEBIAN_FRONTEND=noninteractive
 #   lxde-core                   the LXDE desktop: startlxde, lxsession,
 #                               openbox (WM), lxpanel (panel + menu),
 #                               pcmanfm (desktop icons + file manager),
-#                               lxterminal, lxappearance, lxmenu-data,
+#                               lxterminal, lxmenu-data,
 #                               lxsession-logout, lxlock
+#                               (lxappearance is NOT part of lxde-core on
+#                               trixie - it is a separate GTK3 package)
 #   dbus, dbus-x11              session bus the desktop depends on
-#   tango-icon-theme            icon names used by the desktop shortcuts
+#   menu-xdg                    debian-menu.menu, without it the "Debian"
+#                               submenu of the application menu stays empty
+#   xdg-utils                   xdg-open: the file manager needs it to open a
+#                               document with the application of its choice
+#   libglib2.0-bin              gsettings, the only way to change the GTK3
+#                               icon theme without lxappearance
+#   tango-icon-theme            full-colour legacy icon names (terminal,
+#                               system-file-manager, gnome-log-out, ...)
+#   adwaita-icon-theme          the symbolic icon set GTK3 apps ask for
+#   librsvg2-common             the gdk-pixbuf SVG loader - WITHOUT it gdk-pixbuf
+#                               cannot decode a single SVG, so every scalable
+#                               icon (Tango's too) and every GTK3 theme asset
+#                               (bullet-symbolic.svg and friends) stays blank
 #   fonts-dejavu-core           minimal legible UI font
 #   procps, psmisc              pgrep/pkill used by the session supervisor
 #   x11-xserver-utils           xrandr (resolution helper)
+#   sudo                        the session user becomes root inside the
+#                               container: without it `sudo apt-get install`
+#                               fails and NOTHING can be installed
+#   ca-certificates, curl       https downloads (curl | bash installers)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       xvfb \
@@ -51,33 +69,102 @@ RUN apt-get update \
       lxterminal \
       dbus \
       dbus-x11 \
+      menu-xdg \
+      xdg-utils \
+      libglib2.0-bin \
       tango-icon-theme \
+      adwaita-icon-theme \
+      librsvg2-common \
       fonts-dejavu-core \
       procps \
       psmisc \
+      sudo \
+      ca-certificates \
+      curl \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /var/log/* /tmp/* /var/tmp/*
 
 # --- Size diet -------------------------------------------------------------
-# Debian's Xvfb hard-depends on the Mesa GL stack: libLLVM (~124 MB),
-# mesa-libgallium (~41 MB), libz3 (~27 MB). We run Xvfb with
-# "-extension GLX", so those drivers are never loaded - only libGL.so.1 and
-# libGLX.so.0 are, and those live in libgl1 / libglx0 which stay installed.
-# Also removed: adwaita-icon-theme (tango is our icon theme), the Ghostscript
-# stack (libspectre is only used by openbox for SVG/PDF theme artwork, the
-# stock LXDE theme renders fine without it), the C++ preprocessor and the
-# systemd daemon (we start dbus-daemon ourselves).
-# NOTE: libimlib2t64 MUST stay - openbox links against libImlib2.so.1.
-# lxpolkit is dropped too: polkit has no authority to act on inside a container
-# and its agent only puts a "No session for pid N" error dialog on the desktop.
-# Measured effect: 714 MB -> ~440 MB of installed packages.
-RUN dpkg --purge --force-depends --force-remove-reinstreq \
+# Five stacks are dead weight in a container, but apt cannot remove them on
+# its own - every one of them is a hard dependency of something we need:
+#
+#   Mesa GL    xvfb -> libgl1 -> libglx0 -> libglx-mesa0 -> mesa-libgallium
+#              -> libllvm19 (126 MB)
+#   Ghostscript libspectre1 -> libgs10 -> libgs10-common -> fonts-urw-base35
+#              (15 MB; only used by openbox for SVG/PDF window artwork)
+#   systemd    lxsession -> libpam-systemd -> systemd
+#   polkit     lxsession -> lxpolkit, lxsession-logout -> polkitd
+#   lightdm    light-locker -> lightdm (a display manager in a container?)
+#
+# At runtime none of them is used: Xvfb is started with "-extension GLX" and
+# never creates a GL context, openbox's stock theme is raster artwork, polkit
+# has no authority to act on inside a container (and the agent is disabled in
+# /etc/xdg/lxsession/LXDE/desktop.conf anyway) and there is no display manager -
+# the session is started by the entrypoint.
+#
+# light-locker itself stays: it ships /usr/bin/lxlock, and the LXDE logout
+# dialog offers "Lock Screen". A manual lock is a deliberate feature here (an
+# IDLE lock would be a support ticket, a manual one is not), and without
+# lightdm light-locker still locks the screen on its own. Only lightdm, the
+# display manager it merely recommends, goes.
+#
+# The purge therefore runs with --force-depends, and the dependencies it
+# leaves dangling are satisfied by a dummy provider package below, so the dpkg
+# database stays consistent and `apt-get install` still works inside the image.
+#
+# Kept on purpose: libgl1 + libglx0 + libglvnd0 (Xvfb links libGL.so.1 and
+# libGLX.so.0), libimlib2t64 (openbox links libImlib2.so.1), libxcb-shape0
+# (x11-utils needs it), libwayland-client0 and libepoxy0 (GTK3 needs them).
+#
+# adwaita-icon-theme is NOT removed any more: it is the only source of the
+# symbolic icons GTK3 asks for (view-refresh-symbolic, dialog-information-
+# symbolic, ...), and without them every menu, checkbox and toolbar button in
+# the session draws a blank placeholder.
+RUN dpkg --purge --force-all --force-remove-reinstreq \
       libgl1-mesa-dri libglx-mesa0 mesa-libgallium libllvm19 libz3-4 \
-      libglapi-mesa adwaita-icon-theme \
-      poppler-data libspectre1 ghostscript libgs10 yudit-common \
-      fonts-urw-base35 cpp-14-x86_64-linux-gnu systemd lxpolkit \
+      libglapi-mesa \
+      libgbm1 libdrm-amdgpu1 libdrm-intel1 libdrm2 libdrm-common \
+      libvulkan1 libwayland-server0 \
+      libxcb-dri3-0 libxcb-glx0 libxcb-present0 libxcb-randr0 \
+      poppler-data ghostscript libgs10 libgs10-common yudit-common \
+      fonts-urw-base35 libspectre1 \
+      systemd systemd-sysv libpam-systemd libsystemd-shared \
+      lxpolkit polkitd libpolkit-gobject-1-0 libpolkit-agent-1-0 \
+      lightdm \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /var/log/* /tmp/* /var/tmp/*
+
+# --- Dummy provider for the dependencies the purge leaves dangling ---------
+# See the size diet above. A package that ships no files but provides the
+# removed names keeps dpkg and apt consistent: without it the image reports
+# broken dependencies and every `apt-get install` inside it fails with
+# "Unmet dependencies".
+#
+#   libglx-mesa0            <- libglx0        (the GLX dispatch, kept)
+#   libspectre1 (= 0.2.3)   <- libimlib2t64   (openbox, kept)
+#   polkit-1-auth-agent     <- lxsession
+#   polkitd                 <- lxsession-logout
+#   default-dbus-session-bus<- dconf-service
+RUN set -eux; \
+    mkdir -p /tmp/stub/DEBIAN; \
+    printf '%s\n' \
+      'Package: webdesktop-slim-stub' \
+      'Version: 1.0' \
+      'Architecture: all' \
+      'Maintainer: Web Desktop <desktop@example.invalid>' \
+      'Provides: libglx-mesa0, libspectre1 (= 0.2.3), polkit-1-auth-agent, polkitd, default-dbus-session-bus' \
+      'Description: dummy provider for packages removed from this image' \
+      ' The Mesa GL stack, the Ghostscript CLI, the polkit agent, the systemd' \
+      ' daemon and the display manager are removed on purpose: Xvfb runs with' \
+      ' -extension GLX, polkit cannot act on anything inside a container and' \
+      ' there is no display manager. The packages that depend on them are' \
+      ' kept, so this package provides the removed names and keeps the dpkg' \
+      ' database consistent.' \
+      > /tmp/stub/DEBIAN/control; \
+    dpkg-deb --build /tmp/stub /tmp/webdesktop-slim-stub.deb >/dev/null; \
+    dpkg -i /tmp/webdesktop-slim-stub.deb >/dev/null; \
+    rm -rf /tmp/stub /tmp/webdesktop-slim-stub.deb; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 # =============================================================================
 #  STAGE 2 - runtime
@@ -99,7 +186,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     DISPLAY_NUM=1 \
     SCREEN_GEOMETRY=${RESOLUTION}x24 \
     VNC_RESOLUTION=${RESOLUTION} \
-    VNC_PORT=5900
+    VNC_PORT=5900 \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games
 
 # Clean filesystem of the package stage (no .deb cache, no apt lists)
 COPY --from=packages / /
@@ -124,6 +212,7 @@ RUN chmod 0755 /usr/local/bin/entrypoint.sh \
  && chmod 0755 /usr/local/bin/bootstrap.sh \
  && chmod 0755 /usr/local/bin/healthcheck.sh \
  && chmod 0755 /usr/local/bin/set-resolution \
+ && chmod 0755 /usr/local/bin/set-icon-theme \
  && chmod 0755 /usr/local/bin/lxde-restart \
  && chmod 0755 /opt/desktop-defaults/lxde-profile/bin/*
 
@@ -135,6 +224,23 @@ RUN groupadd -g "${USER_GID}" "${USERNAME}" \
  && chmod 0700 /run/user/${USER_UID} \
  && echo "${USERNAME}:!" | chpasswd \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/*
+
+# Passwordless sudo for the session user.
+#
+# A desktop where `sudo apt-get install` does not work is a desktop where
+# nothing can be installed - and installing software is a normal thing to do
+# in a session. The escalation is confined to the container: no docker socket,
+# no host mounts, no privileged mode, hard RAM/CPU/pids limits.
+#
+# The rule lives in a file of its own because sudo refuses to read a
+# sudoers.d entry with the wrong permissions, and because `visudo -c` has to
+# be able to check it at build time - a broken sudoers file would only show
+# up in the session, as "sudo: no passwordless access".
+RUN printf '%s ALL=(ALL) NOPASSWD:ALL\n' "${USERNAME}" > /etc/sudoers.d/desktop \
+ && chown root:root /etc/sudoers.d/desktop \
+ && chmod 0440 /etc/sudoers.d/desktop \
+ && grep -q '^@includedir /etc/sudoers.d' /etc/sudoers \
+ && visudo -c
 
 USER ${USERNAME}
 WORKDIR /home/${USERNAME}

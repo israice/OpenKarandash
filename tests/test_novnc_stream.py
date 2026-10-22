@@ -23,6 +23,7 @@ import socket
 import ssl
 import struct
 import sys
+import time
 import urllib.parse
 import zlib
 
@@ -225,8 +226,67 @@ class RFBOverWS:
         pixel = (pf[0], pf[1], pf[2], pf[3], pf[10], pf[11], pf[12], rmax, gmax, bmax)
         return w, h, pixel, name
 
-    def request_raw_framebuffer(self, x=0, y=0, w=None, h=None) -> tuple[int, int]:
+    def send_client_cut_text(self, text: str) -> None:
+        """ClientCutText (RFB message 6): what a viewer sends when the user
+        pastes into the session.  x11vnc turns it into the X clipboard."""
+        data = text.encode()
+        self.send(b"\x06" + b"\x00\x00\x00" + struct.pack(">I", len(data)) + data)
+
+    def set_raw_encoding(self) -> None:
+        """Ask for raw updates only, so the reader below can skip them."""
         self.send(struct.pack(">BBHi", 2, 0, 1, 0))              # SetEncodings raw
+
+    def wait_server_cut_text(self, timeout: float = 20.0, allow_empty: bool = False) -> str:
+        """Wait for a ServerCutText (RFB message 3).
+
+        That is what x11vnc sends when the CLIPBOARD selection inside the
+        session changes - the text the browser puts on the host clipboard.
+
+        An EMPTY cut text is what x11vnc sends when the selection is unset
+        (the owner died, nothing was ever copied): it carries no text, so it
+        is skipped unless the caller asks for it.
+        """
+        self.set_raw_encoding()
+        deadline = time.time() + timeout
+        previous = self.ws.sock.gettimeout()
+        self.ws.sock.settimeout(timeout)
+        try:
+            while time.time() < deadline:
+                msg = self.recv_exact(1)[0]
+                if msg == 3:                       # ServerCutText
+                    self.recv_exact(3)
+                    length = struct.unpack(">I", self.recv_exact(4))[0]
+                    text = self.recv_exact(length).decode("utf-8", "replace")
+                    if text or allow_empty:
+                        return text
+                    continue
+                if msg == 0:                       # FramebufferUpdate
+                    self.recv_exact(1)
+                    nrects = struct.unpack(">H", self.recv_exact(2))[0]
+                    for _ in range(nrects):
+                        _rx, _ry, rw, rh, enc = struct.unpack(">HHHHi", self.recv_exact(12))
+                        if enc != 0:
+                            raise RuntimeError(
+                                f"unexpected encoding {enc}: the client must ask "
+                                "for raw updates before reading the stream"
+                            )
+                        self.recv_exact(rw * rh * 4)
+                elif msg == 1:                     # SetColourMapEntries
+                    self.recv_exact(1)
+                    _first, ncolours = struct.unpack(">HH", self.recv_exact(4))
+                    self.recv_exact(ncolours * 6)
+                elif msg == 2:                     # Bell
+                    continue
+                else:
+                    raise RuntimeError(f"unexpected server message {msg}")
+        except (socket.timeout, TimeoutError) as exc:
+            raise TimeoutError("no ServerCutText within the timeout") from exc
+        finally:
+            self.ws.sock.settimeout(previous)
+        raise TimeoutError("no ServerCutText within the timeout")
+
+    def request_raw_framebuffer(self, x=0, y=0, w=None, h=None) -> tuple[int, int]:
+        self.set_raw_encoding()
         if w is None:
             w = h = 0xFFFF                                     # "as big as possible"
         self.send(struct.pack(">BBHHHH", 3, 0, x, y, w, h))
@@ -317,6 +377,10 @@ def main() -> int:
     ap.add_argument("--password", default="")
     ap.add_argument("--out", default="desktop.png")
     ap.add_argument("--expect-desktop", action="store_true")
+    ap.add_argument("--clipboard", default="",
+                    help="text to send as ClientCutText (what a browser paste does)")
+    ap.add_argument("--expect-clipboard", default="",
+                    help="text the session is expected to send back as ServerCutText")
     args = ap.parse_args()
 
     ws_url = args.ws
@@ -338,6 +402,31 @@ def main() -> int:
         rfb = RFBOverWS(ws)
         version = rfb.handshake(args.password)
         w, h, pixel, name = rfb.init()
+        if args.expect_clipboard:
+            # The other direction: the session sends its clipboard to the
+            # viewer. The clipboard inside the session is changed by the
+            # caller (a real user presses Ctrl+C), so this only waits for it.
+            try:
+                got = rfb.wait_server_cut_text(timeout=25)
+            except TimeoutError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 1
+            if got.strip() != args.expect_clipboard.strip():
+                print(
+                    f"ERROR: the session sent {got!r}, expected "
+                    f"{args.expect_clipboard!r}",
+                    file=sys.stderr,
+                )
+                return 1
+            print(f"ServerCutText received: {got!r}")
+            return 0
+        if args.clipboard:
+            rfb.send_client_cut_text(args.clipboard)
+            print(f"sent ClientCutText: {args.clipboard!r}")
+            # x11vnc processes the message in its input loop; give it a
+            # moment to take ownership of the X clipboard before the
+            # connection goes away.
+            time.sleep(1.5)
         (rw, rh), framebuffer = rfb.request_raw_framebuffer()
     except Exception as exc:  # noqa: BLE001
         print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)

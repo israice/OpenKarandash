@@ -6,6 +6,8 @@ Name[ru]=Перезапустить рабочий стол
 Comment=Restart the LXDE desktop session
 Comment[ru]=Перезапуск сеанса LXDE
 Exec=lxde-restart
-Icon=application-x-executable
+# "application-x-executable" is a generic diamond and said nothing about what
+# the shortcut does; this is the standard name for "the session itself".
+Icon=preferences-system-session
 Terminal=false
 Categories=System;

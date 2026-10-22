@@ -30,6 +30,13 @@ export XDG_CACHE_HOME="${HOME}/.cache"
 export NO_AT_BRIDGE=1
 export QT_QPA_PLATFORM=xcb
 
+# Scratch space lives in the session's home volume, not in /tmp: /tmp is a
+# small RAM-backed tmpfs (noexec), while "curl | bash" installers download
+# and unpack hundreds of megabytes there. The manager sets TMPDIR for the
+# container; this default covers a plain `docker run` of the image.
+export TMPDIR="${TMPDIR:-${HOME}/.tmp}"
+mkdir -p "${TMPDIR}"
+
 log() { printf '[session %s] %s\n' "${DISPLAY_NUM}" "$*"; }
 
 XVFB_PID=""; DE_PID=""; VNC_PID=""; DBUS_PID=""
@@ -131,6 +138,14 @@ start_stack() {
     -nevershared
     -repeat
     -xkb -noxdamage -nolookup
+    # Only the CLIPBOARD selection is sent to the browser. The PRIMARY
+    # selection changes on every text selection with the mouse, and pushing
+    # it would overwrite the host's clipboard every time the user selects
+    # something in the session. CLIPBOARD changes only on an explicit copy
+    # (Ctrl+C), which is what "copy out of the session" means. PRIMARY is
+    # still SET on the server when text arrives from the browser, so the
+    # middle-click paste inside the session keeps working.
+    -noprimary
     -desktop "Web Desktop ${DISPLAY_NUM}"
     -o /tmp/x11vnc.log
   )
@@ -148,7 +163,14 @@ start_stack() {
   fi
 
   log "starting x11vnc on port ${VNC_PORT}"
-  x11vnc "${vnc_args[@]}" >/dev/null 2>&1 &
+  # x11vnc owns the PRIMARY/CLIPBOARD selections through a window of its own
+  # (selwin), and it creates that window only after guess_dm_gone() decides
+  # that no display manager is running.  There is no display manager in this
+  # container, but the check still delays the window by ~45-60s after the
+  # first client connects - and until it exists the cut text sent by a client
+  # is silently dropped, so a paste in the first minute of a session does
+  # nothing.  "never" skips the wait.
+  X11VNC_AVOID_WINDOWS=never x11vnc "${vnc_args[@]}" >/dev/null 2>&1 &
   VNC_PID=$!
 
   for _ in $(seq 1 40); do

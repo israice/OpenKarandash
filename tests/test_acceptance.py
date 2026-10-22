@@ -374,6 +374,7 @@ def t08_limits(sid: str) -> None:
     published = docker_inspect(f"{PREFIX}-{sid}", "{{range $p,$c := .HostConfig.PortBindings}}{{$p}}{{end}}")
     mounts = docker_inspect(f"{PREFIX}-{sid}", "{{range .Mounts}}{{.Destination}} {{end}}")
     caps = docker_inspect(f"{PREFIX}-{sid}", "{{.HostConfig.CapDrop}}")
+    caps_add = docker_inspect(f"{PREFIX}-{sid}", "{{.HostConfig.CapAdd}}")
 
     ok(f"hard memory limit: {mem // 1048576} MiB") if mem else bad("no memory limit")
     ok(f"CPU quota: {cpu / 1e9:.2f} cores") if cpu else bad("no CPU quota")
@@ -386,6 +387,14 @@ def t08_limits(sid: str) -> None:
         bad(f"MemorySwap is {swap}, expected {mem} (equal to the memory limit)")
     ok("container is not privileged") if priv == "false" else bad("container IS privileged")
     ok("all capabilities dropped") if "ALL" in caps else bad(f"cap_drop = {caps}")
+    # apt-get install needs a few capabilities back (dpkg chowns files, sets
+    # the setuid bit, sets file capabilities). Nothing dangerous may return.
+    dangerous = {"SYS_ADMIN", "NET_ADMIN", "SYS_PTRACE", "SYS_MODULE", "DAC_READ_SEARCH"}
+    granted = {c for c in caps_add.replace("[", "").replace("]", "").split(",") if c}
+    if granted & dangerous:
+        bad(f"the session has dangerous capabilities: {sorted(granted & dangerous)}")
+    else:
+        ok(f"only the dpkg capabilities are added back: {sorted(granted)}")
     ok("no port is published to the host") if not published.strip() \
         else bad(f"session publishes {published}")
     ok("no docker socket inside the session") if "/var/run/docker.sock" not in mounts \
@@ -533,6 +542,263 @@ def t11_browser_path(sid: str) -> None:
         sys.stdout.flush()
 
 
+def t11b_clipboard(sid: str) -> None:
+    section("11b. the clipboard path (host paste -> session X clipboard)")
+    container = f"{PREFIX}-{sid}"
+
+    # 1. The viewer page must carry the bridge. noVNC on its own never sends
+    #    the browser's clipboard to the server, so without the bridge every
+    #    paste from the host is a no-op.
+    code, page = api("GET", f"/s/{sid}/vnc.html")
+    if code == 200 and isinstance(page, str) and "clipboardPasteFrom" in page:
+        ok("the viewer page forwards the browser clipboard into the session")
+    else:
+        bad("the viewer page has no clipboard bridge - a paste from the host "
+            "cannot reach the session")
+
+    # 2. x11vnc owns the PRIMARY/CLIPBOARD selections through a window of its
+    #    own.  Until that window exists the cut text sent by the client is
+    #    silently dropped, which is why the session must not wait for it.
+    selwin = docker("exec", container, "sh", "-c",
+                    "grep -c 'created selwin' /tmp/x11vnc.log 2>/dev/null").strip()
+    if selwin.isdigit() and int(selwin) > 0:
+        ok("x11vnc owns the X selection (its selection window exists)")
+    else:
+        bad("x11vnc has no selection window - pasted text is dropped")
+
+    # 3. The real thing: send a ClientCutText over the WebSocket, exactly
+    #    what the browser does on a paste, and read the X clipboard inside
+    #    the session.
+    text = f"wd-clipboard-{sid}"
+    proc = subprocess.run(
+        [sys.executable, str(HERE / "test_novnc_stream.py"),
+         "--url", f"{URL}/s/{sid}/", "--user", USER, "--password", PASSWORD,
+         "--out", str(ARTIFACTS / f"clipboard-{sid}.png"), "--clipboard", text],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        bad(f"could not send a cut text over the WebSocket (exit={proc.returncode})")
+        for line in (proc.stdout + proc.stderr).strip().splitlines():
+            info(line)
+        return
+
+    got = subprocess.run(
+        ["docker", "exec", container, "sh", "-c",
+         "DISPLAY=:$DISPLAY_NUM xclip -o -selection clipboard 2>/dev/null"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    if got == text:
+        ok(f"the pasted text reached the session clipboard: {got!r}")
+    else:
+        bad(f"the session clipboard holds {got!r}, expected {text!r}")
+
+
+def t11b2_clipboard_out(sid: str) -> None:
+    section("11b2. the clipboard path (session copy -> host clipboard)")
+    container = f"{PREFIX}-{sid}"
+
+    # 1. The viewer page must carry the OTHER bridge. noVNC catches the
+    #    session's clipboard and puts it into its own panel; without a bridge
+    #    to the browser's clipboard, "copy in Linux, paste on the host" does
+    #    not work at all.
+    code, page = api("GET", f"/s/{sid}/vnc.html")
+    if code == 200 and isinstance(page, str) and "writeText" in page:
+        ok("the viewer page copies the session clipboard out to the browser")
+    else:
+        bad("the viewer page has no path from the session clipboard to the "
+            "browser - nothing can be copied out of the session")
+
+    # 2. The real thing: copy text INSIDE the session and read it back as a
+    #    ServerCutText over the WebSocket - exactly what the browser receives
+    #    and puts on the host clipboard.
+    text = f"wd-clipboard-out-{sid}"
+    client = subprocess.Popen(
+        [sys.executable, str(HERE / "test_novnc_stream.py"),
+         "--url", f"{URL}/s/{sid}/", "--user", USER, "--password", PASSWORD,
+         "--out", str(ARTIFACTS / f"clipboard-out-{sid}.png"),
+         "--expect-clipboard", text],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    # The client has to be connected before the clipboard changes: x11vnc
+    # pushes the change to the clients it has.
+    time.sleep(4)
+    try:
+        subprocess.run(
+            ["docker", "exec", "-i", container, "sh", "-c",
+             "DISPLAY=:$DISPLAY_NUM xclip -selection clipboard -i"],
+            input=text.encode(), capture_output=True, timeout=20,
+        )
+    except subprocess.TimeoutExpired:
+        bad("could not write the clipboard inside the session")
+        client.kill()
+        return
+    try:
+        out, _ = client.communicate(timeout=60)
+    except subprocess.TimeoutExpired:
+        client.kill()
+        bad("the client did not receive the session clipboard in time")
+        return
+    if client.returncode == 0:
+        ok(f"the clipboard of the session reaches the browser: {text!r}")
+    else:
+        bad("the clipboard of the session did not reach the browser")
+        for line in (out or "").strip().splitlines():
+            info(line)
+
+
+def t11d_files(sid: str) -> None:
+    section("11d. files get out of the session (list + download)")
+    container = f"{PREFIX}-{sid}"
+    name = f"wd-file-{sid}.txt"
+    content = f"file-from-session-{sid}\n"
+
+    subprocess.run(
+        ["docker", "exec", "-u", "desktop", container, "sh", "-c",
+         f"printf '%s' '{content}' > /home/desktop/{name}"],
+        capture_output=True,
+    )
+
+    code, payload = api("GET", f"/api/sessions/{sid}/files?path=/home/desktop")
+    entries = payload.get("entries", []) if isinstance(payload, dict) else []
+    hit = [e for e in entries if e.get("name") == name]
+    if code == 200 and hit:
+        ok(f"the file is listed through the API ({hit[0].get('size')} bytes)")
+    else:
+        bad(f"the file is not listed (HTTP {code}): {str(payload)[:200]}")
+        return
+
+    # The download itself: the bytes must arrive on the host unchanged.
+    req = urllib.request.Request(
+        f"{URL}/api/sessions/{sid}/files/download?path=/home/desktop/{name}")
+    for k, v in auth_header().items():
+        req.add_header(k, v)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = resp.read().decode("utf-8", "replace")
+            disposition = resp.headers.get("Content-Disposition", "")
+    except urllib.error.HTTPError as exc:
+        bad(f"the download failed with HTTP {exc.code}")
+        return
+    if data == content:
+        ok(f"the file downloaded with the right content ({disposition})")
+    else:
+        bad(f"the downloaded content is {data!r}, expected {content!r}")
+
+    # The file API reads as root inside the container, so it must not be able
+    # to reach anything outside the session's home volume.
+    code, _ = api("GET", f"/api/sessions/{sid}/files?path=/etc")
+    ok("a path outside the home volume is refused") if code == 400 \
+        else bad(f"a path outside the home volume was accepted (HTTP {code})")
+
+
+def t11e_installs(sid: str) -> None:
+    section("11e. packages can be installed inside the session")
+    container = f"{PREFIX}-{sid}"
+
+    who = docker("exec", "-u", "desktop", container, "sh", "-c",
+                 "sudo -n id -u").strip()
+    if who == "0":
+        ok("the session user can become root (passwordless sudo)")
+    else:
+        bad(f"sudo does not work in the session: {who[:200]}")
+
+    dns = docker("exec", "-u", "desktop", container, "sh", "-c",
+                 "getent hosts deb.debian.org | head -1").strip()
+    if dns:
+        ok("the session resolves the package mirrors")
+    else:
+        bad("the session has no DNS - no package can be downloaded")
+
+    upd = docker("exec", "-u", "desktop", container, "sh", "-c",
+                 "sudo -n apt-get update -qq 2>&1 | tail -3")
+    if "Err:" not in upd and "Could not resolve" not in upd:
+        ok("apt-get update works inside the session")
+    else:
+        bad(f"apt-get update failed: {upd.strip()[:300]}")
+        return
+
+    ins = docker("exec", "-u", "desktop", container, "sh", "-c",
+                 "sudo -n apt-get install -y -qq tree >/dev/null 2>&1; "
+                 "command -v tree || echo NOT-INSTALLED")
+    if "NOT-INSTALLED" not in ins and ins.strip():
+        ok(f"a package was installed inside the session ({ins.strip()})")
+    else:
+        bad(f"apt-get install failed: {ins.strip()[:300]}")
+
+
+def t11c_desktop_shortcuts(sid: str) -> None:
+    section("11c. the desktop layer: shortcuts, icons and the SVG loader")
+    container = f"{PREFIX}-{sid}"
+
+    # Everything the session puts on the desktop must actually work:
+    #   - the Exec= target has to exist (a shortcut to a missing binary dies
+    #     with "Failed to execute child process" and nothing else);
+    #   - the Icon= name has to resolve to a file in one of the icon themes
+    #     (an unknown name is drawn as a blank page, which is what a broken
+    #     icon theme looks like on the screen);
+    #   - the panel launchers have to point at runnable applications;
+    #   - gdk-pixbuf must be able to decode SVG, otherwise every scalable
+    #     icon and every GTK3 theme asset stays invisible.
+    probe = r'''
+cd "$HOME/Desktop" 2>/dev/null || exit 0
+for f in *.desktop; do
+  [ -e "$f" ] || continue
+  e=$(sed -n 's/^Exec=//p' "$f" | head -1 | awk '{print $1}')
+  i=$(sed -n 's/^Icon=//p' "$f" | head -1)
+  command -v "$e" >/dev/null 2>&1 || echo "MISSING-EXEC $f $e"
+  if [ -n "$i" ] && ! find /usr/share/icons -name "$i.*" -print -quit 2>/dev/null | grep -q .; then
+    echo "MISSING-ICON $f $i"
+  fi
+done
+
+panel="$HOME/.config/lxpanel/LXDE/panels/panel"
+[ -f "$panel" ] || panel=/etc/xdg/lxpanel/LXDE/panels/panel
+for b in $(sed -n 's/.*id=\([^ ]*\).*/\1/p' "$panel" 2>/dev/null); do
+  app=$(ls "/usr/share/applications/$b" "$HOME/.local/share/applications/$b" 2>/dev/null | head -1)
+  if [ -z "$app" ]; then
+    echo "MISSING-LAUNCHER $b"
+    continue
+  fi
+  e=$(sed -n 's/^Exec=//p' "$app" | head -1 | awk '{print $1}')
+  e=${e##*/}
+  [ -x "$e" ] || command -v "$e" >/dev/null 2>&1 || echo "DEAD-LAUNCHER $b $e"
+done
+
+if ! grep -qs svg /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/*/loaders.cache; then
+  echo "NO-SVG-LOADER"
+fi
+'''
+    out = docker("exec", "-u", "desktop", container, "sh", "-c", probe)
+    problems = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    if not problems:
+        ok("every desktop shortcut has a working command and a resolvable icon")
+        ok("the panel launchers all point at installed applications")
+        ok("gdk-pixbuf can decode SVG (scalable icons render)")
+    else:
+        for line in problems:
+            if line.startswith("MISSING-EXEC"):
+                bad(f"desktop shortcut with a missing command: {line}")
+            elif line.startswith("MISSING-ICON"):
+                bad(f"desktop shortcut with an unresolvable icon name: {line}")
+            elif line.startswith("MISSING-LAUNCHER"):
+                bad(f"panel launcher without an application: {line}")
+            elif line.startswith("DEAD-LAUNCHER"):
+                bad(f"panel launcher pointing at a missing binary: {line}")
+            elif line == "NO-SVG-LOADER":
+                bad("gdk-pixbuf has no SVG loader - scalable icons render blank")
+
+    # The image trims five package stacks on purpose (Mesa GL, Ghostscript,
+    # polkit, systemd, the display manager). That is only safe as long as the
+    # dpkg database stays consistent - otherwise every `apt-get install` inside
+    # a session fails with "Unmet dependencies".
+    check = docker("exec", "-u", "root", container, "sh", "-c",
+                   "apt-get check 2>&1 | grep -E 'unmet|broken' || echo CLEAN")
+    if "CLEAN" in check:
+        ok("the package database is consistent (apt-get check is clean)")
+    else:
+        bad("the package database has unmet dependencies: " + check.strip()[:300])
+
+
 def t12_delete(sid_a: str, sid_b: str) -> None:
     section("12. deleting a session and its data")
     code, payload = api("DELETE", f"/api/sessions/{sid_b}?delete_data=true")
@@ -550,6 +816,74 @@ def t12_delete(sid_a: str, sid_b: str) -> None:
     code, _ = api("GET", f"/api/sessions/{sid_b}")
     ok("the deleted session is no longer known to the manager") if code == 404 \
         else bad(f"deleted session still answers with {code}")
+
+
+def t14_main_template() -> None:
+    section("14. the main session is the template new sessions are cloned from")
+    # A session that exists before any template is designated. It must stay
+    # untouched, whatever happens to the main session afterwards.
+    code, before = api("POST", "/api/sessions", {"wait": 180})
+    if code != 201:
+        bad(f"could not create a session: {before}")
+        return
+    before_id = before["id"]
+    CREATED.append(before_id)
+    if wait_state(before_id) != "running":
+        bad(f"session {before_id} did not start")
+        return
+
+    code, main = api("POST", "/api/sessions", {"wait": 180})
+    if code != 201:
+        bad(f"could not create the main session: {main}")
+        return
+    main_id = main["id"]
+    CREATED.append(main_id)
+    if wait_state(main_id) != "running":
+        bad(f"session {main_id} did not start")
+        return
+
+    code, payload = api("POST", f"/api/sessions/{main_id}/make-main")
+    if code != 200:
+        bad(f"make-main returned {code}: {payload}")
+        return
+    ok(f"session {main_id} designated as the main session")
+
+    # Two kinds of change in the main session:
+    #   - a file in the home volume (documents, desktop settings);
+    #   - a file outside it (what `sudo apt-get install` leaves behind).
+    marker = "clone-marker"
+    docker("exec", f"{PREFIX}-{main_id}", "sh", "-c",
+           f"echo hello-from-main > /home/desktop/{marker}.txt")
+    docker("exec", f"{PREFIX}-{main_id}", "sudo", "sh", "-c",
+           f"echo program-from-main > /usr/local/bin/{marker}")
+
+    code, clone = api("POST", "/api/sessions", {"wait": 180})
+    if code != 201:
+        bad(f"could not create the clone: {clone}")
+        return
+    clone_id = clone["id"]
+    CREATED.append(clone_id)
+    if wait_state(clone_id) != "running":
+        bad(f"clone {clone_id} did not start")
+        return
+
+    home = docker("exec", f"{PREFIX}-{clone_id}", "cat", f"/home/desktop/{marker}.txt")
+    if "hello-from-main" in home:
+        ok("the clone inherited the home directory of the main session")
+    else:
+        bad(f"the clone did not inherit the home directory: {home!r}")
+
+    prog = docker("exec", f"{PREFIX}-{clone_id}", "cat", f"/usr/local/bin/{marker}")
+    if "program-from-main" in prog:
+        ok("the clone inherited the programs of the main session")
+    else:
+        bad(f"the clone did not inherit the programs: {prog!r}")
+
+    untouched = docker("exec", f"{PREFIX}-{before_id}", "cat", f"/home/desktop/{marker}.txt")
+    if "hello-from-main" in untouched:
+        bad(f"the session created before the template was changed: {untouched!r}")
+    else:
+        ok("the session that existed before is not affected by the template")
 
 
 def t13_image_size() -> None:
@@ -590,6 +924,12 @@ def main() -> int:
     t09_admission(sid_a, sid_b)
     t10_footprint(sid_a)
     t11_browser_path(sid_a)
+    t11b_clipboard(sid_a)
+    t11b2_clipboard_out(sid_a)
+    t11c_desktop_shortcuts(sid_a)
+    t11d_files(sid_a)
+    t11e_installs(sid_a)
+    t14_main_template()
     t13_image_size()
     t12_delete(sid_a, sid_b)
 
