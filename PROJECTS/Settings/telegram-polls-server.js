@@ -183,8 +183,8 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
                     payload.question, JSON.stringify(stored), new Date().toISOString(),
                     // опрос из блока [ASK] уходит после письма своего хода — глушить ему нечего
                     silenced ? new Date().toISOString() : null);
-                // и обычная связь «сообщение → сессия»: следующее сообщение
-                // человека без reply пойдёт в сессию, которая его спросила
+                // и обычная связь «сообщение → сессия»: reply на опросник уходит
+                // в неё же (132), как и письмо вдогонку идущему ходу
                 remember(chatId, message.message_id, sessionId);
                 sent += 1;
             } catch (err) {

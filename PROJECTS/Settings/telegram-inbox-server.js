@@ -33,9 +33,10 @@ module.exports = function createInbox({ callApi, send, db, getUsers, keyboard, l
         return '👌';
     }
 
-    // Последняя работа лички, которая ещё есть в пульте. Удалённые забываем молча:
-    // иначе сообщение без reply упиралось в «работа удалена», хотя человек писал
-    // не в неё, а просто в личку
+    // Последняя работа лички, которая ещё есть в пульте: адресат служебных слов
+    // без reply («стоп», «что там») и образец для новой (likeSessionId). Удалённые
+    // забываем молча: иначе служебное слово упиралось в «работа удалена», хотя
+    // человек писал не в неё, а просто в личку
     function liveLastSession(chatId) {
         for (;;) {
             const sessionId = db.lastSessionOfChat.get(chatId)?.sessionId;
@@ -68,7 +69,7 @@ module.exports = function createInbox({ callApi, send, db, getUsers, keyboard, l
             .catch(() => {});
     }
 
-    // Первое сообщение после END: поручение заводит новую сессию в пульте
+    // Поручение без reply заводит новую сессию в пульте (DOCS/decisions/132)
     async function startNewSession(chatId, text, messageId, mode) {
         const like = liveLastSession(chatId) || null;
         let created = null;
@@ -154,33 +155,29 @@ module.exports = function createInbox({ callApi, send, db, getUsers, keyboard, l
         // текст ответом на сообщение с открытым опросом — свой вариант ответа
         if (await polls.handleReply(chatId, replyTo, message.text)) return;
         const repliedSession = replyTo && db.sessionByReply.get(chatId, Number(replyTo))?.sessionId;
-        // после END сообщение начинает новую работу. Ответ reply на письмо старой
-        // работы — по-прежнему в неё: человек сам назвал адресата
-        if (!repliedSession && db.readChatState.get(chatId)?.fresh) {
-            // после END сообщение — поручение без разбора «стоп / что там», но как
-            // оно понято, человеку говорим так же
-            const understood = await turnJudgment.classifyInbox(message.text).catch(() => null);
-            await acknowledge(chatId, understood, null);
-            await startNewSession(chatId, message.text, message.message_id, modeFor(understood));
-            return;
-        }
-        const sessionId = repliedSession || liveLastSession(chatId);
-        // отвечать некуда — значит, это поручение на новую работу, как после END
-        if (!sessionId) {
-            const understood = await turnJudgment.classifyInbox(message.text).catch(() => null);
-            await acknowledge(chatId, understood, null);
-            await startNewSession(chatId, message.text, message.message_id, modeFor(understood));
-            return;
-        }
-
-        // не всякое сообщение — поручение: «стоп», «что там» и «спасибо» раньше
-        // запускали настоящий ход, то есть тратили деньги владельца и занимали
-        // очередь. Неуверенный ответ означает поручение — как мост вёл себя всегда
-        // (DOCS/decisions/054)
+        // разбор «стоп / что там / спасибо» идёт до выбора адресата: нужен обоим
+        // путям ниже. Неуверенный ответ — поручение, как мост вёл себя всегда
+        // (DOCS/decisions/054): принять поручение за «спасибо» значит не выполнить
         const understood = await turnJudgment.classifyInbox(message.text).catch(() => ({ intent: 'task' }));
         const { intent } = understood;
+        // reply — ровно в ту сессию, письма которой он адресован, даже после END:
+        // человек сам назвал адресата. Поручение без reply — новая работа
+        // (DOCS/decisions/132), но только когда работа этой лички не идёт: письмо
+        // вдогонку идущему ходу отвечает в неё же (DOCS/decisions/062), иначе
+        // погоня за ходом репликами заводила бы копию работы на каждую реплику.
+        // Служебные слова («стоп», «что там», «спасибо») ходов не поднимают и работ
+        // не заводят — их адресат, идущая работа, виден по последнему письму чата
+        const runSession = repliedSession || liveLastSession(chatId);
+        const isRunningWork = runSession && (busySessions.has(runSession) || deps.isRunning(runSession));
+        const sessionId = runSession && (repliedSession || intent !== 'task' || isRunningWork) ? runSession : null;
         if (intent !== 'task') {
             await send(chatId, answerWithoutTurn(intent, sessionId)).catch(() => {});
+            return;
+        }
+        // отвечать некуда — значит, это поручение на новую работу
+        if (!sessionId) {
+            await acknowledge(chatId, understood, null);
+            await startNewSession(chatId, message.text, message.message_id, modeFor(understood));
             return;
         }
         // занятая работа поручение не примет — «приступаю» было бы неправдой
@@ -234,10 +231,10 @@ module.exports = function createInbox({ callApi, send, db, getUsers, keyboard, l
             // привязываем это письмо к сессии: ответ на него уйдёт туда же
             let reply = letters.undeliveredLetter(text, err.message);
             if (/session not found/i.test(err.message)) {
-                // и забываем её: иначе сообщение без reply снова и снова
-                // отправлялось бы в ту же несуществующую сессию
+                // и забываем её: иначе служебные слова и ответы на письма этой
+                // сессии снова и снова упирались бы в несуществующую работу
                 db.forgetSession.run(sessionId);
-                reply = '🗑 Эта работа удалена из пульта — отвечать в неё больше некуда. Следующее сообщение уйдёт в предыдущую работу, а новую начните из пульта.';
+                reply = '🗑 Эта работа удалена из пульта — отвечать в неё больше некуда. Новое поручение без ответа-реплая начнёт новую работу.';
             }
             await send(chatId, reply)
                 .then((sent) => { if (!/session not found/i.test(err.message)) db.remember(chatId, sent.message_id, sessionId); })

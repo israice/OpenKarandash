@@ -74,7 +74,8 @@ module.exports = function create(database) {
         + ' ON CONFLICT(chat_id, message_id) DO UPDATE SET session_id = excluded.session_id, at = excluded.at',
     );
     sessionByReply = database.prepare('SELECT session_id AS sessionId FROM telegram_replies WHERE chat_id = ? AND message_id = ?');
-    // сообщение без reply идёт в последнюю сессию, о которой мы писали этому чату
+    // последняя сессия, о которой мы писали этому чату: адресат служебных слов
+    // без reply («стоп», «что там») и образец для новой работы (DOCS/decisions/132)
     lastSessionOfChat = database.prepare('SELECT session_id AS sessionId FROM telegram_replies WHERE chat_id = ? ORDER BY id DESC LIMIT 1');
 
     // позиция очереди Telegram. Она тоже пережила не один перезапуск в памяти —
