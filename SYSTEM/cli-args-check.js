@@ -8,6 +8,12 @@
 // правилом no-undef и madge смотрят на связи модулей, а не на то, какие
 // методы у полученного объекта есть.
 //
+// И продолжение хода: ход, оборвавшийся на середине, пульт продолжает тем же
+// CLI, и аргументы следующего запуска приходят из buildArgs — а он async.
+// Без ожидания у обещания нет поля args, продолжение падало с «args is not
+// iterable», и ход умирал, не досказав ничего. Та же проверка, тот же путь
+// коннектора: первый запуск обрывается на середине, второй должен состояться.
+//
 // Что не ловит: сам ход. Он стоит минут и денег, а проверка должна быть
 // быстрой и повторяемой, поэтому настоящий CLI не запускается: подменены и
 // его справка (по ней опознаётся семейство), и сам запуск.
@@ -37,6 +43,9 @@ const FAMILIES = [
             '  --thinking           enable reasoning',
         ].join('\n'),
         expect: ['run', '--format', 'json', '--model', 'test/model', '--thinking'],
+        // у семейства есть своя сессия CLI: ход, оборванный на середине, пульт
+        // продолжает тем же CLI и с той же сессией
+        session: true,
     },
     {
         name: 'pi',
@@ -49,17 +58,24 @@ const FAMILIES = [
             '  --thinking <level>   thinking level',
         ].join('\n'),
         expect: ['-p', '--mode', 'json', '--model', 'test/model', '--thinking', 'high'],
+        session: true,
     },
     {
         name: 'plain',
         help: 'some-cli 1.0.0\n  --help  show this help',
         expect: ['run'],
+        // у plain нет ни сессии, ни потока событий: продолжать ему нечем, и ход
+        // заканчивается вместе с ответом
+        session: false,
     },
 ];
 
 const MODEL = 'test/model';
 const EFFORT = 'high';
 const PROMPT = 'проверка сборки аргументов';
+// сессия CLI, которую пульт продолжает после оборванного хода: у семейств с
+// сессией она уходит в аргументы второго запуска
+const SESSION_ID = 'ses_test';
 
 // Подмена справки CLI: семейство опознаётся по ней, и помощь эта нужна
 // один раз на цель. Подменяем до того, как коннектор загружен: модуль
@@ -72,14 +88,30 @@ child.spawnSync = () => ({ stdout: help, stderr: '', status: 0, error: null });
 const spawn = require(path.join(ROOT, 'SYSTEM', 'cli', 'spawn.js'));
 const realRun = spawn.run;
 let launched = [];
-spawn.run = async (target, args) => { launched.push(args); return ''; };
+// ход, оборвавшийся на середине: первый запуск помечает ход незаконченным
+// (модель собиралась звать инструменты, а процесс вышел) — пульт обязан
+// продолжить его тем же CLI. Поднимается по требованию: обычный сценарий
+// ход заканчивает, и продолжения у него нет
+let cutTurn = false;
+spawn.run = async (target, args) => {
+    launched.push(args);
+    if (cutTurn && launched.length === 1) {
+        ctx.meta.wantsTools = true;
+        ctx.cliSessionId = SESSION_ID;
+    }
+    return '';
+};
 
 const any = require(path.join(ROOT, 'SYSTEM', 'cli', 'any.js'));
 
 // Обвязка хода: настоящая (SYSTEM/core/run-turn.js) пишет в базу и следит за
 // событиями, а здесь нужно только довести ход до запуска CLI. События потока
-// не приходят — CLI не отвечает, — и ход на этом заканчивается
-const ctx = { noteInput() {}, run: {}, meta: {}, notice() {}, emit() {}, fail() {}, cliSessionId: null };
+// не приходят — CLI не отвечает, — и ход на этом заканчивается. Своя на
+// каждый сценарий: состояние хода переживать не должна
+let ctx = newCtx();
+function newCtx() {
+    return { noteInput() {}, run: {}, meta: {}, notice() {}, emit() {}, fail() {}, cliSessionId: null };
+}
 const deps = {
     runTurn: async (params, send, body) => { await body(ctx); },
     resumeAndHandoff: async () => ({ resumeId: null, handoff: '' }),
@@ -114,8 +146,40 @@ async function check(family) {
     }
 }
 
+// Ход, оборвавшийся на середине: модель закончила шаг намерением звать
+// инструменты, а процесс вышел (DOCS/decisions/101). Пульт обязан продолжить
+// ход тем же CLI и с той же сессией — иначе работа остаётся на первом шаге.
+//
+// Проверка ловит форму того, что уходит в продолжение: аргументы следующего
+// запуска — это обещание (buildArgs — async), и без ожидания у обещания нет
+// поля args. Тогда продолжение падало с «args is not iterable», и ход умирал,
+// не досказав ничего: человек видел в ленте обрыв без ответа.
+async function checkContinuation(family) {
+    help = family.help;
+    launched = [];
+    cutTurn = true;
+    ctx = newCtx();
+    const target = { id: `${family.name}-local`, label: family.name, cmd: family.name, args: [] };
+    const connector = any.create(deps, family.name);
+    connector.activate(target);
+    try {
+        await connector.ask({ prompt: PROMPT, model: MODEL, effort: EFFORT, mode: 'Chat' }, () => {});
+    } catch (error) {
+        problems.push(`${family.name}: продолжение хода сломано — ${error.message}`);
+        return;
+    }
+    if (launched.length < 2) {
+        problems.push(`${family.name}: оборванный ход не продолжился (запусков CLI: ${launched.length})`);
+        return;
+    }
+    if (!launched[1].includes(SESSION_ID)) {
+        problems.push(`${family.name}: продолжение пошло без прежней сессии CLI (есть: ${launched[1].join(' ')})`);
+    }
+}
+
 async function main() {
     for (const family of FAMILIES) await check(family);
+    for (const family of FAMILIES.filter((one) => one.session)) await checkContinuation(family);
     child.spawnSync = realSpawnSync;
     spawn.run = realRun;
     if (problems.length === 0) {

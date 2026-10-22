@@ -288,6 +288,11 @@ async function ask({ prompt, model, effort, sessionId, mode, hints, skill, homew
     // молчаливый отказ на первом же шаге
     const { approve } = launchFlags(target) || {};
     const { args, cleanup, usage } = await buildArgs(target, family, { model, effort, resumeId, mode, text, approve });
+    // уборка запуска: у openclaw и hermes запуск оставляет свои файлы (промпт в
+    // файле, файл с учётом usage), и убирает их тот, кто их создал. Продолжение
+    // хода собирает новый запуск — уборка переезжает на него, а прошлый убирается
+    // сразу: иначе в %TEMP% копились бы каталоги с промптами
+    let cleanupRun = cleanup;
 
         // подсказки, приём и отчёт разведки едут в runTurn не ради текста
         // запроса (он уже собран в handoff выше), а ради своих оценок: они
@@ -332,11 +337,21 @@ async function ask({ prompt, model, effort, sessionId, mode, hints, skill, homew
                     ctx,
                     args,
                     runOnce,
-                    buildArgs: (resume) => buildArgs(target, family, { model, effort, resumeId: resume, mode, text: CONTINUE_PROMPT, approve }).args,
+                    // Аргументы следующего запуска — обещание, а не готовый
+                    // список: buildArgs объявлен async. Без ожидания у обещания
+                    // нет поля args, и продолжение хода падало с «args is not
+                    // iterable» — ход умирал, не досказав ничего
+                    buildArgs: async (resume) => {
+                        const built = await buildArgs(target, family, { model, effort, resumeId: resume, mode, text: CONTINUE_PROMPT, approve });
+                        const past = cleanupRun;
+                        cleanupRun = built.cleanup;
+                        past();
+                        return built.args;
+                    },
                 });
             });
         } finally {
-            cleanup();
+            cleanupRun();
         }
     }
 

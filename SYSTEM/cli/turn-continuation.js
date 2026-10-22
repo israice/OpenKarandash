@@ -42,7 +42,8 @@ const CONTINUE_NOTICE = (n, max) => `ход не доведён до ответ�
 
 // driveToEnd({ ctx, args, runOnce, buildArgs })
 //   runOnce(args)   — один запуск CLI; промис рассосётся, когда процесс выйдет
-//   buildArgs(id)   — аргументы следующего запуска по сессии CLI с этим id
+//   buildArgs(id)   — промис с аргументами следующего запуска по сессии CLI с
+//                     этим id: собирает их коннектор, и собирает он их асинхронно
 async function driveToEnd({ ctx, args, runOnce, buildArgs }) {
     let current = args;
     let continuations = 0;
@@ -73,7 +74,8 @@ async function driveToEnd({ ctx, args, runOnce, buildArgs }) {
         continuations += 1;
         ctx.notice('server.continue', CONTINUE_NOTICE(continuations, MAX_CONTINUATIONS));
         ctx.noteInput(CONTINUE_PROMPT);
-        current = buildArgs(ctx.cliSessionId);
+        // аргументы следующего запуска приходят обещанием: ждать здесь
+        current = await buildArgs(ctx.cliSessionId);
     }
 }
 
