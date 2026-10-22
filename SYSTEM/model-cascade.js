@@ -75,7 +75,8 @@ export function modelOf(cliId) {
 // передаётся отсюда: он читает сохранённые уровни, а те живут в этом файле
 const modelsOf = (cliId) => modelsFor(cliId, modelOf);
 
-// Четыре селекта в ряд: CLI / Gateway / Model / Effort. Поставщика отдельным
+// Пять селектов в ряд: меню noVNC (пока только вид) и уровни CLI / Gateway /
+// Model / Effort. Поставщика отдельным
 // списком нет: это средний уровень пути модели, и человек выбирал не его, а
 // модель целиком. Своим списком он показывал то, чего под выбранным шлюзом нет
 // (поставщика stealth у anthropic не бывает вовсе), и выбор разъезжался на две
@@ -95,7 +96,11 @@ export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = fals
     const row = document.createElement('div');
     row.className = 'provider__model provider__model--cascade';
     const selects = {};
-    for (const [key, title] of [['cli', 'CLI'], ['gateway', 'Gateway'], ['model', 'Model'], ['effort', 'Effort']]) {
+    // noVNC стоит слева от уровней как отдельное меню (не уровень пути
+    // модели), поэтому первым в ряду. Пока только вид: список столов и порт
+    // стоят здесь же, без логики — наполнитель и сохранение придут вместе с
+    // самой noVNC
+    for (const [key, title] of [['novnc', 'noVNC'], ['cli', 'CLI'], ['gateway', 'Gateway'], ['model', 'Model'], ['effort', 'Effort']]) {
         const label = document.createElement('span');
         label.className = 'provider__model-label';
         label.textContent = `${title}:`;
@@ -106,9 +111,21 @@ export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = fals
         selects[key] = select;
     }
 
+    // Столы noVNC: пока один, UI без логики — имя и порт, на котором он
+    // доступен, стоят прямо здесь (`webdesktop:lxde - ${port}` — формат
+    // человека, логики пока нет)
+    for (const [value, label] of [['', '—'], ['linux-desktop:6080', 'webdesktop:lxde - 6080']]) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        selects.novnc.append(option);
+    }
+
     // Глубина размышления наполняется один раз и перерисовкой не трогается:
     // список у неё общий (SYSTEM/model-effort.js), от выбранной модели он не
     // зависит, а меняет его только сам человек — обработчиком change ниже
+    // noVNC в каскаде не участвует: он не читается и не сохраняется (UI
+    // только для вида), поэтому ни одного обработчика у него нет
     fillEffortLevel(selects.effort);
 
     // Значения уровня CLI — список с сайта (SYSTEM/cli-agents.js, тот же, что на
@@ -215,6 +232,17 @@ const fillLevelWithAdd = (select, values, emptyLabel, wanted, label) =>
             || modelPath(cliId, selects.gateway.value, asked.provider || remembered.provider,
                 asked.model || remembered.model, models);
         fillLevel(selects.model, inPath, '—', wantedPath, modelLabel);
+        // Помечаем модели с free-суффиксом для индикации в выпадающем меню
+        // Используем отдельный атрибут data-free, чтобы не конфликтовать с
+        // data-mark от markCliLevel (который заменяет атрибут, а не накапливает)
+        for (const option of selects.model.options) {
+            const val = option.value;
+            if (isFreeModel(val)) {
+                option.setAttribute('data-free', 'true');
+            } else {
+                option.removeAttribute('data-free');
+            }
+        }
         // Шлюз, который человек поставил, в списке нового CLI может не
         // оказаться: переключил CLI — а у него своего шлюза с таким именем нет.
         // Раньше такое значение возвращалось в уровень пунктом, и строка
@@ -358,8 +386,15 @@ export function publishModelChoice() {
     for (const listener of [...modelChoiceListeners]) listener({ cliId: null, model: null, sourceRow: null });
 }
 
+// Проверяем, имеет ли модель суффикс «free» (у Free-версий на OpenRouter):
+//   :free, -free, /free  — в конце имени модели
+const isFreeModel = (model) => {
+    const name = (String(model || '').split('/').pop() || '').trim();
+    return /(:free|-free|\/free)$/i.test(name);
+};
+
 // Разведка машины ответила (SYSTEM/cli-scan.js) — обновить вид пунктов CLI на
-// уже нарисованных уровнях. Строку не перерисовываем: она сбросила бы уровни на
+// уже нарисованных уровнях. Строку не перерисовываем: она сбросила бы уровень на
 // прочерки у того CLI, который ещё не подключён, и увела бы человека с
-// выбранного пункта прямо в тот момент, когда он в него опустился
+// выбранногоPunkта прямо в тот момент, когда он в него опустился
 onCliScan(() => remarkCliLevels(scanMarkOf));

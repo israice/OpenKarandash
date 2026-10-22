@@ -1,5 +1,6 @@
-/* Каскад выбора модели — четыре выпадающих списка в ряд (CLI / Gateway /
-   Model / Effort). Поставщика отдельным списком нет: это средний уровень пути
+/* Каскад выбора модели — меню noVNC и четыре выпадающих списка уровней
+   (CLI / Gateway / Model / Effort) в ряд. Поставщика отдельным списком нет:
+   это средний уровень пути
    модели, и в строке он не выбирается (DOCS/decisions/118). Строка стоит в трёх
    местах: витрина и карточка провайдера
    в окне настроек (PROJECTS/Settings) и строка выбора в шапке сессии
@@ -145,6 +146,19 @@
 .provider__select--source option[data-mark="empty"] {
     background: #40361f;
     color: #e8c98a;
+}
+
+/* Пункт модели с суффиксом free: обозначает модель бесплатной версии,
+   которую можно проверить на отклик без затрат токенов модели */
+.provider__select--source option[data-free="true"] {
+    background: #3a1f7f;
+    color: #d0c0e8;
+}
+
+/* Пункт модели free, который выбран */
+.provider__select--source option[data-free="true"]:checked {
+    background: #5b3da7;
+    color: #e8d5f5;
 }
 
 .provider__select--source option[data-mark="empty"]:checked {

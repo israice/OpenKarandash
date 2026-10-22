@@ -94,18 +94,16 @@ if (!clientFiles.length) {
 // 2а. подсказка jev рецензенту. Нет поручения, ключа или ответа — шага просто нет:
 // ветка доходит до рецензента, как доходила. Отклонить по этому числу нельзя
 let hint = '';
-if (task) {
-    let diff = '';
-    try { diff = execFileSync('git', ['diff', `main...${branch}`], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }); } catch {}
-    const { createRequire } = await import('node:module');
-    const judged = await createRequire(import.meta.url)('./core/turn-judgment.js').judgeBranch({ task, diff, files: result.files }).catch(() => null);
-    if (judged) {
-        const pct = (n) => (n === null ? '—' : `${Math.round(n * 100)}%`);
-        result.stages.push({ name: 'jev: дифф по поручению', ok: true, hint: true, note: `по делу ${pct(judged.onTask)}, лишнего ${pct(judged.offTask)}${judged.truncated ? ' (дифф усечён)' : ''}` });
-        if (judged.flagged) hint = 'jev видит в диффе правки, которых поручение не просило, — рецензенту смотреть их первыми; ';
-    } else {
-        result.stages.push({ name: 'jev: дифф по поручению', ok: null, note: 'суждения нет (нет ключа или ответа)' });
-    }
+let diff = '';
+try { diff = execFileSync('git', ['diff', `main...${branch}`], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }); } catch {}
+const { createRequire } = await import('node:module');
+const judged = await createRequire(import.meta.url)('./core/turn-judgment.js').judgeBranch({ task: task || '', diff, files: result.files }).catch(() => null);
+if (judged) {
+    const pct = (n) => (n === null ? '—' : `${Math.round(n * 100)}%`);
+    result.stages.push({ name: 'jev: дифф по поручению', ok: true, hint: true, note: `по делу ${pct(judged.onTask)}, лишнего ${pct(judged.offTask)}${judged.truncated ? ' (дифф усечён)' : ''}` });
+    if (judged.flagged) hint = 'jev видит в диффе правки, которых поручение не просило, — рецензенту смотреть их первыми; ';
+} else {
+    result.stages.push({ name: 'jev: дифф по поручению', ok: null, note: 'суждения нет (нет ключа или ответа)' });
 }
 
 const serverTouched = result.files.some((f) => f === 'server.js' || /-server\.js$/.test(f) || f.startsWith('SYSTEM/core/') || f.startsWith('SYSTEM/cli/'));

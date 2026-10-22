@@ -6,9 +6,9 @@ services:
     volumes:
       - .:/app
       - /app/node_modules
-      - data:/app/DATA
+      - ./DATA:/app/DATA
     environment:
-      - NO_RELOAD=1
+      - NO_RELOAD=0
       - HOST_DEPS=0
       - HERMES_STACK=0
       - HOST=0.0.0.0
