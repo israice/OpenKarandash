@@ -143,6 +143,9 @@ function isToolReason(reason) {
 //     чем довёл работу;
 //   - ошибка хода: с ней продолжение не имеет смысла, решение за человеком
 //     (DOCS/decisions/097).
+// Причину шага ставит step_finish, а текст события отменяет: opencode-схема
+// финальному тексту step_finish не шлёт, и причина шага с инструментами —
+// не про конец хода (DOCS/decisions/133).
 // Счётчики копит разбор потока (opencodeEvent / piEvent) — там, где видно
 // границы шага, и больше нигде.
 function turnUnfinished(ctx) {
@@ -265,6 +268,13 @@ function opencodeEvent(ctx, event, { positions, openCalls, db: { recordAssistant
     if (event.type === 'text' && event.part?.text?.trim()) {
         ctx.answer = event.part.text;
         if (ctx.session) ctx.assistantPosition = recordAssistantText(ctx.session, event.part.text, ctx.meta.model, null, null, event.part, ctx.origin);
+        // opencode-схема финальному тексту step_finish не шлёт вовсе: поток
+        // кончается событием text. Причина прежнего step_finish («tool-calls»
+        // у шага с инструментами) оставалась бы в wantsTools навсегда, и ход
+        // с готовым ответом читался как незавершённый — продолжения по кругу
+        // и «ход не доведён за 6 продолжений» (DOCS/decisions/133)
+        ctx.meta.wantsTools = false;
+        ctx.meta.stopReason = null;
         ctx.emit({ type: 'text', text: event.part.text });
         return;
     }

@@ -93,11 +93,18 @@ let launched = [];
 // продолжить его тем же CLI. Поднимается по требованию: обычный сценарий
 // ход заканчивает, и продолжения у него нет
 let cutTurn = false;
-spawn.run = async (target, args) => {
+// поток событий хода: если задан, каждый запуск CLI печатает такие строки
+// NDJSON — разбор хода (any-parse.js) проверяется на настоящем своём пути,
+// как он проверяется на живом CLI
+let stream = null;
+spawn.run = async (target, args, options) => {
     launched.push(args);
     if (cutTurn && launched.length === 1) {
         ctx.meta.wantsTools = true;
         ctx.cliSessionId = SESSION_ID;
+    }
+    if (stream) {
+        for (const line of stream) options.onLine(line);
     }
     return '';
 };
@@ -110,7 +117,10 @@ const any = require(path.join(ROOT, 'SYSTEM', 'cli', 'any.js'));
 // каждый сценарий: состояние хода переживать не должна
 let ctx = newCtx();
 function newCtx() {
-    return { noteInput() {}, run: {}, meta: {}, notice() {}, emit() {}, fail() {}, cliSessionId: null };
+    return {
+        noteInput() {}, run: {}, notice() {}, emit() {}, fail() {}, cliSessionId: null, begin() {},
+        meta: { usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 } },
+    };
 }
 const deps = {
     runTurn: async (params, send, body) => { await body(ctx); },
@@ -177,9 +187,50 @@ async function checkContinuation(family) {
     }
 }
 
+// Чем кончился ход по разбору потока (DOCS/decisions/133). opencode-схема
+// финальному тексту step_finish не шлёт вовсе, поэтому причина шага с
+// инструментами («tool-calls») оставалась в wantsTools навсегда, и ход с
+// готовым ответом был доведён, а читался как незавершённый — продолжения
+// по кругу и «ход не доведён за 6 продолжений» в ленте. Оба сценария идут
+// на opencode-семействе: форма «текст без финального step_finish» — его
+// особенность, а инструменты и у pi кончаются тем же шагом
+function streamEvent(event) {
+    return JSON.stringify({ sessionID: SESSION_ID, ...event });
+}
+
+async function askWithStream(lines, { cliSessionId = null } = {}) {
+    ctx = newCtx();
+    ctx.cliSessionId = cliSessionId;
+    help = FAMILIES[0].help;
+    launched = [];
+    stream = lines;
+    const target = { id: 'opencode-local', label: FAMILIES[0].name, cmd: FAMILIES[0].name, args: [] };
+    const connector = any.create(deps, FAMILIES[0].name);
+    connector.activate(target);
+    try {
+        await connector.ask({ prompt: PROMPT, model: MODEL, effort: EFFORT, mode: 'Chat' }, () => {});
+    } catch (error) {
+        problems.push(`opencode: разбор хода упал — ${error.message}`);
+    }
+    stream = null;
+}
+
+const TOOL_STEP = () => streamEvent({ type: 'tool_use', part: { callID: 'c1', tool: 'shell', state: { status: 'completed', input: {} } } });
+const TOOL_FINISH = () => streamEvent({ type: 'step_finish', part: { reason: 'tool-calls', tokens: {} } });
+
 async function main() {
     for (const family of FAMILIES) await check(family);
     for (const family of FAMILIES.filter((one) => one.session)) await checkContinuation(family);
+    // текст после последнего step_finish отменяет его причину: ход доведён
+    await askWithStream([TOOL_STEP(), TOOL_FINISH(), streamEvent({ type: 'text', part: { text: 'готовый ответ' } })]);
+    if (launched.length !== 1) {
+        problems.push(`opencode: ход с готовым ответом продолжен (запусков CLI: ${launched.length})`);
+    }
+    // шаг, сам закончившийся намерением звать инструменты, продолжается, как и было
+    await askWithStream([TOOL_STEP(), TOOL_FINISH()], { cliSessionId: SESSION_ID });
+    if (launched.length < 2) {
+        problems.push('opencode: шаг с намерением звать инструменты не продолжен');
+    }
     child.spawnSync = realSpawnSync;
     spawn.run = realRun;
     if (problems.length === 0) {
