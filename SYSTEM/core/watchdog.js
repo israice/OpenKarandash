@@ -82,27 +82,34 @@ function run({ serverFile, pollMs, logExit }) {
     // сломанная правка не должна ронять сторожа вместе с сервером:
     // файл с синтаксической ошибкой не запускаем, старый процесс продолжает работать
     const isValid = () => {
-        try {
-            for (const file of watchedFiles()) execFileSync(process.execPath, ['--check', file], { stdio: 'ignore' });
-            return true;
-        } catch {
-            console.error('one of the server files does not parse — keeping the previous version running');
-            return false;
+        // имя файла в сообщении: без него провал isValid отлаживается перебором
+        for (const file of watchedFiles()) {
+            try {
+                execFileSync(process.execPath, ['--check', file], { stdio: 'ignore' });
+            } catch {
+                console.error(`${file} does not parse — keeping the previous version running`);
+                return false;
+            }
         }
+        return true;
     };
 
     // момент смерти выбирает не сторож, а сам сервер: он один знает, идёт ли сейчас
     // ход и не начинается ли новый прямо сейчас. Сторож только просит — и ждёт
     // ответа readyToRestart, сколько бы ни длились текущие ходы
     const restart = () => {
-        if (!isValid()) return; // починят файл — mtime изменится, и мы придём сюда снова
-        if (!child) return start(); // прошлый процесс упал сам — просто поднимаем заново
-        if (restarting) return; // уже попросили: перезапустимся с последней версией файлов
+        // ложь вернётся в замер: пока isValid не прошёл, срез mtime не потреблён,
+        // и та же правка придёт снова (раньше срез съедался до проверки, и правка,
+        // попавшая на полузаписанный соседний файл, терялась навсегда — DOCS/decisions/135)
+        if (!isValid()) return false;
+        if (!child) { start(); return true; } // прошлый процесс упал сам — просто поднимаем заново
+        if (restarting) return true; // уже попросили: перезапустимся с последней версией файлов
         restarting = true;
         console.log('server file changed — restarting as soon as the current turns finish...');
         // канал мог закрыться, если процесс умирает прямо сейчас: без колбэка ошибка
         // прилетела бы событием 'error' на child и унесла сторожа вместе с сервером
         child.send({ prepareRestart: true }, () => {});
+        return true;
     };
 
     const start = () => {
@@ -218,22 +225,26 @@ function run({ serverFile, pollMs, logExit }) {
         // и без этой проверки правка watchdog.js не доезжала бы никогда
         const currentOwn = latestMtime(ownFiles());
         if (currentOwn !== ownMtime) {
-            ownMtime = currentOwn;
+            // срез потребляем только при успехе: провалившийся isValid()
+            // оставляет правку несъеденной, и замер придёт к ней снова
             if (isValid() && child) {
+                ownMtime = currentOwn;
                 console.log('the watchdog itself changed — handing over to a fresh copy...');
                 respawnSelf = true;
                 child.kill();
                 return;
             }
-            if (isValid() && !child) start(); // прошлый процесс упал — поднимаем с новым кодом
+            if (isValid() && !child) { // прошлый процесс упал — поднимаем с новым кодом
+                ownMtime = currentOwn;
+                start();
+            }
             return;
         }
 
         const current = latestMtime(watchedFiles());
         if (current === mtime) return;
 
-        mtime = current;
-        restart();
+        if (restart()) mtime = current;
     }, pollMs);
 
     process.on('exit', (code) => logExit(`watchdog exit: code=${code}`));
