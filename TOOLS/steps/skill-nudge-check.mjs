@@ -3,7 +3,7 @@
 // ответом jev проверяется живым ходом на сервере владельца (DOCS/decisions/002).
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const { reviewTurn, nudgeTrace, worthReviewing } = require('../../SYSTEM/core/skill-nudge.js');
+const { reviewTurn, nudgeAccepts, worthReviewing } = require('../../SYSTEM/core/skill-nudge.js');
 
 const assert = (name, cond) => {
     if (!cond) { console.error(`FAIL ${name}`); process.exitCode = 1; return; }
@@ -26,7 +26,7 @@ const few = (label, tag, args) => reviewTurn({ judgment: done, agent: 'pi-window
     await few('no answer', 'empty', { answer: '' });
     // ход с оценкой выше порога и нормальным ответом уйдёт в сеть — этот случай
     // здесь не прогоняем; порог и форма вопроса курируются живыми ходами
-    const t = nudgeTrace({ noul: 0.8, profile: 'Backend developer' });
-    assert('trace shape', t && t.noul === 0.8 && t.profile === 'Backend developer');
-    assert('trace null', nudgeTrace(null) === null);
+    const t = nudgeAccepts({ noul: 0.8, profile: 'Backend developer' }) && !nudgeAccepts({ noul: 0.5, profile: 'x' });
+    assert('threshold policy', t === true);
+    assert('threshold null-verdict', !nudgeAccepts(null));
 })().catch((err) => { console.error(`FAIL uncaught: ${err.message}`); process.exitCode = 1; });

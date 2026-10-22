@@ -7,7 +7,7 @@
 // Один дешёвый вопрос jev по готовым полям хода — те же state, что и в
 // judgeTurn (turn-judgment.js). Ответ не генерирует запись сам: он только
 // решает, достойна ли работа напоминания, а формулировку судит judgeSkill
-// на входе /api/flow/profile/memory/add — Непроверенное в память не пишут
+// на входе /api/flow/profile/memory/add — непроверенное в память не пишут
 // и там, и здесь. Сбой суждения — не сбой хода: null, и ход идёт как шёл.
 //
 // Гейты — до запроса, каждый с фактом от кода: ход дошёл до конца работы
@@ -27,7 +27,9 @@ function worthReviewing(judgment) {
         || (judgment.workDone ?? 0) >= THRESHOLDS.workDone;
 }
 
-// { noul, profile } — в памяти стоит искать запись, либо null
+// сырой вердикт { noul, profile } либо null: гейты, сбой или ответа нет.
+// Порог здесь не применяется — это политика места применения (maybeNudge),
+// как у метки trace в run-turn (DOCS/decisions/101)
 async function reviewTurn({ request, answer, judgment, agent, profile }) {
     if (!typesafe.isEnabled() || !worthReviewing(judgment)) return null;
     const name = profileFor(agent, profile);
@@ -62,15 +64,13 @@ async function reviewTurn({ request, answer, judgment, agent, profile }) {
     });
     if (!res || !res.answers) return null;
     const noul = typesafe.noul(res.answers, 'record_skill');
-    if (noul === null || noul < THRESHOLDS.skillNudge) return null;
+    if (noul === null) return null;
     return { noul, profile: name };
 }
 
-// что пишется в result_meta хода — тем же manner, что skillTrace (089);
-// порог позже перемеряется по этим числам на живых ходах
-function nudgeTrace(verdict) {
-    if (!verdict) return null;
-    return { noul: verdict.noul, profile: verdict.profile };
+// решение порога — политика вызова, не суждения: в run-turn видно правило
+function nudgeAccepts(verdict) {
+    return Boolean(verdict && verdict.noul >= THRESHOLDS.skillNudge);
 }
 
 // напоминание агенту одним куском: в run-turn уходят только его текст и след,
@@ -88,9 +88,9 @@ function nudgeNotice(verdict) {
 // и след в result_meta. Отказ суждения ход не трогает
 async function maybeNudge({ ctx, meta, prompt, judgment, agent, profile }) {
     const verdict = await reviewTurn({ request: prompt, answer: ctx.answer, judgment, agent, profile }).catch(() => null);
-    if (!verdict) return;
+    if (!nudgeAccepts(verdict)) return;
     meta.resultMeta = { ...(meta.resultMeta || {}), skillNudge: { noul: verdict.noul, profile: verdict.profile } };
     ctx.notice('server.skill-nudge', nudgeNotice(verdict).notice);
 }
 
-module.exports = { reviewTurn, nudgeTrace, nudgeNotice, maybeNudge, worthReviewing };
+module.exports = { reviewTurn, nudgeAccepts, nudgeNotice, maybeNudge, worthReviewing };
