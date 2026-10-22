@@ -30,15 +30,8 @@ const readonly = (names) => Object.fromEntries(names.map((name) => [name, 'reado
 export default [
     {
         // вендорные сборки не наши — их правила и их же ошибки нас не касаются.
-        // TOOLS/penpot-mcp/design — скрипты-плагины Penpot: это тела функций,
-        // которые движок Penpot выполняет сам и в globals подставляет (penpot, C,
-        // storage), поэтому верхнеуровневый `return` и незнакомые имена там — не
-        // ошибка, а устройство скрипта; раньше они роняли проверку семью
-        // «Parsing error: 'return' outside of function» (DOCS/decisions/034 —
-        // проверка, которая всегда красная, не учит ничему)
         ignores: ['node_modules/**', 'DATA/**', 'hermes/**', 'hermes-home/**',
             'PROJECTS/Graph/vendor/**', '**/*.min.js',
-            'TOOLS/penpot-mcp/**',
             // json-render и json-renderer — вложенные чужие репозитории, у каждого
             // свой .git и свой конфиг. Без этих строк eslint читал ИХ eslint.config.js
             // и падал на отсутствующем пакете @internal/eslint-config, из-за чего

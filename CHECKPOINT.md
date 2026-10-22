@@ -15,7 +15,7 @@
 | Последний коммит | `7bfbd66` — v0.0.184 (упрощение с замера, удалён мёртвый коннектор omp) |
 | `SYSTEM/index.html` | 271 строка |
 | `server.js` | 302 строки |
-| Разделов в `PROJECTS/` | 17 (`Feed`, `Kanban`, `Penpot`, `Page 3`–`Page 9` — заготовки) |
+| Разделов в `PROJECTS/` | 16 (`Feed`, `Kanban`, `Page 3`–`Page 9` — заготовки) |
 | Модулей в `SYSTEM/core/` | 35 |
 
 ---

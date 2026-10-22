@@ -17,7 +17,7 @@ const { anchorsOf, rulesOf, ROOT } = require('./anchors.js');
 // _scratch — то же самое: там одноразовые скрипты проверки, и на замере отчёт
 // по кнопке New называл два «места» из неё наравне с настоящими файлами
 const GLOBS = ['*.js', '*.mjs', '*.css', '*.html', '*.eta', '*.json'];
-const IGNORE = ['node_modules', 'DATA', '.git', 'vendor', 'penpot-mcp', 'TOOLS/homework', '_scratch'];
+const IGNORE = ['node_modules', 'DATA', '.git', 'vendor', 'TOOLS/homework', '_scratch'];
 
 function run(file, args, timeout = 30000) {
     // На Windows путь к node может лежать в папке с пробелом («C:\Program

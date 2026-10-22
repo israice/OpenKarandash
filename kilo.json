@@ -1,11 +1,3 @@
 {
-  "$schema": "https://app.kilo.ai/config.json",
-  "mcp": {
-    "penpot": {
-      "type": "remote",
-      "url": "http://localhost:4401/mcp",
-      "enabled": true,
-      "timeout": 20000
-    }
-  }
+  "$schema": "https://app.kilo.ai/config.json"
 }
