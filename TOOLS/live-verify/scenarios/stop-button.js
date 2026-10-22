@@ -41,7 +41,11 @@ async function scenario(P) {
     // ход начинаем не из вкладки: сервер должен помнить окружение, иначе ход
     // не пойдёт — после перезапуска сервера оно теряется
     const startTurn = async () => {
-        const body = { agent, mode: 'Chat', prompt: `${MARK} Ответь одним словом: ок.`, ...(model ? { model } : {}) };
+        const body = {
+            agent, mode: 'Chat',
+            prompt: P.prompt || `${MARK} Напиши развёрнутый ответ из 12 предложений о том, как работает HTTP-кэширование.`,
+            ...(model ? { model } : {}),
+        };
         const res = await fetch('/api/agent/ask', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });
@@ -77,16 +81,16 @@ async function scenario(P) {
     await wait(1500);
 
     const send = () => document.querySelector('.chat-send');
+    const row = () => document.querySelector(`.session-item[data-session-id="${sid}"]`);
     const before = { text: send()?.textContent, cls: send()?.className, viewed: App.getSessionId?.() };
-    const circle = document.querySelector(`.session-item[data-session-id="${sid}"]`)?.className || '';
 
-    // ждём обновления списка: сервер шлёт его сразу, как только ход начался
-    let text = before.text;
-    for (let i = 0; i < 20 && text !== 'Stop'; i++) {
+    // ждём круга в списке: сервер шлёт обновление сразу, как только ход начался
+    let circle = '';
+    for (let i = 0; i < 60 && !circle.includes('session-item--running'); i++) {
         await wait(500);
-        text = send()?.textContent;
+        circle = row()?.className || '';
     }
-
+    const text = send()?.textContent;
     const after = { text, cls: send()?.className };
     const stopped = await postJson('/api/agent/stop', { sessionId: sid });
 
@@ -94,6 +98,7 @@ async function scenario(P) {
         ok: after.text === 'Stop',
         session: sid,
         before, after, circle,
+        head: document.documentElement.dataset.head || null,
         stopped: stopped?.ok !== false,
         note: 'кнопка Stop должна появиться по кругу в списке, а не по памяти вкладки',
     };
