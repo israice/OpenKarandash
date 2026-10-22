@@ -288,15 +288,25 @@
 
 /* ---------- шапка сессии: агент и модель ---------- */
 
-/* Контейнер строки выбора. Наполняет его SYSTEM/providers.js — тем же
-   каскадом из четырёх уровней, что и в окне настроек (его стили —
-   SYSTEM/styles/model-cascade.css), поэтому здесь только раскладка */
+/* Контейнер строки выбора — карточка: полоса с волосяной рамкой, как
+   композер под ней. Наполняет её SYSTEM/session-model-bar.js — тем же
+   каскадом из четырёх уровней (CLI / Gateway / Model / Effort), который стоял
+   ещё и в окне настроек (его стили — SYSTEM/styles/model-cascade.css),
+   поэтому здесь только раскладка: карточка и то, как уровни стоят в ней.
+
+   Раньше полосы не было, и четыре выпадающих списка висели на фоне страницы —
+   ряд не читался как шапка. Раскладка уровней — по макету того же элемента
+   (TOOLS/penpot-mcp/design/header.js, доска «CLI dropdown», закрытое
+   состояние). */
 .chat-session-bar {
     display: flex;
-    gap: 8px;
     width: 100%;
     max-width: var(--chat-content-width);
-    margin: 0 auto 8px;
+    margin: 0 auto 10px;
+    padding: 10px 12px;
+    border: 1px solid #2e3138;
+    border-radius: 12px;
+    background: #1a1c21;
 }
 
 .chat-session-bar[hidden] { display: none; }
@@ -304,12 +314,50 @@
 /* длинные имена моделей не выталкивают каскад за пределы ленты */
 .chat-session-bar > .provider__model--cascade { flex: 1 1 auto; min-width: 0; }
 
-/* В шапке сессии отступы от общих правил вдвое меньше: строка здесь узкая
-   (ширина ленты), и каждый промежуток отнимал бы у уровней то, чего им и без
-   того в обрез. Сама строка — как в настройках: одна на все места, и правило
-   одно в SYSTEM/styles/model-cascade.css */
-.chat-session-bar .provider__model--cascade { gap: 4px 6px; }
-.chat-session-bar .provider__select { padding: 4px 6px; }
+/* Каскад — сетка: четыре уровня в четырёх колонках, в каждой подпись над
+   значением. Раньше подпись стояла рядом со значением, и подписи съедали
+   треть ширины — значения пилюль пришлось ужимать до обрезки («openc…»
+   вместо «opencode»). Сетка отдаёт каждому уровню свою колонку, и обрезки
+   больше нет. Ширина колонок одинаковая: уровни выглядят одной шкалой,
+   а не четырьмя списками разной длины. */
+.chat-session-bar .provider__model--cascade {
+    display: grid;
+    grid-auto-flow: column;
+    grid-template-rows: auto auto;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    justify-items: stretch;
+    align-items: center;
+    gap: 6px 16px;
+}
+
+/* Подпись уровня — как подзаголовок у провайдера в настройках
+   (.provider-list__heading): мелкая прописная надпись.
+
+   Сдвиг подписи вправо — на столько же, на сколько текст внутри пилюли:
+   у select браузер добавляет к полям свои несколько пикселей, и без
+   сдвига подпись встала бы левее значения, а не над ним. */
+.chat-session-bar .provider__model-label {
+    padding-left: 14px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #6a6f78;
+}
+
+/* Пилюля уровня: рамка и высота, как у настоящего контрола. Без рамки она
+   тонула в фоне полосы и не читалась как управление. Значение стоит слева,
+   под подписью: колонка из подписи и значения читается как одна ячейка */
+.chat-session-bar .provider__select {
+    height: 32px;
+    padding: 0 8px;
+    border-color: #2e3138;
+    color: #e9e9ec;
+    text-align: left;
+    text-align-last: left;
+}
+
+.chat-session-bar .provider__select:hover { border-color: #3a3d45; }
 
 /* ---------- лента ---------- */
 

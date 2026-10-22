@@ -465,8 +465,7 @@
     padding: 8px 12px;
 }
 
-.flow-node__footer--controls .flow-node__control,
-.chat-session-bar .flow-node__control {
+.flow-node__footer--controls .flow-node__control {
     flex: 1 1 64px;
     min-width: 64px;
     padding: 4px 10px;
@@ -480,14 +479,12 @@
     transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
-.flow-node__footer--controls .flow-node__control:hover,
-.chat-session-bar .flow-node__control:hover {
+.flow-node__footer--controls .flow-node__control:hover {
     background: #2a2d34;
     color: #f2f2f4;
 }
 
-.flow-node__footer--controls .flow-node__control:focus-visible,
-.chat-session-bar .flow-node__control:focus-visible {
+.flow-node__footer--controls .flow-node__control:focus-visible {
     outline: none;
     border-color: #6ea8fe;
     color: #f2f2f4;
