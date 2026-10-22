@@ -21,9 +21,10 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    /* правый отступ шире левого: под значок версии, который стоял в этом углу
-       поверх страницы; теперь он в верхней панели (SYSTEM/topbar.eta) */
-    padding: calc(var(--topbar-height) + 4px) 90px 16px 16px;
+    /* поля равные: справа 90px держали под значок версии, который висел в
+       этом углу поверх страницы; теперь значок в верхней панели
+       (SYSTEM/topbar.eta, решение 128) и поле убрано — колонка встала по центру */
+    padding: calc(var(--topbar-height) + 4px) 16px 16px 16px;
 }
 
 .telegram__messages {
