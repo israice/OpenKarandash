@@ -18,15 +18,19 @@ const { sendHtml } = require('./core/http.js');
 // держит шаблоны сосед. cache:false — правка .eta видна без перезапуска сервера
 const eta = new Eta({ views: __dirname, cache: false });
 
-// вся статика меню: данных подстановки нет, шаблон не принимает их и не просит
-function render() {
-    return eta.render('topbar');
+// вся статика меню; единственные данные в нём — подпись версии (it.version).
+// Саму версию отсюда не читаем: модуль версии тянет этот файл (renderPage
+// подставляет верхнее меню в страницу), и чтение оттуда замкнуло бы круг в
+// графе модулей. Поэтому версию передают снаружи — и в страницу (renderPage),
+// и в маршрут (createRoutes)
+function render(data) {
+    return eta.render('topbar', data);
 }
 
-function createRoutes() {
+function createRoutes({ currentVersion }) {
     return {
         '/api/fragment/topbar': (req, res) => {
-            sendHtml(res, render());
+            sendHtml(res, render({ version: currentVersion() }));
         },
     };
 }

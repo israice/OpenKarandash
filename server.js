@@ -77,6 +77,10 @@ process.on('unhandledRejection', (reason) => {
 
 const graph = require('./PROJECTS/Graph/graph-server.js');
 
+// версия страницы — для подписи в верхнем меню (SYSTEM/topbar.eta): читает её
+// модуль версии, он же подставляет меню в страницу (SYSTEM/core/version.js)
+const { currentVersion } = require('./SYSTEM/core/version.js');
+
 // телеграм-мост Settings: ему нужен и .env (ключ бота), и способ начать ход
 // не из браузера — ответ человека в личке продолжает ту же сессию
 const telegram = require('./PROJECTS/Settings/telegram-server.js');
@@ -251,8 +255,9 @@ const featureRoutes = {
     // ничего на диске не создаётся — кнопка это только иконка и название
     ...require('./SYSTEM/toolbar-buttons-server.js').createRoutes({ db }),
     // верхнее меню страницы: шаблон SYSTEM/topbar.eta подставляется в страницу
-    // ещё и при отдаче (SYSTEM/core/version.js), маршрут отдаёт его же
-    ...require('./SYSTEM/topbar-server.js').createRoutes(),
+    // ещё и при отдаче (SYSTEM/core/version.js), маршрут отдаёт его же. Подпись
+    // версии в меню — из VERSION.md, читает её модуль версии (currentVersion)
+    ...require('./SYSTEM/topbar-server.js').createRoutes({ currentVersion }),
     ...branchPreview.createRoutes({ root: ROOT }),
     // два набора ничьих маршрутов: запуск любого CLI и общее хранилище переписок
     // (DOCS/decisions/017). Оформлены так же, как фичи, — таблицей путь → обработчик

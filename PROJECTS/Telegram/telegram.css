@@ -21,7 +21,8 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    /* правый отступ учитывает значок версии (position: fixed, .app-version в base.css) */
+    /* правый отступ шире левого: под значок версии, который стоял в этом углу
+       поверх страницы; теперь он в верхней панели (SYSTEM/topbar.eta) */
     padding: calc(var(--topbar-height) + 4px) 90px 16px 16px;
 }
 

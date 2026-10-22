@@ -12,7 +12,8 @@
     какой файл успел выполниться раньше.
 
     Собственного дизайна здесь нет: в шаблон переехало то, что лежало в
-    SYSTEM/index.html, плюс эти две кнопки и меню «+».
+    SYSTEM/index.html, плюс эти две кнопки, меню «+» и кнопка версии (она
+    раньше стояла поверх страницы в углу справа снизу).
 
     Динамика живёт в клиенте: пустые слоты под панели страниц кнопки «+» и
     сами кнопки созданных страниц добавляет SYSTEM/new-button.js — их список
@@ -148,3 +149,8 @@
         <li role="none"><button type="button" class="settings__item" role="menuitem">Settings</button></li>
     </ul>
 </div>
+
+<!-- Кнопка версии: подпись из VERSION.md приходит данными (it.version), окно
+     истории — #versionModal (SYSTEM/app.js). Стоит справа от шестерёнки
+     настроек: раньше она висела поверх страницы в углу и перекрывала её. -->
+<button type="button" class="app-version" id="appVersionButton" title="Version history"><%= it.version || '' %></button>

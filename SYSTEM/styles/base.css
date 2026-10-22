@@ -72,11 +72,10 @@ html[data-booting] body {
     min-height: var(--page-height);
 }
 
-/* версия из VERSION.md, подставляется сервером — видна на всех видах страницы */
+/* версия из VERSION.md, подставляется сервером — стоит в верхней панели справа
+   от шестерёнки настроек (SYSTEM/topbar.eta), поэтому позиционировать её
+   больше не нужно: её место задаёт ряд .topbar */
 .app-version {
-    position: fixed;
-    right: 12px;
-    bottom: 12px;
     padding: 3px 8px;
     border: 1px solid #2e3138;
     border-radius: 6px;
@@ -86,15 +85,15 @@ html[data-booting] body {
     font-size: 0.75rem;
     font-family: inherit;
     cursor: pointer;
-    z-index: 1400;
 }
 
 .app-version:hover { background: #1e2127; color: #5fd964; text-shadow: 0 0 4px rgba(95, 217, 100, 0.6); }
 
-/* кнопка сохранения редактора файлов — тот же ряд, что и кнопка версий, слева от неё */
+/* кнопка сохранения редактора файлов — в углу справа снизу: значок версии оттуда
+   уехал в верхнюю панель, место освободилось */
 #chatFileEditorSave {
     position: fixed;
-    right: 80px;
+    right: 12px;
     bottom: 12px;
     z-index: 1400;
 }

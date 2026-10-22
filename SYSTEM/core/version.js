@@ -62,12 +62,13 @@ function versionHistory() {
 // «$&» и «$'» своей подстановкой
 function renderPage(html, tail) {
     const page = html
-        .replace('{{TOPBAR}}', () => topbar.render())
+        // верхнее меню — с подписью версии: она живёт в шаблоне (SYSTEM/topbar.eta),
+        // а версию читает этот модуль, поэтому отдаём её данными
+        .replace('{{TOPBAR}}', () => topbar.render({ version: currentVersion() }))
         .replace('{{SESSION_VIEW}}', () => sessionsServer.renderView())
         .replace('{{TELEGRAM_VIEW}}', () => telegramServer.renderView())
         .replace('{{BOOK_VIEW}}', () => bookServer.renderView())
         .replace('{{SETTINGS_MODAL}}', () => settingsServer.renderView())
-        .replace('{{APP_VERSION}}', currentVersion())
         .replace('{{APP_HEAD}}', currentHead())
         .replace('{{VERSION_LIST}}', versionHistory());
     if (!tail) return page;

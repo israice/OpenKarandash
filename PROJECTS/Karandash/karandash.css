@@ -36,8 +36,8 @@ body.karandash-mode .comment-popover__button {
 /* рамка рисуется отдельным слоем, чтобы не менять стили самой страницы */
 .hover-frame {
     position: fixed;
-    /* выше .topbar и .app-version (макс. z-index на странице — 9000),
-       иначе рамка прячется под ними при наведении на их элементы */
+    /* выше .topbar (макс. z-index на странице — 9000), иначе рамка прячется
+       под ним при наведении на элементы верхнего меню */
     z-index: 9010;
     border: 2px solid #e5484d;
     border-radius: 3px;
