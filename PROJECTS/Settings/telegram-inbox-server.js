@@ -55,11 +55,8 @@ module.exports = function createInbox({ callApi, send, db, getUsers, keyboard, l
         return understood?.kind === 'explain' && (understood.kindConfidence ?? 0) >= ASK_MODE_CONFIDENCE ? 'Chat' : 'Action';
     }
 
-    // Первое письмо на поручение — сразу, до исполнителя: как jev понял, какого рода
-    // это дело (turn-judgment.js, вопрос kind). Исполнитель может быть слабой
-    // моделью и строки [PLAN] не дать вовсе, а человеку с телефона нужен знак, что
-    // его поняли верно, в первую же секунду (DOCS/decisions/064). Неуверенный или
-    // недоступный jev — общее «принял»: гадать вслух хуже, чем промолчать о виде
+    // Первое письмо на поручение — сразу, до исполнителя. Если тип поручения
+    // неизвестен, отправляем общее «принял»: гадать вслух хуже, чем промолчать о виде
     async function acknowledge(chatId, understood, sessionId) {
         const line = understood?.kindWords
             ? `🧭 Понял поручение как: ${understood.kindWords}. Приступаю.`

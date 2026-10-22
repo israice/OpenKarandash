@@ -2,9 +2,6 @@
 //
 //   1. машинная    — `npm run check` на рабочей копии ветки (SYSTEM/checks.js --root);
 //   2. интерфейс   — если ветка трогает клиент: прогон `/branch/<ветка>/` (SYSTEM/ui-walk.mjs);
-//   2а. подсказка jev — только если дано поручение (--task): по делу ли дифф и нет ли
-//      правок, которых не просили. Ветку по ней не отклоняют, она лишь говорит
-//      рецензенту, куда смотреть первым (turn-judgment.js, judgeBranch);
 //   3. дешёвый рецензент, 4. дорогой — их зовёт владелец сессии, не этот скрипт:
 //      решение о рецензенте принимает тот, кто ведёт работу (DOCS/decisions/049): скрипт только говорит,
 //      дошла ли ветка до рецензента, и отдаёт ему список правок.
@@ -91,20 +88,5 @@ if (!clientFiles.length) {
     if (walk.status !== 0) finish(1, 'на доработку', 'исполнителю: исправить ошибки интерфейса — рецензента не звать');
 }
 
-// 2а. подсказка jev рецензенту. Нет поручения, ключа или ответа — шага просто нет:
-// ветка доходит до рецензента, как доходила. Отклонить по этому числу нельзя
-let hint = '';
-let diff = '';
-try { diff = execFileSync('git', ['diff', `main...${branch}`], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }); } catch {}
-const { createRequire } = await import('node:module');
-const judged = await createRequire(import.meta.url)('./core/turn-judgment.js').judgeBranch({ task: task || '', diff, files: result.files }).catch(() => null);
-if (judged) {
-    const pct = (n) => (n === null ? '—' : `${Math.round(n * 100)}%`);
-    result.stages.push({ name: 'jev: дифф по поручению', ok: true, hint: true, note: `по делу ${pct(judged.onTask)}, лишнего ${pct(judged.offTask)}${judged.truncated ? ' (дифф усечён)' : ''}` });
-    if (judged.flagged) hint = 'jev видит в диффе правки, которых поручение не просило, — рецензенту смотреть их первыми; ';
-} else {
-    result.stages.push({ name: 'jev: дифф по поручению', ok: null, note: 'суждения нет (нет ключа или ответа)' });
-}
-
 const serverTouched = result.files.some((f) => f === 'server.js' || /-server\.js$/.test(f) || f.startsWith('SYSTEM/core/') || f.startsWith('SYSTEM/cli/'));
-finish(0, 'прошла машинные проверки', `${hint}дешёвый рецензент; дорогой проверяющий — только если дешёвый принял${serverTouched ? '. Ветка меняет сервер: предпросмотр этого не показывает, рецензенту смотреть код' : ''}`);
+finish(0, 'прошла машинные проверки', `дешёвый рецензент; дорогой проверяющий — только если дешёвый принял${serverTouched ? '. Ветка меняет сервер: предпросмотр этого не показывает, рецензенту смотреть код' : ''}`);

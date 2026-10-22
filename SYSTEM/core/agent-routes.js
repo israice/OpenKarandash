@@ -10,15 +10,11 @@ const homeworkHint = require('./homework-hint.js');
 
 // createRoutes({ agents, cooldowns, turnJudgment, runs })
 //
-// turnJudgment берём и под таким именем, каким его передаёт server.js: с прошлым
-// именем judgment в разборе аргументов он был undefined, и каждый ход падал на
-// turnJudgment.pickDecisionHints — TypeError улетал из уже начатого потока в
-// api.js, тот отвечал JSON поверх отправленных заголовков, процесс падал по
-// ERR_HTTP_HEADERS_SENT, и вкладка получала «Failed to fetch» вместо хода
+// turnJudgment приходит отдельной зависимостью, чтобы необязательные метаданные
+// хода не смешивались с запуском CLI.
 function createRoutes({ agents, cooldowns, turnJudgment, runs }) {
     const { byName, ask } = agents;
-    // подсказки — украшение хода, а не его условие: без суждения или без ключа
-    // TypeSafe ход идёт как раньше
+    // подсказки — украшение хода, а не его условие
     const pickHints = (prompt) => (turnJudgment && turnJudgment.pickDecisionHints
         ? turnJudgment.pickDecisionHints(prompt).catch(() => null)
         : Promise.resolve(null));
@@ -101,9 +97,7 @@ function createRoutes({ agents, cooldowns, turnJudgment, runs }) {
             };
 
             // записки DOCS/decisions, обязательные к прочтению именно под этот
-            // запрос, — подбирает TypeSafe (DOCS/decisions/051). Ждём: подсказка
-            // должна уехать вместе с запросом, а не догонять его. Без ключа
-            // функция сразу отдаёт null, и ход идёт как есть.
+            // запрос, подмешиваются до запуска хода, если подбор доступен.
             // Ход ведёт тот CLI, что пришёл в body.agent, — тот, что выбран в
             // строке над сессией. Всё, что падает здесь, уже после writeHead,
             // поэтому ошибка уходит событием в поток, а не исключением из

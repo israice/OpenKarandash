@@ -76,7 +76,7 @@ function parseAsk(answer) {
 
 // Вопрос с вариантами, заданный обычным текстом: агент забыл про блок [ASK].
 // Сам разбор слеп — список в конце ответа бывает и перечнем сделанного, —
-// поэтому зовут его только когда jev уверен, что ход ждёт человека
+// поэтому зовут его только когда анализ уверен, что человек ждёт ответа
 // (awaits_human, DOCS/decisions/067). Берём строго хвост ответа: список
 // вариантов, над ним ближайшая строка с вопросительным знаком
 const LOOSE_OPTION_LINE = /^\s*(?:[-*•]|\d{1,2}[.)])\s+(.+?)\s*$/;
@@ -90,7 +90,7 @@ function parseLooseAsk(answer) {
     let at = start - 1;
     while (at >= 0 && !lines[at].trim()) at -= 1;
     const question = at >= 0 ? lines[at].trim().replace(/\*\*/g, '') : '';
-    // «Выберите тему:» — тоже вопрос; отчётное «Что сделано:» сюда не дойдёт — его отсекает jev
+    // «Выберите тему:» — тоже вопрос; отчётное «Что сделано:» сюда не дойдёт
     if (!/[?:]$/.test(question) || question.length > QUESTION_LIMIT) return null;
     return { question, options, multiple: false, rest: lines.slice(0, at).join('\n').trim() };
 }
@@ -260,7 +260,7 @@ function create({ database, callApi, users, runInSession, sessionExists, remembe
         const row = replyTo && pollByMessage.get(String(chatId), Number(replyTo));
         if (!row || row.answered_at) return false;
         // ответ словами часто называет готовый вариант («давай второй, но попроще»):
-        // какой именно — выбирает jev, а слова человека едут следом, чтобы
+        // какой именно — выбирает человек, а слова человека едут следом, чтобы
         // уточнение не потерялось. Не уверен — это свой вариант, как раньше
         const reply = String(text).trim();
         const options = JSON.parse(row.options).filter((o) => !o.own).map((o) => o.text);

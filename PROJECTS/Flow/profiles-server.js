@@ -14,8 +14,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { readJson, sendJson } = require('../../SYSTEM/core/http.js');
-const turnJudgment = require('../../SYSTEM/core/turn-judgment.js');
-
 const PROFILES_DIR = path.join(__dirname, 'profiles');
 const MEMORY_FILE = path.join('memories', 'skills.md');
 
@@ -114,24 +112,6 @@ function createRoutes() {
 
         '/api/flow/profile/memory/add': async (req, res) => {
             const body = await readJson(req);
-            // правило «только проверенный приём, без дублей» (DOCS/decisions/035)
-            // держалось на честности пишущего — теперь запись судит jev
-            // (judgeSkill, DOCS/decisions/068). Нет суждения — пишем, как раньше
-            const dir = profileDir(body.profile);
-            const file = dir && path.join(dir, MEMORY_FILE);
-            const titles = file && fs.existsSync(file)
-                ? [...fs.readFileSync(file, 'utf8').matchAll(/^## (.+)$/gm)].map((m) => m[1].trim())
-                : [];
-            const verdict = dir ? await turnJudgment.judgeSkill(body, titles).catch(() => null) : null;
-            if (verdict && !verdict.ok) {
-                sendJson(res, {
-                    ok: false,
-                    error: verdict.reason === 'duplicate'
-                        ? `Такой приём уже записан: «${verdict.of}». Дополни ту запись, а не заводи вторую`
-                        : 'Приём не подтверждён проверкой: в proof нужно, что именно запускали или наблюдали и что получилось. Непроверенное в память не пишут',
-                });
-                return;
-            }
             sendJson(res, appendSkill(body.profile, body));
         },
     };

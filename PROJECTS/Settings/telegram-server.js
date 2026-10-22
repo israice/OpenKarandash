@@ -121,8 +121,8 @@ async function send(chatId, text, replyMarkup, { keepInline = false } = {}) {
 
 // Зовётся из runTurn (SYSTEM/core/run-turn.js) без await: телеграм не должен ни задерживать
 // ход, ни ронять его своей ошибкой — поэтому внутри всё под try/catch
-// с какой уверенности jev «ход ждёт человека» список в конце ответа считаем
-// вариантами вопроса; высоко — ошибка превращает отчёт в опрос
+// с какой уверенностью анализ хода считает, что человек ждёт ответа, список
+// в конце ответа считаем вариантами вопроса; без анализа используется только [ASK]
 const LOOSE_ASK_CONFIDENCE = 0.8;
 
 async function notifyTurnFinished({ sessionId, title, text, errorText, steps, awaitsHuman }) {
@@ -140,7 +140,7 @@ async function notifyTurnFinished({ sessionId, title, text, errorText, steps, aw
         return;
     }
     // ответ кончается блоком [ASK] — вопрос уходит опросом, остальное письмом
-    // блока нет, но jev уверен, что ход ждёт человека, и ответ кончается
+    // блока нет, но локальные признаки показывают, что ход ждёт человека, и ответ кончается
     // вопросом со списком — это тот же вопрос, просто агент забыл про блок
     const ask = pollsModule.parseAsk(text)
         || ((awaitsHuman ?? 0) >= LOOSE_ASK_CONFIDENCE ? pollsModule.parseLooseAsk(text) : null);

@@ -46,7 +46,7 @@ function agentNameByTarget(targetId) {
 //   dbFns      — функции записи сообщений, которые нужны коннектору
 //   runTurn    — общая обвязка хода (SYSTEM/core/run-turn.js)
 //   handoff    — продолжение сессии и пересказ истории (SYSTEM/core/handoff.js)
-//   turnJudgment — суждения jev о ходе и о поломке (SYSTEM/core/turn-judgment.js)
+//   turnJudgment — необязательные локальные метаданные хода (SYSTEM/core/turn-judgment.js)
 //   telegramLetters — слова для человека о поломке (telegram-letters-server.js)
 //   runs       — реестр идущих ходов: «сервер уже уходит» знаем только он
 //

@@ -18,7 +18,7 @@ function create({ agentByName, agentNameByTarget, ask, turnJudgment, db, runs })
     // SYSTEM/cli/index.js; короткое `judgment` сюда не доезжало (см. там же)
     const judgment = turnJudgment || {};
     // Подсказки — украшение хода, а не его условие: без суждения (нет ключа
-    // TypeSafe, не доехал модуль) ход идёт как раньше, просто без записок
+    // необязательный модуль анализа не доехал — ход идёт как раньше, просто без записок
     const pickHints = (text) => (typeof judgment.pickDecisionHints === 'function'
         ? judgment.pickDecisionHints(text).catch(() => null)
         : Promise.resolve(null));

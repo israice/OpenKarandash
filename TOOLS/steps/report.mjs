@@ -270,7 +270,6 @@ function hintsSection() {
         if (sug.skill) skills += 1;
     }
     console.log(`  ходов с пометками: ${rows.length}; записки в ${notes}, приём в ${skills}`);
-    console.log('  где теряются запросы при подборе — node TOOLS/suggestions/trace.mjs (ходит в TypeSafe, медленно)');
 }
 await serverSection();
 stepsSection();
