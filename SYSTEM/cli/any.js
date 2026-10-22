@@ -275,7 +275,7 @@ function create(deps, name) {
         return { args: plain, cleanup: noop };
     }
 
-async function ask({ prompt, model, effort, sessionId, mode, hints, skill, homework, plan }, send) {
+async function ask({ prompt, model, effort, sessionId, mode, hints, skill, homework, plan, profile }, send) {
     if (!activeTarget) return send({ type: 'error', error: `${name} is not connected` });
     const target = activeTarget;
     if (!prompt) return send({ type: 'error', error: 'Empty request' });
@@ -298,7 +298,7 @@ async function ask({ prompt, model, effort, sessionId, mode, hints, skill, homew
         // запроса (он уже собран в handoff выше), а ради своих оценок: они
         // ложатся в result_meta хода
         try {
-            return await runTurn({ target, prompt, sessionId, model, effort, mode, plan, hints, skill, homework }, send, async (ctx) => {
+            return await runTurn({ target, prompt, sessionId, model, effort, mode, plan, hints, skill, homework, profile }, send, async (ctx) => {
                 // весь текст, который уходит в CLI, а не только вопрос человека
                 ctx.noteInput(text);
                 if (family === 'openclaw') {

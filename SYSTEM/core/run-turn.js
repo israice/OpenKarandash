@@ -34,7 +34,7 @@ function create(deps) {
     // сколько отложенный перезапуск сервера ждёт письмо о конце хода (см. finally)
     const MAIL_WAIT_MS = 30000;
 
-    return async function runTurn({ target, prompt, sessionId, model, effort, mode, plan, hints, skill, homework }, send, drive) {
+    return async function runTurn({ target, prompt, sessionId, model, effort, mode, plan, hints, skill, homework, profile }, send, drive) {
         // startedAt — момент начала именно этого хода: по нему панель Sessions
         // тикает «живую» длительность активной сессии (см. runs.activeStartedAt
         // и /api/fragment/session-list), пока finishExchange не зафиксирует
@@ -295,6 +295,7 @@ function create(deps) {
                                 : 'Ход делал лишнее сверх запроса — посмотрите шаги (только помечено, не остановлено)');
                         }
                     }
+                    await require('./skill-nudge.js').maybeNudge({ ctx, meta, prompt, judgment, agent: target.id, profile }); // «проверенное закрепляют» (072 п.4)
                     const notify = turnJudgment.shouldNotify(judgment, { errorText: ctx.errorText });
                     if (judgment) meta.resultMeta = { ...(meta.resultMeta || {}), judgment: { ...judgment, notified: notify } };
                     // что было подложено в запрос и с какими оценками. Это то, по

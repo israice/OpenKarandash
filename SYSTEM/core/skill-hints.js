@@ -220,4 +220,4 @@ function skillTrace(skill) {
     return { title: skill.title, match: skill.match };
 }
 
-module.exports = { pickSkill, skillPreamble, skillTrace, parseSkills, skillsOf };
+module.exports = { pickSkill, skillPreamble, skillTrace, parseSkills, skillsOf, profileFor };
