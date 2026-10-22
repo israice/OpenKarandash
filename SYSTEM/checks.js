@@ -240,6 +240,9 @@ run('циклические связи', process.execPath, [path.join(TOOLS, 'no
 // только граф server.js, а браузерный код он не грузит — и импорт несуществующего
 // экспорта не ловит ни одна из прежних проверок (DOCS/decisions/123)
 runReport('связи браузерных модулей', process.execPath, [path.join(TOOLS, 'SYSTEM', 'esm-links.js')]);
+// аргументы хода CLI: коннектор должен уметь собрать их, иначе ход не начнётся
+// вовсе, и человек увидит в чате ошибку вместо ответа (DOCS/decisions/127)
+runReport('аргументы хода CLI', process.execPath, [path.join(TOOLS, 'SYSTEM', 'cli-args-check.js'), '--root', ROOT]);
 // замок сервера: запуск, отказ, снятие и остановка. Проверка на временном файле,
 // настоящий замок работающего сервера она не трогает (DOCS/decisions/125)
 runReport('замок сервера', process.execPath, [path.join(TOOLS, 'SYSTEM', 'server-lock-check.js')]);

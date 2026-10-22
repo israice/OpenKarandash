@@ -259,7 +259,7 @@ function create(deps, name) {
             // глубина здесь «--variant», и она provider-specific: уезжает
             // только тем значением, которое эта модель знает (variantEfforts),
             // иначе CLI ответил бы ошибкой на незнакомый вариант
-            if (effort && (families.get(target)?.variants || []).includes(effort)) args.push('--variant', effort);
+            if (effort && (launchFlags(target).variants || []).includes(effort)) args.push('--variant', effort);
             if (resumeId) args.push('--session', resumeId);
             if (approve) args.push(approve);
             return { args, cleanup: noop };
