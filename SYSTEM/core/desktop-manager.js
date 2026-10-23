@@ -7,6 +7,7 @@ const token = process.env.DESKTOP_MANAGER_TOKEN || '';
 const repository = String(process.env.DESKTOP_REPOSITORY_URL || '').trim();
 const baseBranch = String(process.env.DESKTOP_BASE_BRANCH || 'main').trim() || 'main';
 const workspace = String(process.env.DESKTOP_WORKSPACE || '/home/desktop/workspace').trim();
+const opencodeBin = String(process.env.DESKTOP_OPENCODE_BIN || 'opencode').trim() || 'opencode';
 const gitName = process.env.DESKTOP_GIT_NAME || 'OpenKarandash worker';
 const gitEmail = process.env.DESKTOP_GIT_EMAIL || 'openkarandash-worker@localhost';
 const githubToken = String(process.env.DESKTOP_GITHUB_TOKEN || '').trim();
@@ -16,8 +17,9 @@ const headers = () => ({
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
 });
 
-async function jsonRequest(path, options = {}) {
+async function jsonRequest(path, options = {}, { notFoundIsSuccess = false } = {}) {
     const response = await fetch(`${baseUrl}${path}`, { ...options, headers: { ...headers(), ...(options.headers || {}) } });
+    if (notFoundIsSuccess && response.status === 404) return {};
     const text = await response.text();
     let body;
     try { body = text ? JSON.parse(text) : {}; } catch { body = { detail: text }; }
@@ -25,7 +27,7 @@ async function jsonRequest(path, options = {}) {
     return body;
 }
 
-async function exec(sessionId, command, workdir, { timeoutMs, onLine, onSpawn, env } = {}) {
+async function execRaw(sessionId, command, workdir, { timeoutMs, onLine, onSpawn, env } = {}) {
     const controller = new AbortController();
     const timer = timeoutMs ? setTimeout(() => controller.abort(), timeoutMs) : null;
     let execId = null;
@@ -90,28 +92,72 @@ async function exec(sessionId, command, workdir, { timeoutMs, onLine, onSpawn, e
     }
 }
 
+const openCodeBins = new Map();
+
+async function resolveOpenCodeBin(sessionId) {
+    if (openCodeBins.has(sessionId)) return openCodeBins.get(sessionId);
+    const candidates = opencodeBin === 'opencode'
+        ? ['opencode', '/home/desktop/.opencode/bin/opencode', '/usr/local/bin/opencode']
+        : [opencodeBin];
+    for (const candidate of candidates) {
+        try {
+            await execRaw(sessionId, [candidate, '--version'], '/home/desktop', { timeoutMs: 15000 });
+            openCodeBins.set(sessionId, candidate);
+            return candidate;
+        } catch {
+            // Try the next supported installation location.
+        }
+    }
+    throw new Error(`OpenCode was not found in desktop ${sessionId}`);
+}
+
+async function exec(sessionId, command, workdir, options = {}) {
+    const actualCommand = [...command];
+    if (actualCommand[0] === 'opencode' || actualCommand[0] === opencodeBin) {
+        actualCommand[0] = await resolveOpenCodeBin(sessionId);
+    }
+    return execRaw(sessionId, actualCommand, workdir, options);
+}
+
+async function ensureGit(sessionId) {
+    if (!repository) return;
+    try {
+        await exec(sessionId, ['git', '--version'], '/home/desktop', { timeoutMs: 15000 });
+    } catch (error) {
+        if (!String(error.message).includes('code 127')) throw error;
+        await exec(sessionId, ['sudo', 'apt-get', 'update'], '/home/desktop', { timeoutMs: 180000 });
+        await exec(sessionId, ['sudo', 'apt-get', 'install', '-y', 'git'], '/home/desktop', { timeoutMs: 180000 });
+    }
+}
+
 async function createDesktop(owner) {
     const created = await jsonRequest('/api/sessions', {
-        method: 'POST', body: JSON.stringify({ inherit: false, wait: 120 }),
+        method: 'POST', body: JSON.stringify({ inherit: true, wait: 120 }),
     });
     return { id: created.id, url: created.url, owner };
 }
 
-async function prepareDesktop(desktopId, sessionId) {
+async function prepareStandby(desktopId) {
+    await resolveOpenCodeBin(desktopId);
     if (!repository) {
         await exec(desktopId, ['mkdir', '-p', workspace], '/home/desktop', { timeoutMs: 30000 });
-        return { branch: `worker/${sessionId}`, status: 'ready' };
+        return;
     }
-    const branch = `worker/${String(sessionId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80)}`;
+    await ensureGit(desktopId);
     const authEnv = githubToken ? {
         GIT_CONFIG_COUNT: '1',
         GIT_CONFIG_KEY_0: 'http.extraheader',
-        GIT_CONFIG_VALUE_0: `Authorization: Bearer ${githubToken}`,
+        GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${githubToken}`).toString('base64')}`,
         GIT_TERMINAL_PROMPT: '0',
     } : undefined;
     await exec(desktopId, ['git', 'clone', '--depth', '1', '--branch', baseBranch, repository, workspace], '/home/desktop', {
         timeoutMs: 300000, env: authEnv,
     });
+}
+
+async function prepareDesktop(desktopId, sessionId) {
+    if (!repository) return { branch: `worker/${sessionId}`, status: 'ready' };
+    const branch = `worker/${String(sessionId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80)}`;
     await exec(desktopId, ['git', 'checkout', '-b', branch], workspace, { timeoutMs: 30000 });
     await exec(desktopId, ['git', 'config', 'user.name', gitName], workspace, { timeoutMs: 30000 });
     await exec(desktopId, ['git', 'config', 'user.email', gitEmail], workspace, { timeoutMs: 30000 });
@@ -120,7 +166,10 @@ async function prepareDesktop(desktopId, sessionId) {
 
 async function destroyDesktop(id) {
     if (!id) return;
-    await jsonRequest(`/api/sessions/${encodeURIComponent(id)}?delete_data=true`, { method: 'DELETE' });
+    await jsonRequest(`/api/sessions/${encodeURIComponent(id)}?delete_data=true`, { method: 'DELETE' }, {
+        notFoundIsSuccess: true,
+    });
+    openCodeBins.delete(id);
 }
 
 async function urlFor(id) {
@@ -130,6 +179,6 @@ async function urlFor(id) {
 function isEnabled() { return enabled; }
 
 module.exports = {
-    isEnabled, createDesktop, prepareDesktop, destroyDesktop, urlFor, exec,
-    repository, baseBranch, workspace, githubToken,
+    isEnabled, createDesktop, prepareStandby, prepareDesktop, destroyDesktop, urlFor, exec,
+    repository, baseBranch, workspace, githubToken, opencodeBin, resolveOpenCodeBin,
 };

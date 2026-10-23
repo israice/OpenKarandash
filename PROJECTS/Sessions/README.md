@@ -61,6 +61,7 @@ Endpoints (all `POST`, localhost only):
 | `/api/agent/stop` | stops the process of the given session |
 | `/api/fragment/session-list` | the session list of the side panel, rendered as HTML by `sessions-server.js` |
 | `/api/sessions` | the session list with `running`, the message count and the number waiting |
+| `/api/sessions/new` | creates and returns a chat session immediately; on the first turn, the chat adopts the already-prepared standby desktop |
 | `/api/sessions/messages` | the conversation of one session (questions, answers, steps) |
 | `/api/sessions/attach` | the stream of remaining events of work in progress |
 | `/api/sessions/thumb` | the element preview for a session started from Karandash mode |
@@ -71,6 +72,8 @@ Endpoints (all `POST`, localhost only):
 **The queue.** Jobs from all CLIs run strictly one at a time: no more than one turn runs in parallel. A new run waits until the ones already going have finished.
 
 **Storage.** SQLite in the file `DATA/.sessions.db` (`node:sqlite`, no dependencies, `journal_mode = WAL`). The tables are `sessions` and `messages`; the `tool` role holds the work steps. Writing to the database never reloads the tab: the page follows commits, not file writes.
+
+**Linux desktops.** In the root Docker Compose setup, OpenKarandash and the desktop manager start together. The manager's main desktop is the template; OpenKarandash also keeps one prepared standby desktop running. A chat adopts that standby on its first turn, while a replacement standby is prepared in the background. CLI detection/model discovery use the standby without assigning it to a chat; each streamed turn runs in the chat's own desktop, and the session-list button opens that container. Thus, with `N` active chat desktops, the expected manager total is `N + 2` (main template, standby, and one per chat). Deleting a chat removes its container and home-volume data but preserves the standby; other CLI choices continue through their existing executors.
 
 **Tab state.** The CLI environment, the model and the current session id live in `localStorage`. After a reload the page restores the connection on the server, and if the same session is still running it opens it by itself and watches the rest of the stream. The session list refreshes every 8 seconds.
 

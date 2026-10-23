@@ -38,10 +38,10 @@ function variantEfforts(help) {
 
 // create(): семейство узнаётся один раз на цель и запоминается — `--help` при
 // каждом ходе стоил бы целого запуска процесса
-function create() {
+function create(captureCommand = capture) {
     const families = new WeakMap();
     return {
-        capture,
+        capture: captureCommand,
         // Помощь спрашивается прямой capture, а не через spawn.js: kilo печатает
         // её в stderr, а spawn.js отдаёт stderr только текстом ошибки — по нему
         // family остался бы «plain», и ход пошёл бы без потока событий и без
@@ -51,14 +51,16 @@ function create() {
         // случаем
         async of(target) {
             if (families.has(target)) return families.get(target).family;
-            let help = capture(target, ['--help']);
+            let help = await captureCommand(target, ['--help']);
             // Признак прежний («run [message]») в новой справке opencode не
             // встречается: там в списке команд просто «run — Run OpenCode with a
             // message», а usage-строка «opencode run [flags] [<message...>]», —
             // и по старому признаку подкоманда не опознавалась: семейство
             // оставалось plain, ход шёл без --model и без потока событий, а
             // каталог моделей был пуст
-            if (/^\s*run\s/im.test(help) || /run \[/i.test(help)) help += capture(target, ['run', '--help']);
+            if (/^\s*run\s/im.test(help) || /run \[/i.test(help)) {
+                help += await captureCommand(target, ['run', '--help']);
+            }
             const family = familyOf(help);
             // уровни размышления и флаг одобрения прав запоминаются рядом с
             // семейством — из той же справки, второй их запуск стоил бы целого

@@ -217,15 +217,6 @@ function create(deps) {
             // конкретный ход, видно в result_meta этого сообщения
             ctx.userPosition = startExchange(ctx.session, prompt, target.id, meta.model, meta.effort);
             setMessageMode.run(mode || null, ctx.session, ctx.userPosition);
-            if (ensureDesktop) {
-                try {
-                    const desktopSessionId = await ensureDesktop(ctx.session);
-                    if (desktopSessionId) target.desktopSessionId = desktopSessionId;
-                } catch (error) {
-                    ctx.fail(`Desktop preparation failed: ${error.message}`);
-                    throw error;
-                }
-            }
             runs.open(ctx.session);
             ctx.emit({ type: 'session', id: ctx.session });
             // без этого push сессия появлялась в списке только у вкладки, которая её
@@ -234,8 +225,17 @@ function create(deps) {
             if (live.clientCount()) {
                 live.notifyClients('fragment:session-list');
             }
+            if (ensureDesktop && target.desktop) {
+                try {
+                    const desktopSessionId = await ensureDesktop(ctx.session);
+                    if (desktopSessionId) target.desktopSessionId = desktopSessionId;
+                } catch (error) {
+                    ctx.fail(`Desktop preparation failed: ${error.message}`);
+                    throw error;
+                }
+            }
             await drive(ctx);
-            if (finalizeDesktop && !ctx.errorText) {
+            if (finalizeDesktop && target.desktop && !ctx.errorText) {
                 await finalizeDesktop(ctx.session, `OpenCode: ${prompt.slice(0, 120)}`).catch((error) => {
                     ctx.notice('desktop.git', `Git finalization failed: ${error.message}`);
                 });

@@ -70,6 +70,12 @@ db.exec(`
         PRIMARY KEY (session_id, target)
     );
 
+    CREATE TABLE IF NOT EXISTS desktop_standby (
+        slot INTEGER PRIMARY KEY CHECK (slot = 1),
+        desktop_session_id TEXT NOT NULL,
+        desktop_url TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS messages (
         session_id TEXT NOT NULL,
         position INTEGER NOT NULL,

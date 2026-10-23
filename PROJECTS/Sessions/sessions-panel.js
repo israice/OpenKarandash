@@ -12,8 +12,8 @@ import { api, confirmModal } from '../../SYSTEM/app.js';
 import {
     saveAllProviderStates, updateContextGauge,
 } from '../../SYSTEM/providers.js';
-import { renderSessionBarControls } from '../../SYSTEM/session-model-bar.js';
-import { addPending } from './sessions-feed.js';
+import { getActiveProviderId, renderSessionBarControls } from '../../SYSTEM/session-model-bar.js';
+import { addMessage, addPending } from './sessions-feed.js';
 
 // ---------- текущая сессия и черновик ----------
 
@@ -125,26 +125,51 @@ function syncDraftRow() {
 }
 
 // Чистый лист для новой сессии: снимаем выбор, чистим ленту и сразу
-// показываем в списке черновик — реальная сессия появится из первого же
-// сообщения. Общий вход и для кнопки New, и для повторного клика по
+// показываем черновик, пока сервер закрепляет за новой сессией подготовленный
+// десктоп. Общий вход и для кнопки New, и для повторного клика по
 // выбранной строке, и для пустой базы: состояния «сессия не выбрана» у
 // вкладки не бывает вовсе, лента всегда принадлежит какой-то сессии или
 // черновику
+let creatingSession = null;
+
 export function startNewSession() {
+    if (creatingSession) return creatingSession;
     MissionFiles?.closeFilePanel(); // могла быть открыта панель редактирования файла
+    const agent = getActiveProviderId();
     setSessionId(null); // отсюда же в списке встаёт черновик (syncDraftRow)
     saveAllProviderStates();
     state.run += 1;
     state.list.innerHTML = '';
     updateContextGauge(null);
+    state.input.disabled = true;
+    state.send.disabled = true;
     state.input.focus();
+
+    creatingSession = (async () => {
+        try {
+            const { ok, id, error } = await api('/api/sessions/new', { agent });
+            if (!ok || !id) throw new Error(error || 'The server did not create a session');
+            setSessionId(id);
+            await loadSessions();
+        } catch (error) {
+            addMessage(`Could not create the chat session: ${error.message}`, 'error');
+            await loadSessions();
+        } finally {
+            state.input.disabled = false;
+            state.send.disabled = false;
+            creatingSession = null;
+            syncComposerBusy();
+            state.input.focus();
+        }
+    })();
+    return creatingSession;
 }
 
 // Удаление сессии из базы. Если удалили открытую — лента чистится, иначе
 // следующий вопрос ушёл бы в --resume несуществующей сессии
 export async function remove(id) {
     if (!id) return;
-    if (!await confirmModal('Delete this session from the database? This cannot be undone.', { title: 'Delete session' })) return;
+    if (!await confirmModal('Delete this chat session and permanently remove its Linux desktop and data, if it has one? This cannot be undone.', { title: 'Delete session' })) return;
 
     const { ok, error } = await api('/api/sessions/delete', { id });
     if (!ok) {
@@ -155,7 +180,7 @@ export async function remove(id) {
 
     clearDraft(id);
 
-    if (id === state.sessionId) startNewSession();
+    if (id === state.sessionId) await startNewSession();
 
     await loadSessions();
 }
