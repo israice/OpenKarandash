@@ -52,6 +52,8 @@ const writeStaleLock = () => {
     check(lock.read()?.child === process.pid, 'the lock does not name the holder');
 
     // 2. занятый замок не занимается второй раз
+    const future = new Date(Date.now() + 1000);
+    fs.utimesSync(FILE, future, future);
     const second = lock.acquire({ watchdogPid: null });
     check(!second.ok, 'a second instance took a lock that is already held');
     check(second.age >= 0, 'the refusal does not say how long the lock has been held');

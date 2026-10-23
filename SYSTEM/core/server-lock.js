@@ -60,7 +60,7 @@ function read() {
 // сколько миллисекунд прошло с последнего пульса; null — замка нет
 function heartbeatAge() {
     try {
-        return Date.now() - fs.statSync(LOCK_FILE).mtimeMs;
+        return Math.max(0, Date.now() - fs.statSync(LOCK_FILE).mtimeMs);
     } catch {
         return null;
     }
