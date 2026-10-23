@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { ensureNode } = require('./desktop-manager.js');
+const { ensureNode, resolveOpenCodeBin } = require('./desktop-manager.js');
 
 function execResponse(output = '', code = 0) {
     const events = [];
@@ -37,6 +37,46 @@ test('rejects a desktop image without the supported Node.js version', async () =
     global.fetch = async () => execResponse('v20.19.0\n');
     try {
         await assert.rejects(ensureNode('test-session'), /requires Node\.js 22; found v20\.19\.0/);
+    } finally {
+        global.fetch = previousFetch;
+    }
+});
+
+test('prefers the OpenCode binary persisted with the desktop home', async () => {
+    const previousFetch = global.fetch;
+    const calls = [];
+    global.fetch = async (_url, options) => {
+        const request = JSON.parse(options.body);
+        calls.push(request.command);
+        return execResponse();
+    };
+
+    try {
+        assert.equal(
+            await resolveOpenCodeBin('home-opencode-first'),
+            '/home/desktop/.opencode/bin/opencode',
+        );
+        assert.deepEqual(calls, [['/home/desktop/.opencode/bin/opencode', '--version']]);
+    } finally {
+        global.fetch = previousFetch;
+    }
+});
+
+test('falls back to the image OpenCode binary when the home install is unavailable', async () => {
+    const previousFetch = global.fetch;
+    const calls = [];
+    global.fetch = async (_url, options) => {
+        const request = JSON.parse(options.body);
+        calls.push(request.command);
+        return execResponse('', request.command[0] === '/home/desktop/.opencode/bin/opencode' ? 127 : 0);
+    };
+
+    try {
+        assert.equal(await resolveOpenCodeBin('image-opencode-fallback'), 'opencode');
+        assert.deepEqual(calls, [
+            ['/home/desktop/.opencode/bin/opencode', '--version'],
+            ['opencode', '--version'],
+        ]);
     } finally {
         global.fetch = previousFetch;
     }

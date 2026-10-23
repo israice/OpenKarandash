@@ -96,8 +96,10 @@ const openCodeBins = new Map();
 
 async function resolveOpenCodeBin(sessionId) {
     if (openCodeBins.has(sessionId)) return openCodeBins.get(sessionId);
+    // A persistent home can contain a newer CLI and its database; prefer them together
+    // instead of opening that database with the older image-level binary.
     const candidates = opencodeBin === 'opencode'
-        ? ['opencode', '/home/desktop/.opencode/bin/opencode', '/usr/local/bin/opencode']
+        ? ['/home/desktop/.opencode/bin/opencode', 'opencode', '/usr/local/bin/opencode']
         : [opencodeBin];
     for (const candidate of candidates) {
         try {
