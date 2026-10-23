@@ -24,3 +24,4 @@ v0.0.206 - удалены неиспользуемые файлы конфигу
 v0.0.207 - чат-сессии связаны с изолированными Linux desktop и OpenCode
 v0.0.208 - перед добовлением проекта в github
 v0.0.209 - Use a dedicated token for version PR validation (PR #3)
+v0.0.210 - Wait for version PR checks before enabling auto-merge (PR #5)
