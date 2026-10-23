@@ -592,7 +592,7 @@ class DockerControl:
 
     def remove_volume(self, name: str) -> bool:
         if not self.available:
-            return False
+            raise DockerUnavailable("Docker daemon is unavailable; cannot remove the desktop data volume")
         try:
             self.client.volumes.get(name).remove(force=True)
             log.info("removed volume %s", name)
@@ -600,8 +600,7 @@ class DockerControl:
         except NotFound:
             return False
         except DockerException as exc:
-            log.warning("could not remove volume %s: %s", name, exc)
-            return False
+            raise DockerUnavailable(f"could not remove volume {name}: {exc}") from exc
 
     # -------------------------------------------------------------- network
     # NOTE: no network mutation here on purpose. NETWORKS=0 on the socket proxy

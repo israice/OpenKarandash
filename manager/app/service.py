@@ -319,11 +319,21 @@ class SessionService:
         if (
             state.get("source") == main.id
             and state.get("image")
-            and size is not None
-            and size == state.get("size_rw")
             and self.docker.image_exists(state["image"])
         ):
-            return str(state["image"])
+            if size is not None and size == state.get("size_rw"):
+                return str(state["image"])
+            container_id = self._container_id(main)
+            attrs = self.docker.inspect(container_id) if container_id else None
+            source_image = attrs.get("Image") if attrs else None
+            if source_image and not self.docker.image_exists(source_image):
+                log.warning(
+                    "main session %s uses missing base image %s; reusing cached template %s",
+                    main.id,
+                    source_image,
+                    state["image"],
+                )
+                return str(state["image"])
 
         repository = base_image.rsplit(":", 1)[0] if ":" in base_image else base_image
         image = f"{repository}:{TEMPLATE_TAG_PREFIX}{time.strftime('%Y%m%d-%H%M%S')}"
@@ -445,6 +455,8 @@ class SessionService:
             "note": (
                 "home volume removed"
                 if volume_removed
+                else "home volume was already absent"
+                if delete_data
                 else f"home volume '{s.volume_name}' was kept, remove it manually with "
                      f"'docker volume rm {s.volume_name}'"
             ),

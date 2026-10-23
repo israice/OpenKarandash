@@ -42,7 +42,6 @@ services:
       args:
         RESOLUTION: "${SESSION_RESOLUTION:-1440x900}"
     image: "${DESKTOP_IMAGE:-webdesktop:lxde}"
-    container_name: wd-desktop-image
     # Replace the image ENTRYPOINT entirely: this container must only produce
     # the image and exit, it must not start a session.
     entrypoint: ["/bin/true"]
@@ -59,7 +58,6 @@ services:
       context: .
       dockerfile: manager/Dockerfile
     image: "${MANAGER_IMAGE:-webdesktop-manager:1.0.0}"
-    container_name: wd-manager
     restart: unless-stopped
     depends_on:
       desktop-image:
@@ -78,8 +76,8 @@ services:
       # Credentials are optional; they matter only with auto-login off or for
       # scripts. Leave empty and nothing asks for a password.
       MANAGER_PASSWORD: "${MANAGER_PASSWORD:-}"
-      MANAGER_API_TOKEN: "${MANAGER_API_TOKEN:-}"
-      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-}"
+      MANAGER_API_TOKEN: "${DESKTOP_MANAGER_TOKEN:-${MANAGER_API_TOKEN:-}}"
+      PUBLIC_BASE_URL: "${DESKTOP_PUBLIC_URL:-${PUBLIC_BASE_URL:-http://127.0.0.1:8080}}"
       # --- session defaults ---
       DESKTOP_IMAGE: "${DESKTOP_IMAGE:-webdesktop:lxde}"
       SESSION_RESOLUTION: "${SESSION_RESOLUTION:-1440x900}"
@@ -118,6 +116,12 @@ services:
       # Session metadata, deliberately outside every session volume.
       - manager-state:/var/lib/session-manager
     networks: [edge, sessions]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: 512m
@@ -132,6 +136,7 @@ services:
 
 volumes:
   manager-state:
+    name: webdesktop_manager-state
 
 networks:
   # Manager <-> host. Carries the published port.
