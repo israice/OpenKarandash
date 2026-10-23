@@ -173,7 +173,10 @@ function create(deps, name) {
     // каждом ходе означало бы платить целый запуск процесса за ничего
     const families = cliFamily.create();
 
-    const cli = (target, args, options) => run(target.cmd, [...target.args, ...args], options);
+    const cli = (target, args, options) => run(target.cmd, [...target.args, ...args], {
+        ...options,
+        desktopSessionId: target.desktopSessionId,
+    });
 
     // id цели — с префиксом-слигой: все цели идут в общую колонку sessions.target,
     // и по нему agentNameByTarget (SYSTEM/cli/index.js) понимает, чьим был ход

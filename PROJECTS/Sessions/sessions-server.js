@@ -53,6 +53,8 @@ function createRoutes({ sessions, usage, activeStartedAt }) {
                     // раз (DOCS/decisions/091) — теперь это /api/image/session-thumb
                     thumb: session.hasThumb ? `/api/image/session-thumb?id=${encodeURIComponent(session.id)}` : null,
                     running: session.running,
+                    desktopUrl: session.desktopUrl || null,
+                    desktopStatus: session.desktopStatus || null,
                     live: Boolean(startedAt),
                     tokensText,
                     startedAt,

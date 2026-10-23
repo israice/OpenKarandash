@@ -238,6 +238,7 @@
 /* копирование id и мусорка: видны при наведении и с клавиатуры. Прячем
    прозрачностью, а не display — иначе кнопки выпадают из tab-порядка */
 .session-copy,
+.session-desktop,
 .session-delete {
     position: absolute;
     top: 5px;
@@ -252,15 +253,19 @@
     transition: opacity 0.12s ease, background 0.15s, color 0.15s;
 }
 
+.session-desktop { top: 5px; right: 29px; }
 .session-copy { top: 27px; right: 5px; }
 .session-delete { right: 5px; }
 
+.session-row:hover .session-desktop,
+.session-desktop:focus-visible,
 .session-row:hover .session-copy,
 .session-copy:focus-visible,
 .session-row:hover .session-delete,
 .session-delete:focus-visible { opacity: 1; }
 
 .session-copy:hover { background: #262930; color: #f2f2f4; }
+.session-desktop:hover { background: #263a52; color: #9bc7ff; }
 .session-delete:hover { background: #4a2c2c; color: #f2b8b8; }
 
 .session-copy--copied { background: #1f3a2a; color: #6fe08c; opacity: 1; }

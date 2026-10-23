@@ -154,7 +154,13 @@ function execViaBridge(cmd, args, { timeoutMs, stallMs, onLine, onSpawn } = {}) 
 // run(cmd, args, { timeoutMs, stallMs, onLine, onSpawn }) — обе ветви (локальная и
 // мост) отдают одно и то же: stdout строкой, если onLine не задан, и по одной
 // строке в onLine, если задан. Таймаут, сторож молчания и Stop — тоже одни и те же
-function run(cmd, args, { timeoutMs, stallMs, onLine, onSpawn } = {}) {
+function run(cmd, args, { timeoutMs, stallMs, onLine, onSpawn, desktopSessionId } = {}) {
+    if (desktopSessionId) {
+        const desktopCommand = process.env.DESKTOP_OPENCODE_BIN || 'opencode';
+        return require('../core/desktop-manager.js').exec(desktopSessionId, [desktopCommand, ...args], '/home/desktop/workspace', {
+            timeoutMs, onLine, onSpawn,
+        });
+    }
     if (EXEC_MODE === 'remote') return execViaBridge(cmd, args, { timeoutMs, stallMs, onLine, onSpawn });
 
     return new Promise((resolve, reject) => {

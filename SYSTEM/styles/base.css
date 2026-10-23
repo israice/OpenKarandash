@@ -88,6 +88,8 @@ html[data-booting] body {
 }
 
 .app-version:hover { background: #1e2127; color: #5fd964; text-shadow: 0 0 4px rgba(95, 217, 100, 0.6); }
+.app-version__desktop-dot { display: none; width: 7px; height: 7px; margin-left: 5px; border-radius: 50%; background: #f5a623; vertical-align: middle; }
+.app-version--desktop-dirty .app-version__desktop-dot { display: inline-block; }
 
 /* кнопка сохранения редактора файлов — в углу справа снизу: значок версии оттуда
    уехал в верхнюю панель, место освободилось */

@@ -153,4 +153,4 @@
 <!-- Кнопка версии: подпись из VERSION.md приходит данными (it.version), окно
      истории — #versionModal (SYSTEM/app.js). Стоит справа от шестерёнки
      настроек: раньше она висела поверх страницы в углу и перекрывала её. -->
-<button type="button" class="app-version" id="appVersionButton" title="Version history"><%= it.version || '' %></button>
+<button type="button" class="app-version" id="appVersionButton" title="Version history"><span class="app-version__text"><%= it.version || '' %></span><span class="app-version__desktop-dot" aria-label="Desktop branch has changes" title="Desktop branch has changes"></span></button>

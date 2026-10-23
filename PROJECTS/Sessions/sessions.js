@@ -166,6 +166,8 @@ function bindPanel() {
             return; // клик по копированию не должен открывать сессию
         }
 
+        if (e.target.closest('.session-desktop')) return;
+
         const del = e.target.closest('.session-delete');
         if (del) {
             remove(del.dataset.deleteId);

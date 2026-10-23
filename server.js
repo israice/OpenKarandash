@@ -103,9 +103,17 @@ const {
     deleteSession, stampEvent, appendRaw, startExchange, extractTitle, sessionTitle, recordStep,
     recordHookStart, recordHookResponse, recordThinking, recordAssistantText, recordNotice,
     recordUnknownPart, recordSystemEvent, recordTopLevelEvent, finishExchange, originOfTarget,
+    setDesktop, getDesktop,
 } = require('./SYSTEM/core/sessions-db.js').open({
     ROOT, DATA_DIR: graph.DATA_DIR, agentNameByTarget: cliIndex.agentNameByTarget,
 });
+
+const desktopManager = require('./SYSTEM/core/desktop-manager.js');
+const desktopSessions = require('./SYSTEM/core/desktop-sessions.js').create({
+    desktop: desktopManager,
+    db: { setDesktop, getDesktop },
+});
+void desktopSessions.prewarm();
 
 // карта проекта (vault Obsidian) живёт в PROJECTS/Graph; здесь остаётся только её
 // запуск — маршруты папка отдаёт сама (graph.createRoutes в featureRoutes ниже)
@@ -183,6 +191,8 @@ notifyTurnFinished: (letter) => bridge.notifyTurnFinished(letter),
 runs,
     map,
     live: watch,
+    ensureDesktop: desktopSessions.ensure,
+    finalizeDesktop: desktopSessions.finalize,
 });
 
 cli = cliIndex.create({
@@ -274,11 +284,12 @@ const featureRoutes = {
     ...require('./SYSTEM/core/sessions-routes.js').createRoutes({
         db: {
             resetSessions, deleteSession, setSessionThumb, getSessionThumb, getMessageRole, setMessageText,
-            getSessionMeta, listMessages, sumSessionUsage,
+            getSessionMeta, listMessages, sumSessionUsage, getDesktop,
         },
         list: sessionList,
         map,
         runs,
+        desktopSessions,
     }),
 };
 

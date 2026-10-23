@@ -16,7 +16,7 @@ const THUMB_RE = /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/]+=*$/;
 // сводка сессий для списков (core/session-list.js), map — отложенная пересборка
 // карты проекта: список сессий попадает в vault, и без неё заметки останутся
 // старыми.
-function createRoutes({ db, list, map, runs }) {
+function createRoutes({ db, list, map, runs, desktopSessions }) {
     const {
         resetSessions, deleteSession, setSessionThumb, getSessionThumb, getMessageRole, setMessageText,
         getSessionMeta, listMessages, sumSessionUsage,
@@ -29,6 +29,9 @@ function createRoutes({ db, list, map, runs }) {
         },
 
         '/api/sessions/reset': async (req, res) => {
+            if (desktopSessions) {
+                for (const session of sessionSummaries()) await desktopSessions.destroy(session.id).catch(() => {});
+            }
             resetSessions();
             map.scheduleMapUpdate(); // список опустел — уберём и заметки о сессиях
             sendJson(res, { ok: true });
@@ -42,13 +45,17 @@ function createRoutes({ db, list, map, runs }) {
                 sendJson(res, { ok: false, error: 'No session specified' });
                 return;
             }
-            if (runs.isRunning(id)) {
-                sendJson(res, { ok: false, error: 'The session is still running' });
-                return;
-            }
+            if (runs.isRunning(id)) runs.stop(id);
+            try { await desktopSessions?.destroy(id); } catch { /* desktop may already be gone */ }
             deleteSession(id);
             map.scheduleMapUpdate(); // заметка удалённой сессии тоже должна уйти
             sendJson(res, { ok: true });
+        },
+
+        '/api/sessions/desktop': async (req, res) => {
+            const { id } = await readJson(req);
+            const desktop = id ? (db.getDesktop.get(id) || null) : null;
+            sendJson(res, { ok: Boolean(desktop), desktop });
         },
 
         // страница могла перезагрузиться посреди хода — она возвращается и
@@ -139,6 +146,17 @@ function createRoutes({ db, list, map, runs }) {
                 rateLimit,
                 usage: sumSessionUsage.get(id),
                 target: meta.target ?? null,
+                desktop: meta.desktopSessionId ? {
+                    id: meta.desktopSessionId,
+                    status: meta.desktopStatus || null,
+                    url: meta.desktopUrl || null,
+                    repository: meta.repository || null,
+                    branch: meta.branch || null,
+                    baseBranch: meta.baseBranch || null,
+                    lastCommit: meta.lastCommit || null,
+                    syncStatus: meta.syncStatus || null,
+                    error: meta.desktopError || null,
+                } : null,
                 // адресом, а не строкой data-URL: base64 ездил в каждом ответе,
                 // а карточка сессии в Feed перечитывается раз в секунду, пока идёт
                 // ход (см. /api/image/session-thumb)

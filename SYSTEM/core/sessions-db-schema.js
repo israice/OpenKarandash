@@ -189,6 +189,22 @@ try {
     db.exec('ALTER TABLE sessions ADD COLUMN target TEXT');
 } catch { /* колонка уже есть */ }
 
+// Desktop workspace owned by this chat session. The values are deliberately
+// plain metadata: Docker and Git remain owned by their respective services.
+for (const [col, type] of [
+    ['desktop_session_id', 'TEXT'],
+    ['desktop_status', 'TEXT'],
+    ['desktop_url', 'TEXT'],
+    ['repository', 'TEXT'],
+    ['branch', 'TEXT'],
+    ['base_branch', 'TEXT'],
+    ['last_commit', 'TEXT'],
+    ['sync_status', 'TEXT'],
+    ['desktop_error', 'TEXT'],
+]) {
+    try { db.exec(`ALTER TABLE sessions ADD COLUMN ${col} ${type}`); } catch { /* already present */ }
+}
+
 return { DB_FILE, db, backupBeforeSchemaChange };
 }
 

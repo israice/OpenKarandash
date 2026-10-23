@@ -32,6 +32,13 @@
                     <% } %>
                 </span>
             </button>
+            <% if (session.desktopUrl) { %>
+                <a class="session-desktop" href="<%= session.desktopUrl %>" target="_blank" rel="noopener" title="Open Linux desktop" aria-label="Open Linux desktop for <%= session.title %>">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path>
+                    </svg>
+                </a>
+            <% } %>
             <button type="button" class="session-copy" data-copy-id="<%= session.id %>" title="Copy a link to this session" aria-label="Copy a link to this session: <%= session.title %>">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>

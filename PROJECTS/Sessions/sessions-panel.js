@@ -73,6 +73,8 @@ function syncSelection() {
 export async function loadSessions() {
     try {
         const { sessions = [] } = await api('/api/sessions');
+        const dirty = sessions.some((session) => session.syncStatus && session.syncStatus !== 'clean');
+        document.getElementById('appVersionButton')?.classList.toggle('app-version--desktop-dirty', dirty);
         // сам список рисует сервер: этот же 'sessions-changed' слушает и
         // session-list — фрагмент подтянется сразу, не дожидаясь очередного
         // опроса по таймеру

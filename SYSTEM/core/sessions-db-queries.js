@@ -49,6 +49,17 @@ const setSessionThumb = db.prepare('UPDATE sessions SET thumb = ? WHERE id = ?')
 const setSessionContext = db.prepare('UPDATE sessions SET context_percent = ?, context_window = ? WHERE id = ?');
 const setSessionInfo = db.prepare('UPDATE sessions SET session_info = ? WHERE id = ?');
 const setSessionRateLimit = db.prepare('UPDATE sessions SET rate_limit = ? WHERE id = ?');
+const setDesktop = db.prepare(`
+    UPDATE sessions SET desktop_session_id = ?, desktop_status = ?, desktop_url = ?,
+        repository = ?, branch = ?, base_branch = ?, last_commit = ?, sync_status = ?, desktop_error = ?
+    WHERE id = ?
+`);
+const getDesktop = db.prepare(`
+    SELECT desktop_session_id AS desktopSessionId, desktop_status AS desktopStatus,
+        desktop_url AS desktopUrl, repository, branch, base_branch AS baseBranch,
+        last_commit AS lastCommit, sync_status AS syncStatus, desktop_error AS desktopError
+    FROM sessions WHERE id = ?
+`);
 
 const setMessageCreatedAt = db.prepare('UPDATE messages SET created_at = ? WHERE session_id = ? AND position = ?');
 const lastMessageTime = db.prepare('SELECT MAX(created_at) AS at FROM messages WHERE session_id = ?');
@@ -56,7 +67,7 @@ const lastMessageTime = db.prepare('SELECT MAX(created_at) AS at FROM messages W
 // Превью здесь нужно только как «есть или нет»: байты отдаёт
 // /api/image/session-thumb, а строки data-URL в ответе /api/sessions/messages
 // ездили заново при каждом перечитывании ленты (DOCS/decisions/091)
-const getSessionMeta = db.prepare('SELECT context_percent AS contextPercent, context_window AS contextWindow, session_info AS sessionInfo, rate_limit AS rateLimit, target, thumb IS NOT NULL AS hasThumb FROM sessions WHERE id = ?');
+const getSessionMeta = db.prepare('SELECT context_percent AS contextPercent, context_window AS contextWindow, session_info AS sessionInfo, rate_limit AS rateLimit, target, thumb IS NOT NULL AS hasThumb, desktop_session_id AS desktopSessionId, desktop_status AS desktopStatus, desktop_url AS desktopUrl, repository, branch, base_branch AS baseBranch, last_commit AS lastCommit, sync_status AS syncStatus, desktop_error AS desktopError FROM sessions WHERE id = ?');
 
 const getSessionTitle = db.prepare('SELECT title FROM sessions WHERE id = ?');
 
@@ -74,6 +85,7 @@ const getLastTurnParams = db.prepare(`
 // одних превью (DOCS/decisions/091)
 const listSessions = db.prepare(`
     SELECT s.id, s.title, s.updated_at AS updatedAt, s.thumb IS NOT NULL AS hasThumb,
+           s.desktop_status AS desktopStatus, s.desktop_url AS desktopUrl,
            s.rowid AS createdOrder,
            (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.role NOT IN ('tool', 'thinking', 'hook', 'system', 'unknown', 'top_level')) AS messageCount
     FROM sessions s
@@ -165,7 +177,7 @@ return {
     upsertMessage, setMessageUsage, setMessageToolCall, setMessageToolResult, setMessageToolIds,
     setMessageStopReason, setMessageMode, setMessageInputSent, setMessageResultMeta, setMessageExtraMeta,
     setMessageOrigin, setMessageRaw, getMessageRaw,
-    touchSession, setSessionThumb, setSessionContext, setSessionInfo, setSessionRateLimit,
+    touchSession, setSessionThumb, setSessionContext, setSessionInfo, setSessionRateLimit, setDesktop, getDesktop,
     setMessageCreatedAt, lastMessageTime, getSessionMeta, getSessionTitle, getLastTurnParams,
     listSessions, getSessionThumb, listMessages, countNeedsAttention, sumSessionUsage, countMessages,
     listToolSteps, countToolSteps, getMessageRole, setMessageText,
