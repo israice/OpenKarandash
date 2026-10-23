@@ -1,5 +1,7 @@
 .env
 /DATA/
+/DATA_new/
+/_scratch/
 /node_modules/
 
 # Hermes-стек (OpenKarandash-ykb): hermes — код hermes-agent, его не храним, а
@@ -12,10 +14,8 @@
 # jev-ultrafast (browser-use) — чужой код для управления браузером, клонируем сами
 # (PROJECTS/Browser/README.md); в git — только наша обвязка в PROJECTS/Browser
 /jev-ultrafast/
-# json-render и json-renderer — чужие репозитории для проверок jeв/типизированного
-# UI (TypeSafe System One). Каждый со своим .git; в git нашего проекта не идут и
-# из всех обходов исключены (SKIP в SYSTEM/checks.js, SYSTEM/core/scan.js,
-# ignores в eslint.config.mjs) — имён не хватало только здесь
+# json-render и json-renderer — чужие репозитории для UI-проверок. Каждый со своим
+# .git; в git нашего проекта не идут и из всех обходов исключены.
 /json-render/
 /json-renderer/
 claude-bridge/__pycache__/
