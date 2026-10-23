@@ -28,4 +28,5 @@ v0.0.5 - главная сессия как шаблон: одна сессия 
          снимается с главной при каждом создании сессии. API:
          POST /api/sessions/<id>/make-main, .../unmake-main,
          GET /api/template, POST /api/sessions с {"inherit": false}
+v0.0.7 - в новые рабочие столы добавлены Node.js 22 и npm
 v0.0.6 - добавлен opencode в новые сессии

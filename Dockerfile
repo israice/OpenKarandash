@@ -11,15 +11,22 @@
 ###############################################################################
 
 # =============================================================================
+#  STAGE 0 - Node.js runtime
+#
+#  Keep the desktop's Node version aligned with the app image. Projects cloned
+#  into a desktop can then run their npm scripts without installing Node first.
+# =============================================================================
+FROM node:22-bookworm AS node-runtime
+
+# =============================================================================
 #  STAGE 1 - package stage
 #
-#  Multi-stage IS used here for a concrete reason: apt writes ~250 MB of .deb
+#  The package stage is isolated for a concrete reason: apt writes ~250 MB of .deb
 #  files into /var/cache/apt/archives. Deleting them in the same RUN does not
 #  shrink the layer (a whiteout only hides them in the merged view), so a
 #  single-stage image would keep ~250 MB of dead weight. Copying the resulting
 #  filesystem into a clean second stage is what actually removes them.
-#  Both stages use the same debian:trixie-slim base, so the base layer is
-#  shared and NOT duplicated.
+#  The Node runtime comes from the app's official Node 22 base image below.
 # =============================================================================
 FROM debian:trixie-slim AS packages
 
@@ -192,6 +199,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # Clean filesystem of the package stage (no .deb cache, no apt lists)
 COPY --from=packages / /
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+ && node --version \
+ && npm --version \
+ && node -e "require('node:sqlite')"
 
 # LXDE session definition (window manager + GTK/icon theme). Replaces Debian's
 # default, which points at icon themes that are not installed here.
