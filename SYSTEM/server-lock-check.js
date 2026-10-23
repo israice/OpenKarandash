@@ -125,10 +125,11 @@ const writeStaleLock = () => {
         try { parent.kill(); } catch { /* уже мёртв */ }
     }
 
-    // 9. сервер умер, а замок остался: остановка убирает его и говорит, что
-    // сервера не было — иначе следующий запуск откажется
+    // 9. старый пульс без живого процесса: остановка убирает замок и говорит,
+    // что сервер уже не работал. Явно устаревшее время не зависит от расписания CI.
+    writeStaleLock();
     const stopped = await lock.stop();
-    check(stopped.reason === 'already-dead' || stopped.reason === 'stale', 'stop did not recognise a leftover lock');
+    check(stopped.reason === 'stale', 'stop did not recognise a leftover lock');
     check(!fs.existsSync(FILE), 'the leftover lock survived the stop');
 
     // 10. замок из другой среды (Windows против WSL) трогать нельзя: pid там

@@ -1,0 +1,102 @@
+name: Record merged project version
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: version-log-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  record-version:
+    if: github.event.pull_request.merged == true && !startsWith(github.event.pull_request.head.ref, 'automation/version-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Wait for the previous version PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          for attempt in {1..120}; do
+            open_versions="$(gh pr list --repo "$GH_REPO" --state open --base main --json headRefName --jq '[.[] | select(.headRefName | startswith("automation/version-"))] | length')"
+            if [ "$open_versions" -eq 0 ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "An earlier automated version PR did not merge in time." >&2
+          exit 1
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Create version entry
+        id: version
+        env:
+          VERSION_PR_TITLE: ${{ github.event.pull_request.title }}
+          VERSION_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          version="$(node TOOLS/record-version.js)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          entry="$(grep -F "$version - " VERSION.md | tail -n 1)"
+          echo "entry=$entry" >> "$GITHUB_OUTPUT"
+      - name: Open version PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ENTRY: ${{ steps.version.outputs.entry }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          branch="automation/version-${PR_NUMBER}-${RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add VERSION.md
+          git commit -m "$ENTRY"
+          git push origin "$branch"
+          pr_url="$(gh pr create --repo "$GH_REPO" --base main --head "$branch" --title "$ENTRY" --body "Automated version entry for merged PR #$PR_NUMBER. The project validation workflow is dispatched for this generated branch; merge queue checks the combined result against the latest main.")"
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+      - name: Validate generated version PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+        run: |
+          gh workflow run validate.yml --repo "$GH_REPO" --ref "$BRANCH"
+          for attempt in {1..180}; do
+            run_id="$(gh run list --repo "$GH_REPO" --workflow validate.yml --branch "$BRANCH" --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+            if [ -n "$run_id" ]; then
+              state="$(gh run view "$run_id" --repo "$GH_REPO" --json status,conclusion --jq '[.status, (.conclusion // "")] | join(" ")')"
+              if [[ "$state" == "completed success" ]]; then
+                exit 0
+              fi
+              if [[ "$state" == completed* ]]; then
+                gh run view "$run_id" --repo "$GH_REPO" --log-failed
+                exit 1
+              fi
+            fi
+            sleep 5
+          done
+          echo "Timed out waiting for validation of the generated version PR." >&2
+          exit 1
+      - name: Enable automatic merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_URL: ${{ steps.pr.outputs.url }}
+        run: gh pr merge "$PR_URL" --repo "$GH_REPO" --auto --squash
