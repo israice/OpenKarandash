@@ -1,8 +1,6 @@
 
 # RUN
 node server.js
-docker compose down
-docker compose up -d --build
 
 # RECOVERY
 git log --oneline -n 5
@@ -19,7 +17,6 @@ git commit -m "vX.Y.Z - что сделано"
 git push
 
 # DEV LOG
-v0.0.212 - поиск моделей и Node.js в базовом рабочем столе, исправлена Linux-проверка замка
 v0.0.203 - до добовления noVNC
 v0.0.204 - Penpot полностью удалён из проекта
 v0.0.205 - TypeSafe полностью удалён из проекта
