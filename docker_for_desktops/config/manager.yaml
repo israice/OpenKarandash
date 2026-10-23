@@ -1,0 +1,128 @@
+###############################################################################
+#  Session manager configuration
+#
+#  Every value here can be overridden with an environment variable using the
+#  prefix shown in the comment. Copy this file, edit it and restart the stack.
+###############################################################################
+
+manager:
+  # Port the manager listens on (env: MANAGER_PORT)
+  port: 8080
+  # Public base URL used when building session URLs returned by the API.
+  # Leave empty to build URLs from the incoming request (works out of the box).
+  # env: PUBLIC_BASE_URL, e.g. https://desktop.example.com
+  public_base_url: ""
+  # Directory for session metadata (env: STATE_DIR). NOT inside a session volume.
+  state_dir: /var/lib/session-manager
+  # Stop every session container when the manager stops (env:
+  # STOP_SESSIONS_ON_SHUTDOWN, default true). Session containers are created
+  # through the Docker API, so `docker compose down` cannot stop them; a running
+  # one keeps the internal `sessions` network busy and compose then fails with
+  # "Network webdesktop_sessions Resource is still in use".
+  # They are stopped, never removed: the next manager start resumes exactly the
+  # sessions that were running, and the home volumes are never touched.
+  stop_sessions_on_shutdown: true
+
+  auth:
+    # AUTO-LOGIN (env: MANAGER_AUTO_LOGIN, default true). When on, anyone who
+    # opens the URL is logged in as `auto_user` - no password box, no login
+    # form, nothing to remember. This is the default on purpose: the service is
+    # meant to be used, not configured. Set it to false to fall back to plain
+    # HTTP Basic for every request.
+    auto_login: true
+    # Identity handed to an auto-logged-in visitor. Empty = same as `username`.
+    # (env: MANAGER_AUTO_LOGIN_USER)
+    auto_user: ""
+    # HTTP Basic credentials (env: MANAGER_USER / MANAGER_PASSWORD). Optional:
+    # needed only when auto-login is off, or for scripts that prefer explicit
+    # credentials. They never force a browser prompt while auto-login is on.
+    username: admin
+    password: ""
+    # Extra bearer token accepted by the REST API (env: MANAGER_API_TOKEN),
+    # useful for scripting. Empty means no token auth.
+    api_token: ""
+    # Comma separated list of allowed origins for the browser (env: ALLOWED_ORIGINS)
+    allowed_origins: ""
+
+  cors:
+    # Browser access is same-origin through the manager, so CORS is off by
+    # default. Enable only if a separate front-end needs to call the API.
+    enabled: false
+    allowed_origins: []
+
+session_defaults:
+  # Image used for every session. One image, N containers. (env: DESKTOP_IMAGE)
+  image: webdesktop:lxde
+  resolution: 1440x900           # env: SESSION_RESOLUTION
+  # VNC password (max 8 chars, RFB limitation). Empty = the session is only
+  # reachable through the authenticated manager. (env: SESSION_VNC_PASSWORD)
+  vnc_password: ""
+  # Extra env vars for the session container: {NAME: VALUE}
+  extra_env: {}
+
+resources:
+  # ---------------------------------------------------------------------
+  # Per-session container limits. These are HARD limits applied by Docker at
+  # container creation, not advisory values.
+  # ---------------------------------------------------------------------
+  per_session:
+    # Memory ceiling in MiB. 0 disables the limit. (env: SESSION_MEMORY_MB)
+    # Measured idle usage of an LXDE session is ~120-150 MB, so 512 MiB leaves
+    # generous headroom for a browser-free desktop plus a few GTK apps.
+    memory_mb: 512
+    # CPU quota in cores. 0.5 means "half a core". 0 disables the limit.
+    # (env: SESSION_CPUS)
+    cpus: 0.50
+    # CPU shares (relative weight). Used only when cpus == 0.
+    cpu_shares: 512
+    # Block device weight for IO scheduling. (env: SESSION_BLACKDEV_WEIGHT)
+    blkio_weight: 500
+    # PIDs cap - a runaway fork bomb in the desktop should not take the host.
+    pids_limit: 512            # env: SESSION_PIDS_LIMIT
+    # Swap is useless inside a hard memory limit and only adds IO stalls.
+    memory_swap_mb: 0
+    # Temporary filesystem size in MiB for the container's own /tmp (X socket,
+    # dbus socket, logs). User files live in the home volume, not here.
+    tmpfs_mb: 64               # env: SESSION_TMPFS_MB
+
+  # ---------------------------------------------------------------------
+  # Admission control. A new session is refused or queued when the host
+  # cannot take it. Running sessions are NEVER killed because of these limits.
+  # ---------------------------------------------------------------------
+  admission:
+    # Absolute ceiling on concurrent sessions. (env: MAX_SESSIONS)
+    max_sessions: 20
+    # Refuse a new session unless this much host memory is currently FREE,
+    # in MiB. This is the single most important guard on a small server.
+    # (env: MIN_FREE_MEMORY_MB)
+    min_free_memory_mb: 700
+    # ... and unless this much is free after the new session's limit is added
+    # to the committed amount. (env: RESERVE_MEMORY_MB)
+    reserve_memory_mb: 512
+    # Refuse when the filesystem holding the Docker data root has less than
+    # this many MiB free. (env: MIN_FREE_DISK_MB)
+    min_free_disk_mb: 2048
+    # Refuse when 1-minute load average per host CPU exceeds this.
+    # 0 disables the check. (env: MAX_LOAD_PER_CPU)
+    max_load_per_cpu: 4.0
+    # How many create requests may wait in the queue. (env: MAX_QUEUE)
+    max_queue: 10
+    # Queue behaviour when the server is busy: "queue" (wait) or "reject".
+    # (env: OVERLOAD_ACTION)
+    overload_action: queue
+    # How long a queued request waits before it gets HTTP 429. (env: QUEUE_TIMEOUT_S)
+    queue_timeout_s: 120
+
+logging:
+  level: INFO                   # env: LOG_LEVEL
+
+docker:
+  # Name prefix for session containers and home volumes. (env: SESSION_PREFIX)
+  name_prefix: wd
+  # How long to wait for the container healthcheck before declaring a session
+  # failed, in seconds. (env: SESSION_READY_TIMEOUT_S)
+  ready_timeout_s: 90
+  # Stop grace period handed to docker stop. (env: SESSION_STOP_TIMEOUT_S)
+  stop_timeout_s: 15
+  # Refresh interval for the cached resource sample. (env: RESOURCE_SAMPLE_S)
+  resource_sample_s: 5

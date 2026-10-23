@@ -1,0 +1,11 @@
+#!/bin/bash
+# lxde-restart - restart only the LXDE desktop (window manager, panel, desktop),
+# keeping the Xvfb display and the VNC server running so the browser stays
+# connected.
+set -euo pipefail
+
+echo "Restarting LXDE desktop..."
+pkill -u "$(id -u)" -f 'lxpanel|pcmanfm|lxsession|openbox|lxappearance|feh' 2>/dev/null || true
+sleep 1
+setsid startlxde >/dev/null 2>&1 &
+echo "Done."

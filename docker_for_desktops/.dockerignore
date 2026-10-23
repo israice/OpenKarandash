@@ -1,0 +1,21 @@
+**/__pycache__
+**/*.pyc
+**/*.tar.gz
+.git
+.gitignore
+
+# Session volumes / manager state never belong in the build context
+manager-state/
+state/
+
+# Test artefacts
+tests/artifacts/
+tests/*.log
+
+# Local overrides
+.env
+compose.tls.yaml
+Caddyfile
+
+# Documentation: kept out, the images do not need it
+*.md

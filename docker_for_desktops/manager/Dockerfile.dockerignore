@@ -1,0 +1,8 @@
+# Docker builds the manager from the repository root (it needs both manager/
+# and config/manager.yaml). This is the Dockerfile-specific ignore file, so the
+# desktop image build keeps using the root .dockerignore.
+**
+
+!manager/app/
+!manager/requirements.txt
+!config/manager.yaml

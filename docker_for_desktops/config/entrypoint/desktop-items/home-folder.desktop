@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Home
+Name[ru]=Домашняя папка
+Comment=Open the home directory
+Comment[ru]=Открыть домашний каталог
+Exec=pcmanfm
+Icon=user-home
+Terminal=false
+Categories=System;FileManager;
+StartupNotify=true

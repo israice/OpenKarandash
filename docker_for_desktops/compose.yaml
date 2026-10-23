@@ -1,0 +1,159 @@
+###############################################################################
+#  Web Linux Desktop
+#
+#  Up:    docker compose up -d --build
+#  Down:  docker compose down
+#
+#  Services:
+#    desktop-image   one-shot: builds/produces the shared desktop image and exits
+#    manager         FastAPI session manager + noVNC + VNC WebSocket proxy
+#
+#  Session containers are NOT listed here: Compose cannot express "N containers
+#  created on demand, each with its own volume, display and memory cap". The
+#  manager creates them through the Docker API with hard limits.
+#
+#  NO VNC PORT IS EVER PUBLISHED TO THE HOST. A session's RFB port exists only
+#  on the internal network and only the manager can reach it.
+#
+#  WINDOWS / DOCKER DESKTOP:
+#    * Docker Desktop for Windows does not mount /var/run/docker.sock on the
+#      Windows host, so there is no docker-socket-proxy. The manager talks to
+#      the daemon over TCP (host.docker.internal:2375). Enable
+#      "Expose daemon on tcp://localhost:2375 without TLS" in Docker Desktop
+#      settings before running.
+#    * Host paths /proc /sys /var/lib/docker do not exist on Windows, so the
+#      resource sampler reports host_visible: false and admission control uses
+#      container-local values only. Lower MIN_FREE_MEMORY_MB / MIN_FREE_DISK_MB
+#      in .env if sessions fail to start on a small machine.
+###############################################################################
+
+name: webdesktop
+
+services:
+  # ---------------------------------------------------------------------
+  # One shared desktop image for every session. This service only produces the
+  # image and exits, so `docker compose up -d --build` guarantees the image is
+  # present before the first session is created.
+  # ---------------------------------------------------------------------
+  desktop-image:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        RESOLUTION: "${SESSION_RESOLUTION:-1440x900}"
+    image: "${DESKTOP_IMAGE:-webdesktop:lxde}"
+    # Replace the image ENTRYPOINT entirely: this container must only produce
+    # the image and exit, it must not start a session.
+    entrypoint: ["/bin/true"]
+    command: []
+    healthcheck:
+      disable: true
+    restart: "no"
+
+  # ---------------------------------------------------------------------
+  # Session manager: REST API + noVNC static files + VNC WebSocket proxy.
+  # ---------------------------------------------------------------------
+  manager:
+    build:
+      context: .
+      dockerfile: manager/Dockerfile
+    image: "${MANAGER_IMAGE:-webdesktop-manager:1.0.0}"
+    restart: unless-stopped
+    depends_on:
+      desktop-image:
+        condition: service_completed_successfully
+    ports:
+      # Only the web UI/API is exposed. Put a TLS reverse proxy in front of
+      # this for anything that leaves the local machine.
+      # 127.0.0.1 by default: with auto-login on, reaching the URL is the
+      # login, so it must not be reachable from the network by accident.
+      - "${MANAGER_BIND:-127.0.0.1}:${MANAGER_PORT:-8080}:8080"
+    environment:
+      MANAGER_CONFIG: /app/config/manager.yaml
+      # --- auto-login: no password prompt, ever (the default) ---
+      MANAGER_AUTO_LOGIN: "${MANAGER_AUTO_LOGIN:-1}"
+      MANAGER_USER: "${MANAGER_USER:-admin}"
+      # Credentials are optional; they matter only with auto-login off or for
+      # scripts. Leave empty and nothing asks for a password.
+      MANAGER_PASSWORD: "${MANAGER_PASSWORD:-}"
+      MANAGER_API_TOKEN: "${DESKTOP_MANAGER_TOKEN:-${MANAGER_API_TOKEN:-}}"
+      PUBLIC_BASE_URL: "${DESKTOP_PUBLIC_URL:-${PUBLIC_BASE_URL:-http://127.0.0.1:8080}}"
+      # --- session defaults ---
+      DESKTOP_IMAGE: "${DESKTOP_IMAGE:-webdesktop:lxde}"
+      SESSION_RESOLUTION: "${SESSION_RESOLUTION:-1440x900}"
+      SESSION_VNC_PASSWORD: "${SESSION_VNC_PASSWORD:-}"
+      # --- per-session limits ---
+      SESSION_MEMORY_MB: "${SESSION_MEMORY_MB:-512}"
+      SESSION_CPUS: "${SESSION_CPUS:-0.5}"
+      SESSION_PIDS_LIMIT: "${SESSION_PIDS_LIMIT:-512}"
+      SESSION_TMPFS_MB: "${SESSION_TMPFS_MB:-64}"
+      # --- admission control ---
+      MAX_SESSIONS: "${MAX_SESSIONS:-20}"
+      MIN_FREE_MEMORY_MB: "${MIN_FREE_MEMORY_MB:-700}"
+      RESERVE_MEMORY_MB: "${RESERVE_MEMORY_MB:-512}"
+      MIN_FREE_DISK_MB: "${MIN_FREE_DISK_MB:-2048}"
+      MAX_LOAD_PER_CPU: "${MAX_LOAD_PER_CPU:-4.0}"
+      OVERLOAD_ACTION: "${OVERLOAD_ACTION:-queue}"
+      MAX_QUEUE: "${MAX_QUEUE:-10}"
+      QUEUE_TIMEOUT_S: "${QUEUE_TIMEOUT_S:-120}"
+      # On shutdown the manager STOPS (never removes) the session containers
+      # it created, so that `docker compose down` finds the sessions network
+      # free. Turn this off only if you intend to stop sessions by hand.
+      STOP_SESSIONS_ON_SHUTDOWN: "${STOP_SESSIONS_ON_SHUTDOWN:-1}"
+      SESSION_NETWORK: webdesktop_sessions
+      # Docker Desktop for Windows does not expose /var/run/docker.sock on the
+      # Windows host. Connect to the daemon over TCP instead (enable
+      # "Expose daemon on tcp://localhost:2375 without TLS" in Docker Desktop
+      # settings). host.docker.internal resolves to the Windows host from
+      # inside a container.
+      DOCKER_HOST: "${DOCKER_HOST:-tcp://host.docker.internal:2375}"
+      STATE_DIR: /var/lib/session-manager
+      NOVNC_ROOT: /usr/share/novnc
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    # Host paths /proc /sys /var/lib/docker do not exist on Windows. The
+    # resource sampler degrades gracefully (host_visible: false) without them.
+    volumes:
+      # Session metadata, deliberately outside every session volume.
+      - manager-state:/var/lib/session-manager
+    networks: [edge, sessions]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1.0
+    # Long enough for the SIGTERM handler to stop and remove every session
+    # container. Compose's default 10s is not: it would SIGKILL the manager
+    # mid-teardown and leave the sessions network in use again.
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+volumes:
+  manager-state:
+    name: webdesktop_manager-state
+
+networks:
+  # Manager <-> host. Carries the published port.
+  edge:
+    name: webdesktop_edge
+    driver: bridge
+  # Manager <-> session containers only. The VNC port is still NEVER
+  # published to the host: only a container attached to this network can
+  # reach it, and the only ones attached are the manager and the sessions.
+  #
+  # The network is deliberately NOT internal: a session needs the internet to
+  # install software (`sudo apt-get install`, curl | bash installers, pip).
+  # The price is that a session can also reach the host's published ports -
+  # on Docker Desktop for Windows it cannot even route to the host's IP, on
+  # Linux it can. A session is a throwaway desktop with its own volume, so
+  # the trade is deliberate; put the manager behind a firewall if that
+  # matters to you.
+  sessions:
+    name: webdesktop_sessions
+    driver: bridge

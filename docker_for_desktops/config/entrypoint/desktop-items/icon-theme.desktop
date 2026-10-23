@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Icon Theme
+Name[ru]=Тема оформления
+Comment=Choose the icon theme of this session (Tango, Adwaita)
+Comment[ru]=Выбор темы оформления сессии (Tango, Adwaita)
+Exec=set-icon-theme
+Icon=preferences-desktop-theme
+Terminal=true
+Categories=Settings;DesktopSettings;
+StartupNotify=true
