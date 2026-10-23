@@ -152,6 +152,11 @@ const watch = require('./SYSTEM/core/watch.js').create({
     pollMs: POLL_MS,
     onCommit: () => map.scheduleMapUpdate(),
 });
+const githubUpdater = require('./SYSTEM/core/github-updater.js').create({
+    root: ROOT,
+    runs,
+    notify: (event) => watch.notifyClients(event),
+});
 
 // слой CLI и телеграм-мост замыкают друг на друга: ход зовёт подхват исполнителя,
 // а мост умеет начать ход не из браузера. Обе ссылки разрешаются в момент вызова —
@@ -336,5 +341,8 @@ server.listen(PORT, process.env.HOST || '127.0.0.1', () => {
     if (LIVE_RELOAD) {
         watch.start();
         console.log('Auto-reload is on — the page reloads once per commit.');
+        githubUpdater.start();
+    } else if (process.env.GITHUB_AUTO_UPDATE === '1') {
+        console.error('GitHub auto-update requires NO_RELOAD=0 so the server can restart safely.');
     }
 });

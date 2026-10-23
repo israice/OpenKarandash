@@ -130,6 +130,18 @@ async function ensureGit(sessionId) {
     }
 }
 
+async function ensureNode(sessionId) {
+    const nodeVersion = (await exec(sessionId, ['node', '--version'], '/home/desktop', { timeoutMs: 15000 })).trim();
+    if (!/^v22\.\d+\.\d+$/.test(nodeVersion)) {
+        throw new Error(`Desktop image requires Node.js 22; found ${nodeVersion || 'no version'}`);
+    }
+    const npmVersion = (await exec(sessionId, ['npm', '--version'], '/home/desktop', { timeoutMs: 15000 })).trim();
+    if (!/^\d+\.\d+\.\d+$/.test(npmVersion)) {
+        throw new Error(`Desktop image requires npm; found ${npmVersion || 'no version'}`);
+    }
+    return {};
+}
+
 async function createDesktop(owner) {
     const created = await jsonRequest('/api/sessions', {
         method: 'POST', body: JSON.stringify({ inherit: true, wait: 120 }),
@@ -181,4 +193,5 @@ function isEnabled() { return enabled; }
 module.exports = {
     isEnabled, createDesktop, prepareStandby, prepareDesktop, destroyDesktop, urlFor, exec,
     repository, baseBranch, workspace, githubToken, opencodeBin, resolveOpenCodeBin,
+    repository, baseBranch, workspace, githubToken, ensureNode,
 };

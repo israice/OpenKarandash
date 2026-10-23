@@ -32,6 +32,49 @@ const RELOAD_SNIPPET = `
     let hold = false;   // идёт запрос к Claude — перезагрузка оборвала бы ответ
     let queued = false;
 
+    function showUpdateNotice(message) {
+        const notice = document.createElement('div');
+        notice.setAttribute('role', 'status');
+        notice.setAttribute('aria-live', 'polite');
+        notice.textContent = message;
+        Object.assign(notice.style, {
+            position: 'fixed', right: '16px', bottom: '16px', zIndex: '10000',
+            width: 'calc(100% - 32px)', maxWidth: '420px', padding: '12px 16px',
+            borderRadius: '8px', background: '#20242b', color: '#fff',
+            boxShadow: '0 4px 18px #0005', font: '14px/1.4 system-ui, sans-serif',
+        });
+        document.body.append(notice);
+        setTimeout(() => notice.remove(), 12000);
+    }
+
+    try {
+        if (sessionStorage.getItem('openkarandash-update-notice') === 'installed') {
+            sessionStorage.removeItem('openkarandash-update-notice');
+            showUpdateNotice('OpenKarandash was updated from GitHub.');
+        }
+    } catch {}
+
+    function onUpdate(status) {
+        if (status === 'available') {
+            showUpdateNotice('A GitHub update is available. It will be applied after active sessions finish.');
+        } else if (status === 'installed') {
+            try { sessionStorage.setItem('openkarandash-update-notice', 'installed'); } catch {}
+            showUpdateNotice('Update downloaded. The application is restarting safely.');
+        } else if (status.startsWith('blocked:')) {
+            const reason = status.slice(8);
+            const messages = {
+                branch: 'Update available; automatic pull only runs on the main deployment branch.',
+                'waiting-version': 'Update available; waiting for its version entry to reach GitHub.',
+                'changed-during-drain': 'Another GitHub commit arrived during the safe update window; it will be checked again.',
+                dependencies: 'Update requires dependency changes; rebuild the Docker image to continue.',
+                'local-changes': 'Update available, but local changes were found. They were not overwritten.',
+                diverged: 'Update available, but the local main branch has diverged from GitHub.',
+                failed: 'GitHub update could not be checked or applied. See the server log.',
+            };
+            showUpdateNotice(messages[reason] || 'GitHub update is blocked; see the server log.');
+        }
+    }
+
     // страница просит подождать, пока читает поток ответа
     window.__holdReload = (on) => {
         hold = on;
@@ -72,6 +115,7 @@ const RELOAD_SNIPPET = `
         source = new EventSource('/__reload');
         source.onmessage = (event) => {
             const data = event.data;
+            if (data.startsWith('update:')) { onUpdate(data.slice(7)); return; }
             // карта пересобирается позже самого коммита, поэтому у неё своё
             // событие: страницу перезагружать незачем, достаточно забыть прежнюю карту
             if (data === 'map') { window.__onMapUpdate && window.__onMapUpdate(); return; }

@@ -1,0 +1,35 @@
+name: Project validation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  project-check:
+    name: project-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run check
+      - name: Keep version assignment on the main branch
+        if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'automation/version-')
+        run: |
+          if [ -n "$(git diff --name-only origin/main...HEAD -- VERSION.md)" ]; then
+            echo "VERSION.md is assigned by the post-merge version workflow; remove it from this session PR." >&2
+            exit 1
+          fi
