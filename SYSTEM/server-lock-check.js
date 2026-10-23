@@ -125,10 +125,13 @@ const writeStaleLock = () => {
         try { parent.kill(); } catch { /* уже мёртв */ }
     }
 
-    // 9. сервер умер, а замок остался: остановка убирает его и говорит, что
-    // сервера не было — иначе следующий запуск откажется
+    // 9. сервер умер, а замок остался: остановка убирает его. На Linux сторож
+    // снимает замок перед выходом, поэтому «не запущен» тоже верный исход
     const stopped = await lock.stop();
-    check(stopped.reason === 'already-dead' || stopped.reason === 'stale', 'stop did not recognise a leftover lock');
+    check(
+        stopped.reason === 'already-dead' || stopped.reason === 'stale' || stopped.reason === 'not-running',
+        'stop did not recognise a leftover lock',
+    );
     check(!fs.existsSync(FILE), 'the leftover lock survived the stop');
 
     // 10. замок из другой среды (Windows против WSL) трогать нельзя: pid там

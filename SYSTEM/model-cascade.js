@@ -20,6 +20,7 @@ import { fillEffortLevel, saveEffort } from './model-effort.js';
 import { fillLevel, levelValues, HIDDEN_GATEWAYS, modelsFor, keepAbsent } from './model-cascade-fill.js';
 import { markCliLevel, watchCliLevel, remarkCliLevels } from './cli-mark.js';
 import { scanMarkOf, onCliScan } from './cli-scan.js';
+import { attachModelSearch } from './model-search.js';
 
 // ---------- выбор уровней ----------
 //
@@ -104,6 +105,7 @@ export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = fals
         select.setAttribute('aria-label', title);
         row.append(label, select);
         selects[key] = select;
+        if (key === 'model') attachModelSearch(select);
     }
 
     // Глубина размышления наполняется один раз и перерисовкой не трогается:
