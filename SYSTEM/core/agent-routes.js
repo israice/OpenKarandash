@@ -21,12 +21,12 @@ function createRoutes({ agents, cooldowns, turnJudgment, runs }) {
 
     return {
         '/api/agent/detect': async (req, res) => {
-            const { agent } = await readJson(req);
-            sendJson(res, { installs: await byName(agent).detect() });
+            const { agent, sessionId } = await readJson(req);
+            sendJson(res, { installs: await byName(agent).detect(sessionId) });
         },
 
         '/api/agent/connect': async (req, res) => {
-            const { agent, id } = await readJson(req);
+            const { agent, id, sessionId } = await readJson(req);
             const adapter = byName(agent);
             const targets = adapter.targets();
             // id окружения приходит из localStorage вкладки, а он стареет: у
@@ -36,8 +36,11 @@ function createRoutes({ agents, cooldowns, turnJudgment, runs }) {
             // «is not connected» при живо установленном CLI, хотя у pi
             // выбор один и гадать тут не о чем. Поэтому единственная цель
             // принимается вместо сохранённого имени
-            const target = targets.find((t) => t.id === id)
+            const selected = targets.find((t) => t.id === id)
                 || (targets.length === 1 ? targets[0] : null);
+            const target = selected
+                ? await adapter.resolveTarget(selected.id, sessionId)
+                : null;
             if (!target) {
                 sendJson(res, { ok: false, error: `Unknown environment: ${id}` });
                 return;

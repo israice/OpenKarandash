@@ -165,25 +165,55 @@ function parseVersion(stdout) {
 // Контракт наружу прежний (targets/detect/version/models/activate/connected/
 // ask), поэтому маршруты /api/agent/* одинаковы для любого имени
 function create(deps, name) {
-    const { runTurn, resumeAndHandoff, db } = deps;
+    const { runTurn, resumeAndHandoff, db, desktopSessions } = deps;
     const slug = slugOf(name);
+    const desktopOpenCode = slug === 'opencode' && desktopSessions?.isEnabled();
 
     let activeTarget = null;
-    // семейство протокола — навсегда для этой цели: спрашивать `--help` на
-    // каждом ходе означало бы платить целый запуск процесса за ничего
-    const families = cliFamily.create();
 
     const cli = (target, args, options) => run(target.cmd, [...target.args, ...args], {
         ...options,
         desktopSessionId: target.desktopSessionId,
     });
 
+    const captureTarget = async (target, args, timeoutMs = 20000) => {
+        if (!target.desktopSessionId) return capture(target, args, timeoutMs);
+        try {
+            return await cli(target, args, { timeoutMs });
+        } catch (error) {
+            return error.message || String(error);
+        }
+    };
+
+    // Семейство протокола — навсегда для этой цели: спрашивать `--help` на
+    // каждом ходе означало бы платить целый запуск процесса за ничего.
+    // OpenCode desktop проверяется через тот же exec-мост, что и сами ходы.
+    const families = cliFamily.create(captureTarget);
+
     // id цели — с префиксом-слигой: все цели идут в общую колонку sessions.target,
     // и по нему agentNameByTarget (SYSTEM/cli/index.js) понимает, чьим был ход
     function targets() {
+        if (desktopOpenCode) {
+            return [{
+                id: `${slug}-local`,
+                label: `${name} (Linux desktop)`,
+                cmd: String(process.env.DESKTOP_OPENCODE_BIN || 'opencode').trim() || 'opencode',
+                args: [],
+                desktop: true,
+            }];
+        }
         const command = resolveCommand(name);
         if (!command) return [];
         return [{ id: `${slug}-local`, label: name, cmd: command.cmd, args: command.args }];
+    }
+
+    async function resolveTarget(id, sessionId) {
+        const target = targets().find((candidate) => candidate.id === id);
+        if (!target) return null;
+        if (!target.desktop) return target;
+        const desktopSessionId = await desktopSessions.desktopIdFor(sessionId || null);
+        if (!desktopSessionId) return null;
+        return { ...target, desktopSessionId };
     }
 
     async function familyOfTarget(target) {
@@ -195,12 +225,26 @@ function create(deps, name) {
         return families.flags(target);
     }
 
-    async function detectInstalls() {
-        const checks = await Promise.allSettled(targets().map(async (target) => ({
-            id: target.id,
-            label: target.label,
-            version: parseVersion(await cli(target, ['--version'], { timeoutMs: DETECT_TIMEOUT_MS })),
-        })));
+    async function detectInstalls(sessionId) {
+        if (desktopOpenCode) {
+            const candidate = targets()[0];
+            const target = await resolveTarget(candidate.id, sessionId);
+            if (!target) throw new Error(`No desktop is available for ${name}`);
+            return [{
+                id: target.id,
+                label: target.label,
+                version: parseVersion(await cli(target, ['--version'], { timeoutMs: DETECT_TIMEOUT_MS })),
+            }];
+        }
+        const checks = await Promise.allSettled(targets().map(async (candidate) => {
+            const target = await resolveTarget(candidate.id, sessionId);
+            if (!target) throw new Error(`No desktop is available for ${name}`);
+            return {
+                id: target.id,
+                label: target.label,
+                version: parseVersion(await cli(target, ['--version'], { timeoutMs: DETECT_TIMEOUT_MS })),
+            };
+        }));
         return checks.filter((check) => check.status === 'fulfilled').map((check) => check.value);
     }
 
@@ -215,11 +259,11 @@ function create(deps, name) {
     async function fetchModels(target) {
         const family = await familyOfTarget(target);
         if (family === 'pi') {
-            const table = capture(target, ['--list-models'], MODELS_TIMEOUT_MS);
-            return piModels(table).length ? piModels(table) : boxedModels(capture(target, ['models', 'list'], MODELS_TIMEOUT_MS));
+            const table = await captureTarget(target, ['--list-models'], MODELS_TIMEOUT_MS);
+            return piModels(table).length ? piModels(table) : boxedModels(await captureTarget(target, ['models', 'list'], MODELS_TIMEOUT_MS));
         }
         if (family === 'opencode') {
-            const listing = capture(target, ['models'], MODELS_TIMEOUT_MS);
+            const listing = await captureTarget(target, ['models'], MODELS_TIMEOUT_MS);
             return opencodeModels(listing).length ? opencodeModels(listing) : boxedModels(listing);
         }
         if (family === 'openclaw') {
@@ -280,17 +324,18 @@ function create(deps, name) {
 
 async function ask({ prompt, model, effort, sessionId, mode, hints, skill, homework, plan, profile }, send) {
     if (!activeTarget) return send({ type: 'error', error: `${name} is not connected` });
-    const target = activeTarget;
+    const connectedTarget = activeTarget;
+    const target = { ...connectedTarget, desktopSessionId: null };
     if (!prompt) return send({ type: 'error', error: 'Empty request' });
 
-    const family = await familyOfTarget(target);
+    const family = await familyOfTarget(connectedTarget);
     const { resumeId, handoff } = await resumeAndHandoff(sessionId, target.id, hints, skill, homework, plan, prompt);
     const text = handoff + prompt;
     // флаг одобрения прав — из справки этого же CLI (headlessApproveFlag):
     // ход неинтерактивный, и право «спросить человека» в нём означало бы
     // молчаливый отказ на первом же шаге
-    const { approve } = launchFlags(target) || {};
-    const { args, cleanup, usage } = await buildArgs(target, family, { model, effort, resumeId, mode, text, approve });
+    const { approve } = launchFlags(connectedTarget) || {};
+    const { args, cleanup, usage } = await buildArgs(connectedTarget, family, { model, effort, resumeId, mode, text, approve });
     // уборка запуска: у openclaw и hermes запуск оставляет свои файлы (промпт в
     // файле, файл с учётом usage), и убирает их тот, кто их создал. Продолжение
     // хода собирает новый запуск — уборка переезжает на него, а прошлый убирается
@@ -345,7 +390,7 @@ async function ask({ prompt, model, effort, sessionId, mode, hints, skill, homew
                     // нет поля args, и продолжение хода падало с «args is not
                     // iterable» — ход умирал, не досказав ничего
                     buildArgs: async (resume) => {
-                        const built = await buildArgs(target, family, { model, effort, resumeId: resume, mode, text: CONTINUE_PROMPT, approve });
+                        const built = await buildArgs(connectedTarget, family, { model, effort, resumeId: resume, mode, text: CONTINUE_PROMPT, approve });
                         const past = cleanupRun;
                         cleanupRun = built.cleanup;
                         past();
@@ -363,6 +408,7 @@ async function ask({ prompt, model, effort, sessionId, mode, hints, skill, homew
         slug,
         targets,
         detect: detectInstalls,
+        resolveTarget,
         version: (target) => cli(target, ['--version'], { timeoutMs: DETECT_TIMEOUT_MS }).then(parseVersion),
         models: fetchModels,
         activate: (target) => { activeTarget = target; },

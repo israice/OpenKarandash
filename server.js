@@ -103,7 +103,7 @@ const {
     deleteSession, stampEvent, appendRaw, startExchange, extractTitle, sessionTitle, recordStep,
     recordHookStart, recordHookResponse, recordThinking, recordAssistantText, recordNotice,
     recordUnknownPart, recordSystemEvent, recordTopLevelEvent, finishExchange, originOfTarget,
-    setDesktop, getDesktop,
+    setDesktop, getDesktop, getStandbyDesktop, setStandbyDesktop, claimStandbyDesktop, clearStandbyDesktop,
 } = require('./SYSTEM/core/sessions-db.js').open({
     ROOT, DATA_DIR: graph.DATA_DIR, agentNameByTarget: cliIndex.agentNameByTarget,
 });
@@ -111,9 +111,14 @@ const {
 const desktopManager = require('./SYSTEM/core/desktop-manager.js');
 const desktopSessions = require('./SYSTEM/core/desktop-sessions.js').create({
     desktop: desktopManager,
-    db: { setDesktop, getDesktop },
+    db: {
+        setDesktop, getDesktop,
+        getStandbyDesktop, setStandbyDesktop, claimStandbyDesktop, clearStandbyDesktop,
+    },
 });
-void desktopSessions.prewarm();
+void desktopSessions.start().catch((error) => {
+    console.error(`[desktop] failed to prepare the standby desktop: ${error.message}`);
+});
 
 // карта проекта (vault Obsidian) живёт в PROJECTS/Graph; здесь остаётся только её
 // запуск — маршруты папка отдаёт сама (graph.createRoutes в featureRoutes ниже)
@@ -211,6 +216,7 @@ cli = cliIndex.create({
     turnJudgment,
     telegramLetters,
     runs,
+    desktopSessions,
 });
 
 // хранилище вкладки Flow (PROJECTS/Flow/flow.js) живёт на сервере, а не в
@@ -288,13 +294,14 @@ const featureRoutes = {
     ...require('./SYSTEM/cli/scan-server.js').createRoutes({ agents: cli.agents }),
     ...require('./SYSTEM/core/sessions-routes.js').createRoutes({
         db: {
-            resetSessions, deleteSession, setSessionThumb, getSessionThumb, getMessageRole, setMessageText,
+            resetSessions, deleteSession, upsertSession, setSessionThumb, getSessionThumb, getMessageRole, setMessageText,
             getSessionMeta, listMessages, sumSessionUsage, getDesktop,
         },
         list: sessionList,
         map,
         runs,
         desktopSessions,
+        targetIdForAgent: cliIndex.targetIdForAgent,
     }),
 };
 

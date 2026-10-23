@@ -156,8 +156,8 @@ function execViaBridge(cmd, args, { timeoutMs, stallMs, onLine, onSpawn } = {}) 
 // строке в onLine, если задан. Таймаут, сторож молчания и Stop — тоже одни и те же
 function run(cmd, args, { timeoutMs, stallMs, onLine, onSpawn, desktopSessionId } = {}) {
     if (desktopSessionId) {
-        const desktopCommand = process.env.DESKTOP_OPENCODE_BIN || 'opencode';
-        return require('../core/desktop-manager.js').exec(desktopSessionId, [desktopCommand, ...args], '/home/desktop/workspace', {
+        const desktop = require('../core/desktop-manager.js');
+        return desktop.exec(desktopSessionId, [desktop.opencodeBin, ...args], desktop.workspace, {
             timeoutMs, onLine, onSpawn,
         });
     }

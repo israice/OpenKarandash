@@ -20,6 +20,7 @@ import { fillEffortLevel, saveEffort } from './model-effort.js';
 import { fillLevel, levelValues, HIDDEN_GATEWAYS, modelsFor, keepAbsent } from './model-cascade-fill.js';
 import { markCliLevel, watchCliLevel, remarkCliLevels } from './cli-mark.js';
 import { scanMarkOf, onCliScan } from './cli-scan.js';
+import { attachModelSearch } from './model-search.js';
 
 // ---------- выбор уровней ----------
 //
@@ -75,9 +76,8 @@ export function modelOf(cliId) {
 // передаётся отсюда: он читает сохранённые уровни, а те живут в этом файле
 const modelsOf = (cliId) => modelsFor(cliId, modelOf);
 
-// Пять селектов в ряд: меню noVNC (пока только вид) и уровни CLI / Gateway /
-// Model / Effort. Поставщика отдельным
-// списком нет: это средний уровень пути модели, и человек выбирал не его, а
+// Четыре селекта в ряд: уровни CLI / Gateway / Model / Effort. Поставщика
+// отдельным списком нет: это средний уровень пути модели, и человек выбирал не его, а
 // модель целиком. Своим списком он показывал то, чего под выбранным шлюзом нет
 // (поставщика stealth у anthropic не бывает вовсе), и выбор разъезжался на две
 // строки: показанная пара «Provider / Model» не была ни одной настоящей
@@ -96,11 +96,7 @@ export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = fals
     const row = document.createElement('div');
     row.className = 'provider__model provider__model--cascade';
     const selects = {};
-    // noVNC стоит слева от уровней как отдельное меню (не уровень пути
-    // модели), поэтому первым в ряду. Пока только вид: список столов и порт
-    // стоят здесь же, без логики — наполнитель и сохранение придут вместе с
-    // самой noVNC
-    for (const [key, title] of [['novnc', 'noVNC'], ['cli', 'CLI'], ['gateway', 'Gateway'], ['model', 'Model'], ['effort', 'Effort']]) {
+    for (const [key, title] of [['cli', 'CLI'], ['gateway', 'Gateway'], ['model', 'Model'], ['effort', 'Effort']]) {
         const label = document.createElement('span');
         label.className = 'provider__model-label';
         label.textContent = `${title}:`;
@@ -109,23 +105,12 @@ export function modelCascadeRow({ cliIds, cli, model, onChange, addOption = fals
         select.setAttribute('aria-label', title);
         row.append(label, select);
         selects[key] = select;
-    }
-
-    // Столы noVNC: пока один, UI без логики — имя и порт, на котором он
-    // доступен, стоят прямо здесь (`webdesktop:lxde - ${port}` — формат
-    // человека, логики пока нет)
-    for (const [value, label] of [['', '—'], ['linux-desktop:6080', 'webdesktop:lxde - 6080']]) {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = label;
-        selects.novnc.append(option);
+        if (key === 'model') attachModelSearch(select);
     }
 
     // Глубина размышления наполняется один раз и перерисовкой не трогается:
     // список у неё общий (SYSTEM/model-effort.js), от выбранной модели он не
-    // зависит, а меняет его только сам человек — обработчиком change ниже
-    // noVNC в каскаде не участвует: он не читается и не сохраняется (UI
-    // только для вида), поэтому ни одного обработчика у него нет
+    // зависит, а меняет его только сам человек
     fillEffortLevel(selects.effort);
 
     // Значения уровня CLI — список с сайта (SYSTEM/cli-agents.js, тот же, что на

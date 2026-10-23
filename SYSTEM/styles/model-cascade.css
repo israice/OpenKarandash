@@ -1,4 +1,4 @@
-/* Каскад выбора модели — меню noVNC и четыре выпадающих списка уровней
+/* Каскад выбора модели — четыре выпадающих списка уровней
    (CLI / Gateway / Model / Effort) в ряд. Поставщика отдельным списком нет:
    это средний уровень пути
    модели, и в строке он не выбирается (DOCS/decisions/118). Строка стоит в трёх
@@ -16,7 +16,7 @@
     gap: 8px 10px;
 }
 
-/* Каскад из пяти уровней стоит в одну строку при любой ширине окна — и в
+/* Каскад из четырёх уровней стоит в одну строку при любой ширине окна — и в
    шапке сессии, и в настройках: правило одно на оба места, а не по копии в
    каждом. Лишнее место уходит не переносом, а сжатием — подпись уровня не
    трогаем (без неё уровни не различить), список берёт ширину по содержимому,
@@ -164,4 +164,90 @@
 .provider__select--source option[data-mark="empty"]:checked {
     background: #6b5822;
     color: #f6e6bf;
+}
+
+.model-search-menu {
+    position: fixed;
+    z-index: 10000;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 360px;
+    padding: 8px;
+    overflow: hidden;
+    border: 1px solid #3a3d45;
+    border-radius: 12px;
+    background: #22252b;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+    color: #e9e9ec;
+}
+
+.model-search-menu[hidden] {
+    display: none;
+}
+
+.model-search-menu__input {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 32px;
+    padding: 0 10px;
+    border: 1px solid #3a3d45;
+    border-radius: 999px;
+    background: #181a1f;
+    color: #f2f2f4;
+    font: inherit;
+    font-size: 0.78rem;
+}
+
+.model-search-menu__input:focus-visible {
+    outline: 1px solid #6ea8fe;
+}
+
+.model-search-menu__options {
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.model-search-menu__option {
+    padding: 7px 10px;
+    overflow-wrap: anywhere;
+    border-radius: 7px;
+    color: #aeb2ba;
+    cursor: pointer;
+    font-size: 0.78rem;
+}
+
+.model-search-menu__option:hover,
+.model-search-menu__option:focus-visible,
+.model-search-menu__option--active {
+    outline: none;
+    background: #2a2d34;
+    color: #f2f2f4;
+}
+
+.model-search-menu__option[aria-selected="true"] {
+    background: #2f4a75;
+    color: #eaf1ff;
+}
+
+.model-search-menu__option[data-free="true"] {
+    background: #3a1f7f;
+    color: #d0c0e8;
+}
+
+.model-search-menu__option[data-free="true"][aria-selected="true"] {
+    background: #5b3da7;
+    color: #e8d5f5;
+}
+
+.model-search-menu__option[aria-disabled="true"] {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.model-search-menu__empty {
+    padding: 8px 10px;
+    color: #8b909a;
+    font-size: 0.78rem;
 }

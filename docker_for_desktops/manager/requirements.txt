@@ -1,0 +1,17 @@
+# Session manager runtime dependencies.
+# Pinned so that a rebuild months from now produces the same image.
+#
+# The session image itself needs none of this - it is a pure LXDE desktop.
+
+fastapi==0.115.6
+
+# NOTE: plain uvicorn, NOT uvicorn[standard].
+# [standard] pulls in uvloop, and uvloop 0.21-0.23 does not wake
+# loop.sock_recv() for a socket that already has data pending, which is exactly
+# what the VNC proxy does - the RFB greeting never arrived and the browser saw
+# a blank screen with a healthy backend. The WebSocket support we DO need comes
+# from the explicit `websockets` pin below.
+uvicorn==0.34.0
+websockets==14.1
+docker==7.1.0
+PyYAML==6.0.2

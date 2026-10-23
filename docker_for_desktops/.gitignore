@@ -1,0 +1,42 @@
+# Local configuration - contains the manager password
+.env
+
+# TLS front-end example (compose.tls.yaml + Caddyfile) - create if you need it
+compose.tls.yaml
+Caddyfile
+
+# Local compose overrides
+docker-compose.override.yml
+
+# Session backups produced by scripts/desktop-session.sh
+backups/
+*.tar.gz
+
+# Test artefacts
+tests/artifacts/
+tests/*.log
+
+# Python
+**/__pycache__/
+**/*.pyc
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

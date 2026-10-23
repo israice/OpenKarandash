@@ -12,13 +12,12 @@ const MAX_THUMB_BYTES = 300 * 1024;
 // это то, что реально отдаёт canvas.toDataURL, и ничего сверх этого
 const THUMB_RE = /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/]+=*$/;
 
-// createRoutes({ db, list, map, runs }): db — нужные функции хранилища, list —
-// сводка сессий для списков (core/session-list.js), map — отложенная пересборка
-// карты проекта: список сессий попадает в vault, и без неё заметки останутся
-// старыми.
-function createRoutes({ db, list, map, runs, desktopSessions }) {
+// createRoutes({ db, list, map, runs, desktopSessions, targetIdForAgent }):
+// database helpers and session summaries, deferred project-map updates, desktop
+// lifecycle, and the provider-to-target mapping used for newly created chats.
+function createRoutes({ db, list, map, runs, desktopSessions, targetIdForAgent }) {
     const {
-        resetSessions, deleteSession, setSessionThumb, getSessionThumb, getMessageRole, setMessageText,
+        resetSessions, deleteSession, upsertSession, setSessionThumb, getSessionThumb, getMessageRole, setMessageText,
         getSessionMeta, listMessages, sumSessionUsage,
     } = db;
     const { sessionSummaries } = list;
@@ -28,9 +27,20 @@ function createRoutes({ db, list, map, runs, desktopSessions }) {
             sendJson(res, { ok: true, sessions: sessionSummaries(), active: runs.activeCount() });
         },
 
+        '/api/sessions/new': async (req, res) => {
+            const { agent } = await readJson(req);
+            const name = typeof agent === 'string' ? agent.trim() : '';
+            const id = crypto.randomUUID();
+            const target = name ? targetIdForAgent(name) : null;
+            upsertSession.run(id, 'New session', new Date().toISOString(), target);
+
+            map.scheduleMapUpdate();
+            sendJson(res, { ok: true, id });
+        },
+
         '/api/sessions/reset': async (req, res) => {
             if (desktopSessions) {
-                for (const session of sessionSummaries()) await desktopSessions.destroy(session.id).catch(() => {});
+                for (const session of sessionSummaries()) await desktopSessions.destroy(session.id);
             }
             resetSessions();
             map.scheduleMapUpdate(); // список опустел — уберём и заметки о сессиях
@@ -46,7 +56,7 @@ function createRoutes({ db, list, map, runs, desktopSessions }) {
                 return;
             }
             if (runs.isRunning(id)) runs.stop(id);
-            try { await desktopSessions?.destroy(id); } catch { /* desktop may already be gone */ }
+            await desktopSessions?.destroy(id);
             deleteSession(id);
             map.scheduleMapUpdate(); // заметка удалённой сессии тоже должна уйти
             sendJson(res, { ok: true });

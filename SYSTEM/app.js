@@ -26,6 +26,7 @@ import {
 import {
     modelOf, levelsOf,
 } from './model-cascade.js';
+import { state as sessionsState } from '../PROJECTS/Sessions/sessions-state.js';
 // Строка выбора в шапке сессии и чтения выбора при отправке хода — отсюда
 import {
     renderSessionBarControls, getActiveProviderId, getActiveModel, getActiveEffort,
@@ -145,11 +146,15 @@ const BOARD_COLUMNS = ['New', 'In Progress', 'In Review', 'Validator', 'Done'];
 // (provider.models сброшен в [], см. providers.js) и строка модели не рисуется
 const reconnecting = {};
 
-export function restoreServerConnection(providerId) {
+export function restoreServerConnection(providerId, sessionId = sessionsState.sessionId) {
     const state = connections.get(providerId);
     if (!state) return Promise.resolve(false);
     if (!reconnecting[providerId]) {
-        reconnecting[providerId] = api('/api/agent/connect', { agent: providerId, id: state.installId })
+        reconnecting[providerId] = api('/api/agent/connect', {
+            agent: providerId,
+            id: state.installId,
+            sessionId,
+        })
             .then((r) => {
                 if (!r?.ok) return false;
                 // id, который сервер принял на самом деле, записанный обратно:
@@ -187,16 +192,26 @@ export function restoreServerConnection(providerId) {
 // едет в каскад выбора, поэтому уровни Gateway/Provider/Model после первого
 // хода показывают реальные имена, а не прочерки
 export async function ensureConnected(providerId) {
+    // Do not re-run connect/model discovery on every message; the ask route
+    // reports a stale server connection and sendTurn restores it once on demand.
     if (connections.has(providerId)) {
-        const restored = await restoreServerConnection(providerId);
-        if (restored || connections.has(providerId)) return connections.get(providerId);
+        return connections.get(providerId);
     }
     const provider = providerById(providerId);
-    const { installs = [] } = await api('/api/agent/detect', { agent: providerId }).catch(() => ({}));
+    const detection = await api('/api/agent/detect', {
+        agent: providerId,
+        sessionId: sessionsState.sessionId,
+    });
+    if (detection?.error) throw new Error(detection.error);
+    const { installs = [] } = detection || {};
     const target = installs[0];
     if (!target) return null;
-    const result = await api('/api/agent/connect', { agent: providerId, id: target.id });
-    if (!result?.ok) return null;
+    const result = await api('/api/agent/connect', {
+        agent: providerId,
+        id: target.id,
+        sessionId: sessionsState.sessionId,
+    });
+    if (!result?.ok) throw new Error(result?.error || `${providerId} connection failed`);
     // Подключение наполняет каталог моделей и не выбирает модель: выбор
     // человека живёт в строке над сессией, и он единственный. Раньше здесь
     // стоял свой перебор (его модель → дефолт проекта → первая в каталоге), и

@@ -41,6 +41,10 @@ function agentNameByTarget(targetId) {
     return namesBySlug.get(String(targetId).split('-')[0]) || DEFAULT_AGENT;
 }
 
+function targetIdForAgent(name) {
+    return `${any.slugOf(name)}-local`;
+}
+
 // create({ db, dbFns, runTurn, handoff, turnJudgment, telegramLetters, runs }):
 //   db         — handle базы сессий (кулдаун кладёт записи в общую с ним базу)
 //   dbFns      — функции записи сообщений, которые нужны коннектору
@@ -58,8 +62,8 @@ function agentNameByTarget(targetId) {
 // одной логикой: ход начинается здесь и идёт в коннектор по имени, а память о
 // поломке — рядом с ним. Разложить это по файлам можно было бы, но тогда каждая
 // часть брала бы половину соседней через require.
-function create({ db, dbFns, runTurn, handoff, turnJudgment, telegramLetters, runs }) {
-    const deps = { runTurn, resumeAndHandoff: handoff.resumeAndHandoff, db: dbFns };
+function create({ db, dbFns, runTurn, handoff, turnJudgment, telegramLetters, runs, desktopSessions }) {
+    const deps = { runTurn, resumeAndHandoff: handoff.resumeAndHandoff, db: dbFns, desktopSessions };
     const agents = {};
 
     function byName(name) {
@@ -130,4 +134,4 @@ function create({ db, dbFns, runTurn, handoff, turnJudgment, telegramLetters, ru
 
 // Наружу отдаётся и разбор цели сессии: его зовёт слой базы (server.js), и он
 // открывается раньше, чем коннекторы созданы
-module.exports = { create, agentNameByTarget, DEFAULT_AGENT };
+module.exports = { create, agentNameByTarget, targetIdForAgent, DEFAULT_AGENT };

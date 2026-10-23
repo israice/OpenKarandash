@@ -60,7 +60,7 @@ function read() {
 // сколько миллисекунд прошло с последнего пульса; null — замка нет
 function heartbeatAge() {
     try {
-        return Date.now() - fs.statSync(LOCK_FILE).mtimeMs;
+        return Math.max(0, Date.now() - fs.statSync(LOCK_FILE).mtimeMs);
     } catch {
         return null;
     }
@@ -70,6 +70,15 @@ function heartbeatAge() {
 // просто не наш: считаем живым
 function isAlive(pid) {
     if (!pid) return false;
+    if (process.platform === 'linux') {
+        try {
+            const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+            const state = stat.slice(stat.lastIndexOf(')') + 2, stat.lastIndexOf(')') + 3);
+            if (state === 'Z' || state === 'X') return false;
+        } catch (err) {
+            if (err.code === 'ENOENT') return false;
+        }
+    }
     try {
         process.kill(pid, 0);
         return true;

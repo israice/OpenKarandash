@@ -238,22 +238,35 @@ export async function sendTurn(text, mode = 'Action') {
         addMessage('Choose a CLI and a model in the row above the chat.', 'error');
         return;
     }
-    // Подключение выбранного CLI — часть отправки хода, а не отдельная забота
-    // человека: слово из строки выбора может быть неподключённым (список CLI
-    // меняется, а ход идёт сразу), и раньше такой выбор молча уводил ход на
-    // провайдера по умолчанию. Теперь ход подключает именно то, что человек
-    // выбрал, и если не вышло — говорит об этом тем же именем
-    const providerState = await ensureConnected(providerId);
-    if (!providerState) {
-        addMessage(`${provider ? provider.name : providerId} is not available. Check that the CLI is installed, or set its path in the environment variable.`, 'error');
-        return;
-    }
-
     addMessage(text, 'user');
 
     const status = addPending();
     setComposerBusy(true);
     setRunningSessionId(state.sessionId || PENDING_SESSION_ID);
+
+    // CLI detection/connect can take several seconds. Show the submitted message
+    // and pending state first so setup latency never looks like a lost send.
+    let providerState;
+    let setupError;
+    try {
+        providerState = await ensureConnected(providerId);
+    } catch (error) {
+        setupError = `${provider ? provider.name : providerId} setup failed: ${error.message}`;
+    }
+    if (setupError || !providerState) {
+        if (run === state.run) {
+            addMessage(setupError || `${provider ? provider.name : providerId} is not available. Check that the CLI is installed, or set its path in the environment variable.`, 'error');
+            setRunningSessionId(null);
+            removePending(status);
+            setComposerBusy(false);
+            state.input.focus();
+        }
+        return;
+    }
+    if (run !== state.run) {
+        removePending(status);
+        return;
+    }
 
     // ход дошёл до сервера целиком? только тогда ленту сверяем с базой — ошибка
     // соединения живёт лишь в ленте, и перечитывание стёрло бы её

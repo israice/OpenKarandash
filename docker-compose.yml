@@ -1,30 +1,42 @@
+include:
+  - path: ./docker_for_desktops/compose.yaml
+    env_file: .env
+
 services:
   app:
     build: .
+    depends_on:
+      manager:
+        condition: service_healthy
     ports:
-      - "3001:3001"
+      - "${PORT:-3001}:${PORT:-3001}"
     volumes:
       - .:/app
       - /app/node_modules
       - ./DATA:/app/DATA
     environment:
-      - NO_RELOAD=0
+      - PORT=${PORT:-3001}
+      - NO_RELOAD=${NO_RELOAD:-0}
       - HOST_DEPS=0
       - HERMES_STACK=0
       - HOST=0.0.0.0
       - ALLOW_CONTAINER=1
       - GITHUB_AUTO_UPDATE=${GITHUB_AUTO_UPDATE:-1}
       - GITHUB_UPDATE_POLL_MS=${GITHUB_UPDATE_POLL_MS:-60000}
-      - DESKTOP_ENABLED=${DESKTOP_ENABLED:-0}
-      - DESKTOP_MANAGER_URL=${DESKTOP_MANAGER_URL:-http://host.docker.internal:8080}
+      - DESKTOP_ENABLED=1
+      - DESKTOP_MANAGER_URL=http://manager:8080
       - DESKTOP_MANAGER_TOKEN=${DESKTOP_MANAGER_TOKEN:-}
+      - DESKTOP_PUBLIC_URL=${DESKTOP_PUBLIC_URL:-http://127.0.0.1:8080}
+      - DESKTOP_OPENCODE_BIN=${DESKTOP_OPENCODE_BIN:-opencode}
       - DESKTOP_REPOSITORY_URL=${DESKTOP_REPOSITORY_URL:-}
       - DESKTOP_BASE_BRANCH=${DESKTOP_BASE_BRANCH:-main}
       - DESKTOP_WORKSPACE=${DESKTOP_WORKSPACE:-/home/desktop/workspace}
-      - DESKTOP_GIT_PUSH=${DESKTOP_GIT_PUSH:-1}
       - DESKTOP_GIT_NAME=${DESKTOP_GIT_NAME:-OpenKarandash worker}
       - DESKTOP_GIT_EMAIL=${DESKTOP_GIT_EMAIL:-openkarandash-worker@localhost}
       - DESKTOP_GITHUB_TOKEN=${DESKTOP_GITHUB_TOKEN:-}
+      - DESKTOP_GIT_PUSH=${DESKTOP_GIT_PUSH:-1}
+    networks:
+      - edge
     restart: unless-stopped
 
 volumes:

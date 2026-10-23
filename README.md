@@ -1,11 +1,10 @@
 # OpenKarandash
 
-**A local orchestrator for agentic CLIs: a Node server plus a web interface.**
+**A local orchestrator for agentic CLIs: a web interface and per-chat Linux desktops.**
 
-One page in the browser from which you talk to the Claude Code CLI installed on your machine, watch
-every step it takes, keep the whole history, and see the project as a live map. No cloud, no account
-of its own — the server only runs the CLI that is already yours, and answers requests from this
-machine only.
+OpenKarandash and its Linux desktop manager run together in Docker Compose. For
+OpenCode chats, every session gets an isolated Linux desktop; the chat history
+and desktop lifecycle are managed by the local stack.
 
 What is inside:
 
@@ -19,51 +18,48 @@ What is inside:
 | **Karandash** | Point at an element on the page, describe what is wrong — the assistant goes and fixes the sources |
 | **Settings** | Finding and connecting a CLI, the model, the effort, the subscription limits |
 
-Besides the Claude CLI the server can drive **pi** — the same routes, another connector
-in the `AGENTS` table.
-
 ## Requirements
 
-Only Node.js 22.5+ has to be there beforehand — it runs the start command itself. Everything else
-is checked on start and installed when missing (`SYSTEM/core/host-deps.js`): git, Python 3.10+,
-Docker (Docker Desktop via winget on Windows, `apt` engine or the Windows Docker Desktop through
-WSL integration in WSL), the Claude Code CLI through its official installer, and if the CLI is not
-signed in, `claude auth login` runs right in that terminal. Installers use the platform's own
-tools (winget / apt with sudo), so a UAC window or a sudo password prompt may appear on the first
-run. The CLI checked is the one selected in Settings (WSL or Windows), by default the host's own;
-the server then connects it automatically, so a fresh clone works without opening Settings.
-`HOST_DEPS=0` in `.env` skips this check. Docker Desktop on Windows may require signing out and
-back in after its installation — the server says so and starts without Hermes until then.
+Install Docker Desktop with Docker Compose v2.20+ and keep it running. On Windows,
+enable Docker Desktop's “Expose daemon on tcp://localhost:2375 without TLS”
+setting so the Linux desktop manager can create per-chat containers. Node.js
+and the application dependencies run inside the Compose app container.
 
 ## Running
 
-One command from the project root, the same in PowerShell and in WSL:
+The one supported launch method is Docker Compose from the project root. It
+starts OpenKarandash and the Linux desktop manager together; the app waits for
+the manager to become healthy before starting:
 
 ```powershell
 cd C:\0_PROJECTS\OpenKarandash
-npm start
+docker compose up -d --build
 ```
 
-`npm start` is `node server.js` — the same thing, named so that starting and
-stopping are one pair of commands.
+On Windows, Docker Desktop must be running and expose its daemon at
+`tcp://localhost:2375` (Docker Desktop → Settings → General → “Expose daemon on
+tcp://localhost:2375 without TLS”). The desktop manager is bound to localhost
+on port 8080; OpenKarandash is on port 3001. The manager and desktop image are
+included in the same Compose project, so there is no second startup command.
 
-Before starting the server the watchdog brings the whole stack into shape (`SYSTEM/core/hermes-stack.js`):
-installs or updates what is missing (npm packages per `package.json`; `hermes/` — the upstream
-[hermes-agent](https://github.com/NousResearch/hermes-agent) is not kept in this repo but cloned on
-the first run and fast-forwarded to the latest `main` on every later run, `HERMES_REPO`/`HERMES_REF`
-in `.env` override the source; the Hermes Docker image when its sources changed), adds the missing keys and
-generated secrets to `.env` and `claude-bridge/.env`, then starts `claude-bridge` on the host
-(python) and Hermes in Docker (`docker compose up -d gateway`, no dashboard) alongside the server.
-`Ctrl+C` stops everything: the server, the Hermes container and the bridge. If Docker or python
-could not be installed or started, the server still starts and says so — only Hermes is unavailable then.
-`HERMES_STACK=0` in `.env` turns the whole stack off (the command then starts just the server).
-The full key list is in `.env.example` — nothing there has to be filled in by hand.
+If you have been running the desktop manager separately from
+`docker_for_desktops`, stop that old Compose project once before migrating:
+run `docker compose down` from that folder, and do not add `-v`. The integrated
+stack reuses its manager state volume and desktop networks.
 
-On the first run the server creates a `.env` at the project root with port 3001 and starts on it:
+Stop the stack with `docker compose down`. The manager stops active desktop
+containers during shutdown but keeps their data volumes, so existing chat
+desktops can be resumed when the stack starts again. Deleting a chat removes
+its desktop data.
+
+OpenCode chat desktops are enabled automatically in this Compose setup. Before
+using them, configure and sign in to OpenCode in the main desktop template.
+Optional manager and repository settings are documented in `.env.example`.
+
+On the first run OpenKarandash creates a `.env` at the project root with port 3001:
 
 ```
 Created .env with port 3001 — edit the port and secrets there
-Server started: http://localhost:3001
 ```
 
 ## Your own port and secrets
@@ -73,8 +69,6 @@ Server started: http://localhost:3001
 ```
 PORT=8123
 
-# Path to the Claude CLI, if it is not in PATH
-# CLAUDE_BIN=
 # External Obsidian vault instead of the vault/ folder inside the project
 # OBSIDIAN_VAULT=
 ```
@@ -114,7 +108,7 @@ To disable the commit watcher (then the page refreshes only by hand, while the r
 
 ```powershell
 $env:NO_RELOAD=1
-node server.js
+docker compose up -d --build
 ```
 
 ## If the page does not refresh by itself
@@ -123,29 +117,12 @@ node server.js
 - The address bar must show `http://localhost:...`, not `file:///C:/...`. When a file is opened by double-clicking, the server is not involved.
 - Do not keep many tabs with the same page open: each one holds a persistent connection, and the browser allows no more than six per host — the seventh tab simply will not load.
 
-## The Claude CLI connector
+## OpenCode desktops
 
-In the Settings dialog, the "Connect" button on the Claude provider does real work: the server looks for the Claude CLI in two environments at once — in Windows and in WSL.
-
-- One environment found — it connects immediately.
-- Both found — a selection dialog opens, and a click on a row connects.
-- None found — a dialog with a hint about what to do.
-
-After connecting, the provider row shows the environment and the CLI version, with the model list next to it. Messages from the Chat tab go to the chosen CLI and come back as an answer in the feed; the conversation continues in one session, so the model remembers the previous messages.
-
-What you need: an installed Claude Code CLI. If it is not in `PATH`, give the path at startup:
-
-```powershell
-$env:CLAUDE_BIN="C:\Users\user\.local\bin\claude.exe"
-node server.js
-```
-
-How the server looks for the CLI:
-
-| Server runs in | Windows installation | WSL installation |
-| --- | --- | --- |
-| Windows | `claude` | `wsl.exe bash -lc "claude ..."` |
-| WSL | `claude.exe` | `claude` |
+In the Compose deployment, choose OpenCode in Settings. Detection, model
+discovery, and chat turns run inside the Linux desktop assigned to that chat.
+Other providers are not installed by this stack; they require a separate
+runtime configuration.
 
 Endpoints (all `POST`, local requests only):
 
@@ -225,22 +202,11 @@ It works without a running server too — it reads the prebuilt index. The same 
 
 Storage is an ordinary Obsidian vault: the `DATA/vault/` folder can be opened in Obsidian and you can write your own notes alongside; they will show up both in the graph and in the search. Only `DATA/vault/Project/` is overwritten. Neither the vault nor the index is tracked by git.
 
-A different vault is set with an environment variable:
-
-```bash
-OBSIDIAN_VAULT="C:/path/to/vault" node server.js
-```
+A different vault can be configured with `OBSIDIAN_VAULT` in `.env`.
 
 ## Stopping
 
-`Ctrl+C` in the terminal running the server — it stops the server and the
-watchdog, and leaves nothing behind.
-
-`npm stop` stops it from anywhere else: it reads `DATA/server.lock` (the one
-record of what is running), stops the watchdog and the server, removes the
-lock and says whether the port is free. It also cleans up a lock left by a
-server that died — the case where a fresh start would otherwise answer
-"Another OpenKarandash server is already holding …".
+Use `docker compose down` to stop both the app and the desktop manager.
 
 ## Structure
 

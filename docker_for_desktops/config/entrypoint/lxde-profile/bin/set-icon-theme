@@ -1,0 +1,76 @@
+#!/bin/bash
+# =============================================================================
+#  set-icon-theme - change the icon theme of this session.
+#
+#  lxappearance is not in the image: on Debian trixie it is a GTK3 application
+#  that pulls in the whole GTK3 + systemd + polkit stack, which is a lot of
+#  weight for a session that has no display manager anyway.
+#
+#  GTK3 takes the icon theme from two places:
+#    * ~/.config/gtk-3.0/settings.ini  (gtk-icon-theme-name)
+#    * the LXDE session config, which lxsession copies into that file at
+#      every start of the desktop - so both are written here, otherwise the
+#      next "Restart Desktop" would silently put the old theme back.
+#
+#  The change becomes visible after the desktop is restarted.
+# =============================================================================
+set -euo pipefail
+
+HOME_DIR="${HOME:-/home/desktop}"
+SETTINGS="${HOME_DIR}/.config/gtk-3.0/settings.ini"
+LXDE_CONF="${HOME_DIR}/.config/lxsession/LXDE/desktop.conf"
+ICON_ROOT=/usr/share/icons
+
+list_themes() {
+    for dir in "${ICON_ROOT}"/*/; do
+        name="$(basename "$dir")"
+        case "${name}" in
+            hicolor|default) continue ;;   # the fallback theme, not a choice
+        esac
+        [ -f "${dir}/index.theme" ] && echo "${name}"
+    done
+}
+
+usage() {
+    echo "Available icon themes:"
+    for t in $(list_themes); do echo "  ${t}"; done
+    echo
+    echo "Usage: $0 <theme>"
+    echo
+    echo "The new theme is used after the desktop is restarted"
+    echo "(shortcut: 'Restart Desktop')."
+}
+
+if [ $# -eq 0 ] || [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+    usage
+    exit 0
+fi
+
+THEME="$1"
+if [ ! -f "${ICON_ROOT}/${THEME}/index.theme" ]; then
+    echo "Unknown icon theme: ${THEME}" >&2
+    echo >&2
+    usage >&2
+    exit 2
+fi
+
+# 1. what GTK3 reads at the start of an application
+mkdir -p "$(dirname "${SETTINGS}")"
+if [ -f "${SETTINGS}" ]; then
+    sed -i "s|^gtk-icon-theme-name=.*|gtk-icon-theme-name=${THEME}|" "${SETTINGS}"
+    grep -q '^gtk-icon-theme-name=' "${SETTINGS}" \
+        || printf 'gtk-icon-theme-name=%s\n' "${THEME}" >> "${SETTINGS}"
+else
+    printf '[Settings]\ngtk-icon-theme-name=%s\n' "${THEME}" > "${SETTINGS}"
+fi
+
+# 2. what lxsession puts back into that file on every desktop start
+mkdir -p "$(dirname "${LXDE_CONF}")"
+if [ -f "${LXDE_CONF}" ]; then
+    sed -i "s|^sNet/IconThemeName=.*|sNet/IconThemeName=${THEME}|" "${LXDE_CONF}"
+else
+    printf '[GTK]\nsNet/IconThemeName=%s\n' "${THEME}" > "${LXDE_CONF}"
+fi
+
+echo "Icon theme set to '${THEME}'."
+echo "Use 'Restart Desktop' to apply it."

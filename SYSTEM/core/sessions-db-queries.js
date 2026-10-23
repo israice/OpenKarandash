@@ -4,7 +4,10 @@ function createQueries(db) {
 const upsertSession = db.prepare(`
     INSERT INTO sessions (id, title, updated_at, target)
     VALUES (?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at
+    ON CONFLICT(id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        title = CASE WHEN sessions.title = 'New session' THEN excluded.title ELSE sessions.title END,
+        target = COALESCE(sessions.target, excluded.target)
 `);
 
 const getSessionTarget = db.prepare('SELECT target FROM sessions WHERE id = ?');
@@ -60,7 +63,19 @@ const getDesktop = db.prepare(`
         last_commit AS lastCommit, sync_status AS syncStatus, desktop_error AS desktopError
     FROM sessions WHERE id = ?
 `);
-
+const getStandbyDesktop = db.prepare(`
+    SELECT desktop_session_id AS id, desktop_url AS url
+    FROM desktop_standby WHERE slot = 1
+`);
+const setStandbyDesktop = db.prepare(`
+    INSERT INTO desktop_standby (slot, desktop_session_id, desktop_url)
+    VALUES (1, ?, ?)
+    ON CONFLICT(slot) DO UPDATE SET
+        desktop_session_id = excluded.desktop_session_id,
+        desktop_url = excluded.desktop_url
+`);
+const claimStandbyDesktop = db.prepare('DELETE FROM desktop_standby WHERE slot = 1 AND desktop_session_id = ?');
+const clearStandbyDesktop = db.prepare('DELETE FROM desktop_standby WHERE slot = 1');
 const setMessageCreatedAt = db.prepare('UPDATE messages SET created_at = ? WHERE session_id = ? AND position = ?');
 const lastMessageTime = db.prepare('SELECT MAX(created_at) AS at FROM messages WHERE session_id = ?');
 
@@ -177,7 +192,8 @@ return {
     upsertMessage, setMessageUsage, setMessageToolCall, setMessageToolResult, setMessageToolIds,
     setMessageStopReason, setMessageMode, setMessageInputSent, setMessageResultMeta, setMessageExtraMeta,
     setMessageOrigin, setMessageRaw, getMessageRaw,
-    touchSession, setSessionThumb, setSessionContext, setSessionInfo, setSessionRateLimit, setDesktop, getDesktop,
+    touchSession, setSessionThumb, setSessionContext, setSessionInfo, setSessionRateLimit,
+    setDesktop, getDesktop, getStandbyDesktop, setStandbyDesktop, claimStandbyDesktop, clearStandbyDesktop,
     setMessageCreatedAt, lastMessageTime, getSessionMeta, getSessionTitle, getLastTurnParams,
     listSessions, getSessionThumb, listMessages, countNeedsAttention, sumSessionUsage, countMessages,
     listToolSteps, countToolSteps, getMessageRole, setMessageText,

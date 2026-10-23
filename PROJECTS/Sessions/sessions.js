@@ -177,27 +177,31 @@ function bindPanel() {
         const btn = e.target.closest('.session-item');
         if (!btn?.dataset.sessionId) return;
 
-        if (btn.getAttribute('aria-current') === 'true') startNewSession();
+        if (btn.getAttribute('aria-current') === 'true') void startNewSession();
         else openSession(btn.dataset.sessionId, btn.classList.contains('session-item--running'));
     });
 
-    // новая сессия: чистим ленту, следующий вопрос начнёт свою историю в CLI,
-    // а в списке сразу появляется черновик — реальная сессия придёт с сервера
-    // позже
-    document.getElementById('sessionNew').addEventListener('click', startNewSession);
+    // новая серверная сессия и привязка подготовленного десктопа начинаются
+    // сразу по клику; startNewSession показывает ошибку пользователю.
+    document.getElementById('sessionNew').addEventListener('click', () => { void startNewSession(); });
 
     // обнулить базу сессий: чистим список и текущую переписку
     document.getElementById('sessionReset').addEventListener('click', async () => {
-        if (!await confirmModal('Delete all sessions from the database? This cannot be undone.', { title: 'Delete all sessions' })) return;
+        if (!await confirmModal('Delete all chat sessions and permanently remove their Linux desktops and data? This cannot be undone.', { title: 'Delete all sessions' })) return;
 
-        await api('/api/sessions/reset');
+        const result = await api('/api/sessions/reset');
+        if (!result.ok) {
+            alert(result.error || 'Failed to delete sessions and their desktops');
+            await loadSessions();
+            return;
+        }
         for (const key of Object.keys(localStorage)) {
             if (key.startsWith(DRAFT_PREFIX)) localStorage.removeItem(key);
         }
         await loadSessions();
         // список пуст, а лента должна чем-то принадлежать — открываем новую
         // сессию после перерисовки списка, иначе её тут же смоет подмена htmx
-        startNewSession();
+        await startNewSession();
     });
 }
 
@@ -214,9 +218,16 @@ async function restoreOnLoad() {
     // подключение kilo или omp переживает перезагрузку страницы наравне с pi
     if (activeId && activeId !== 'pi') saved[activeId] = loadProviderState(activeId);
 
-    if (activeId && saved[activeId]?.installId) {
+    // Список нужен до восстановления: подключение OpenCode требует id чата,
+    // потому что его цель — отдельный Linux-десктоп именно этой сессии.
+    const sessions = await loadSessions();
+    const restoreProviderId = activeId || (!activeId && saved.pi?.installId ? 'pi' : null);
+    const providerState = restoreProviderId ? saved[restoreProviderId] : null;
+    const found = providerState?.sessionId ? sessions.find((s) => s.id === providerState.sessionId) : sessions[0];
+
+    if (activeId && saved[activeId]?.installId && found) {
         connections.set(activeId, saved[activeId]);
-        await restoreServerConnection(activeId); // сервер мог быть перезапущен — вернём ему окружение
+        await restoreServerConnection(activeId, found.id); // сервер мог быть перезапущен — вернём ему окружение
     } else if (!activeId) {
         // выбора ещё не было (свежескачанный проект) или он потерян: поднимаем
         // сохранённое подключение и делаем активным тот CLI, чьё оно и есть.
@@ -224,9 +235,11 @@ async function restoreOnLoad() {
         // то, чьё подключение подняли, поэтому строка выбора показывала одно,
         // а ход уходил к другому CLI
         if (saved.pi?.installId) {
-            connections.set('pi', saved.pi);
-            restoreServerConnection('pi');
             saveActiveProvider('pi');
+            if (found) {
+                connections.set('pi', saved.pi);
+                await restoreServerConnection('pi', found.id);
+            }
         }
     } else {
         // active есть, но его installId потерян (чистка localStorage вручную,
@@ -237,9 +250,6 @@ async function restoreOnLoad() {
         // строка выбора
     }
 
-    // список сессий готов сразу при загрузке страницы
-    const sessions = await loadSessions();
-
     // Последнюю открытую сессию подгружаем всегда, чтобы переход на вкладку
     // Sessions (кнопка chatButton) сразу показывал её, а не пустой экран. Если
     // страницу перезагрузили посреди работы той же сессии (например,
@@ -247,21 +257,21 @@ async function restoreOnLoad() {
     // терять индикатор в процессе. Сессию берём у активного провайдера, а не
     // «первую по списку» — иначе после работы с одним агентом открывалась чужая
     const currentActive = loadActiveProvider();
-    const providerState = (currentActive && saved[currentActive]) ? saved[currentActive] : null;
+    const activeProviderState = (currentActive && saved[currentActive]) ? saved[currentActive] : null;
     // сервер отдаёт сессии по убыванию updated_at, поэтому первая в списке —
     // самая свежая
-    const found = providerState?.sessionId ? sessions.find((s) => s.id === providerState.sessionId) : sessions[0];
+    const selected = activeProviderState?.sessionId ? sessions.find((s) => s.id === activeProviderState.sessionId) : sessions[0];
 
-    if (found) {
-        await openSession(found.id, found.running);
-        if (found.running) MissionTabs.show('chat');
+    if (selected) {
+        await openSession(selected.id, selected.running);
+        if (selected.running) MissionTabs.show('chat');
         return;
     }
 
     // сохранённой сессии нет (ещё ни одной, её удалили, сменился провайдер) —
     // пустой ленты с подсказкой «выбери сессию» у нас не бывает: сразу
     // открываем чистый лист новой сессии, как если бы New был уже нажат
-    startNewSession();
+    await startNewSession();
 }
 
 // ---------- старт ----------

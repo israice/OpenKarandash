@@ -113,12 +113,18 @@ export function renderSessionBarControls() {
 const askedCatalog = new Set();
 
 function fillCatalog(cliId) {
-    if (!cliId || askedCatalog.has(cliId)) return;
+    if (!cliId || !sessionsState.sessionId || askedCatalog.has(cliId)) return;
     askedCatalog.add(cliId);
     try {
-        Promise.resolve(App.ensureConnected(cliId)).catch(() => {});
+        Promise.resolve(App.ensureConnected(cliId))
+            .then((connection) => {
+                if (!connection) askedCatalog.delete(cliId);
+            })
+            .catch(() => {
+                askedCatalog.delete(cliId);
+            });
     } catch {
-        // сервер недоступен — строка остаётся как есть
+        askedCatalog.delete(cliId);
     }
 }
 

@@ -7,18 +7,19 @@ const token = process.env.DESKTOP_MANAGER_TOKEN || '';
 const repository = String(process.env.DESKTOP_REPOSITORY_URL || '').trim();
 const baseBranch = String(process.env.DESKTOP_BASE_BRANCH || 'main').trim() || 'main';
 const workspace = String(process.env.DESKTOP_WORKSPACE || '/home/desktop/workspace').trim();
+const opencodeBin = String(process.env.DESKTOP_OPENCODE_BIN || 'opencode').trim() || 'opencode';
 const gitName = process.env.DESKTOP_GIT_NAME || 'OpenKarandash worker';
 const gitEmail = process.env.DESKTOP_GIT_EMAIL || 'openkarandash-worker@localhost';
 const githubToken = String(process.env.DESKTOP_GITHUB_TOKEN || '').trim();
-const nodeTools = '/home/desktop/.tools/node22';
 
 const headers = () => ({
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
 });
 
-async function jsonRequest(path, options = {}) {
+async function jsonRequest(path, options = {}, { notFoundIsSuccess = false } = {}) {
     const response = await fetch(`${baseUrl}${path}`, { ...options, headers: { ...headers(), ...(options.headers || {}) } });
+    if (notFoundIsSuccess && response.status === 404) return {};
     const text = await response.text();
     let body;
     try { body = text ? JSON.parse(text) : {}; } catch { body = { detail: text }; }
@@ -26,7 +27,7 @@ async function jsonRequest(path, options = {}) {
     return body;
 }
 
-async function exec(sessionId, command, workdir, { timeoutMs, onLine, onSpawn, env } = {}) {
+async function execRaw(sessionId, command, workdir, { timeoutMs, onLine, onSpawn, env } = {}) {
     const controller = new AbortController();
     const timer = timeoutMs ? setTimeout(() => controller.abort(), timeoutMs) : null;
     let execId = null;
@@ -91,59 +92,84 @@ async function exec(sessionId, command, workdir, { timeoutMs, onLine, onSpawn, e
     }
 }
 
+const openCodeBins = new Map();
+
+async function resolveOpenCodeBin(sessionId) {
+    if (openCodeBins.has(sessionId)) return openCodeBins.get(sessionId);
+    const candidates = opencodeBin === 'opencode'
+        ? ['opencode', '/home/desktop/.opencode/bin/opencode', '/usr/local/bin/opencode']
+        : [opencodeBin];
+    for (const candidate of candidates) {
+        try {
+            await execRaw(sessionId, [candidate, '--version'], '/home/desktop', { timeoutMs: 15000 });
+            openCodeBins.set(sessionId, candidate);
+            return candidate;
+        } catch {
+            // Try the next supported installation location.
+        }
+    }
+    throw new Error(`OpenCode was not found in desktop ${sessionId}`);
+}
+
+async function exec(sessionId, command, workdir, options = {}) {
+    const actualCommand = [...command];
+    if (actualCommand[0] === 'opencode' || actualCommand[0] === opencodeBin) {
+        actualCommand[0] = await resolveOpenCodeBin(sessionId);
+    }
+    return execRaw(sessionId, actualCommand, workdir, options);
+}
+
+async function ensureGit(sessionId) {
+    if (!repository) return;
+    try {
+        await exec(sessionId, ['git', '--version'], '/home/desktop', { timeoutMs: 15000 });
+    } catch (error) {
+        if (!String(error.message).includes('code 127')) throw error;
+        await exec(sessionId, ['sudo', 'apt-get', 'update'], '/home/desktop', { timeoutMs: 180000 });
+        await exec(sessionId, ['sudo', 'apt-get', 'install', '-y', 'git'], '/home/desktop', { timeoutMs: 180000 });
+    }
+}
+
 async function ensureNode(sessionId) {
-    const architecture = await exec(sessionId, ['uname', '-m'], '/home/desktop', { timeoutMs: 15000 });
-    const nodeArch = { x86_64: 'x64', aarch64: 'arm64' }[architecture.trim()];
-    if (!nodeArch) throw new Error(`Desktop checks do not support architecture ${architecture.trim()}`);
-
-    const script = [
-        'set -eu',
-        'if [ -x /home/desktop/.tools/node22/bin/node ] && [ -x /home/desktop/.tools/node22/bin/npm ]; then exit 0; fi',
-        'sudo apt-get update',
-        'sudo apt-get install -y ca-certificates curl tar gzip coreutils grep',
-        'base=https://nodejs.org/dist/latest-v22.x',
-        'tmp=/tmp/openkarandash-node-install',
-        'mkdir -p "$tmp" /home/desktop/.tools',
-        'curl -fsSL "$base/SHASUMS256.txt" -o "$tmp/SHASUMS256.txt"',
-        `archive="$(grep -Eo 'node-v22\\.[0-9]+\\.[0-9]+-linux-${nodeArch}\\.tar\\.gz' "$tmp/SHASUMS256.txt" | head -n 1)"`,
-        'test -n "$archive"',
-        'curl -fsSL "$base/$archive" -o "$tmp/$archive"',
-        'cd "$tmp"',
-        'grep "  $archive$" "$tmp/SHASUMS256.txt" | sha256sum -c -',
-        'cd /home/desktop',
-        'tar -xzf "$tmp/$archive" -C /home/desktop/.tools',
-        'directory="${archive%.tar.gz}"',
-        'ln -sfn "/home/desktop/.tools/$directory" /home/desktop/.tools/node22',
-    ].join('\n');
-    await exec(sessionId, ['sh', '-lc', script], '/home/desktop', { timeoutMs: 300000 });
-
-    const nodeBin = `${nodeTools}/bin`;
-    const path = await exec(sessionId, ['printenv', 'PATH'], '/home/desktop', { timeoutMs: 15000 });
-    return { PATH: `${nodeBin}:${path.trim()}` };
+    const nodeVersion = (await exec(sessionId, ['node', '--version'], '/home/desktop', { timeoutMs: 15000 })).trim();
+    if (!/^v22\.\d+\.\d+$/.test(nodeVersion)) {
+        throw new Error(`Desktop image requires Node.js 22; found ${nodeVersion || 'no version'}`);
+    }
+    const npmVersion = (await exec(sessionId, ['npm', '--version'], '/home/desktop', { timeoutMs: 15000 })).trim();
+    if (!/^\d+\.\d+\.\d+$/.test(npmVersion)) {
+        throw new Error(`Desktop image requires npm; found ${npmVersion || 'no version'}`);
+    }
+    return {};
 }
 
 async function createDesktop(owner) {
     const created = await jsonRequest('/api/sessions', {
-        method: 'POST', body: JSON.stringify({ inherit: false, wait: 120 }),
+        method: 'POST', body: JSON.stringify({ inherit: true, wait: 120 }),
     });
     return { id: created.id, url: created.url, owner };
 }
 
-async function prepareDesktop(desktopId, sessionId) {
+async function prepareStandby(desktopId) {
+    await resolveOpenCodeBin(desktopId);
     if (!repository) {
         await exec(desktopId, ['mkdir', '-p', workspace], '/home/desktop', { timeoutMs: 30000 });
-        return { branch: `worker/${sessionId}`, status: 'ready' };
+        return;
     }
-    const branch = `worker/${String(sessionId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80)}`;
+    await ensureGit(desktopId);
     const authEnv = githubToken ? {
         GIT_CONFIG_COUNT: '1',
         GIT_CONFIG_KEY_0: 'http.extraheader',
-        GIT_CONFIG_VALUE_0: `Authorization: Bearer ${githubToken}`,
+        GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${githubToken}`).toString('base64')}`,
         GIT_TERMINAL_PROMPT: '0',
     } : undefined;
     await exec(desktopId, ['git', 'clone', '--depth', '1', '--branch', baseBranch, repository, workspace], '/home/desktop', {
         timeoutMs: 300000, env: authEnv,
     });
+}
+
+async function prepareDesktop(desktopId, sessionId) {
+    if (!repository) return { branch: `worker/${sessionId}`, status: 'ready' };
+    const branch = `worker/${String(sessionId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80)}`;
     await exec(desktopId, ['git', 'checkout', '-b', branch], workspace, { timeoutMs: 30000 });
     await exec(desktopId, ['git', 'config', 'user.name', gitName], workspace, { timeoutMs: 30000 });
     await exec(desktopId, ['git', 'config', 'user.email', gitEmail], workspace, { timeoutMs: 30000 });
@@ -152,7 +178,10 @@ async function prepareDesktop(desktopId, sessionId) {
 
 async function destroyDesktop(id) {
     if (!id) return;
-    await jsonRequest(`/api/sessions/${encodeURIComponent(id)}?delete_data=true`, { method: 'DELETE' });
+    await jsonRequest(`/api/sessions/${encodeURIComponent(id)}?delete_data=true`, { method: 'DELETE' }, {
+        notFoundIsSuccess: true,
+    });
+    openCodeBins.delete(id);
 }
 
 async function urlFor(id) {
@@ -162,6 +191,7 @@ async function urlFor(id) {
 function isEnabled() { return enabled; }
 
 module.exports = {
-    isEnabled, createDesktop, prepareDesktop, destroyDesktop, urlFor, exec,
+    isEnabled, createDesktop, prepareStandby, prepareDesktop, destroyDesktop, urlFor, exec,
+    repository, baseBranch, workspace, githubToken, opencodeBin, resolveOpenCodeBin,
     repository, baseBranch, workspace, githubToken, ensureNode,
 };

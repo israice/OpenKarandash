@@ -1,0 +1,41 @@
+#!/bin/bash
+# set-resolution - change the virtual screen resolution of this session.
+#
+# Writes the requested geometry to $HOME/.resolution-request and waits for the
+# session supervisor (entrypoint.sh) to restart the X stack with the new size.
+# The browser reconnects to VNC automatically afterwards.
+set -euo pipefail
+
+TARGET="${1:-}"
+
+# Current geometry straight from the X server (xrandr's text output varies
+# between versions and is awkward to parse).
+CUR=$(xdpyinfo 2>/dev/null | awk '/dimensions:/ {print $2; exit}')
+CUR_DEPTH=$(xdpyinfo 2>/dev/null | awk '/depth of root window:/ {print $5; exit}')
+
+echo "Current resolution: ${CUR:-unknown}${CUR_DEPTH:+x${CUR_DEPTH}}"
+
+if [ -z "$TARGET" ]; then
+  echo
+  echo "Usage: $0 <width>x<height>     e.g. $0 1280x800"
+  echo
+  echo "Common values:"
+  echo "  1024x768   1280x800   1366x768   1440x900   1600x900   1920x1080"
+  echo
+  echo "The desktop restarts for a few seconds; the browser tab reconnects by itself."
+  exit 1
+fi
+
+if ! printf '%s' "$TARGET" | grep -Eq '^[0-9]{3,5}x[0-9]{3,5}$'; then
+  echo "Invalid format: '$TARGET' (expected WIDTHxHEIGHT, e.g. 1280x800)" >&2
+  exit 2
+fi
+
+if ! printf '%s' "$TARGET" | awk -F'x' \
+     '($1%8==0)&&($2%8==0)&&($1>=640)&&($1<=3840)&&($2>=480)&&($2<=2160){ok=1} END{exit !ok}'; then
+  echo "Warning: use multiples of 8 between 640x480 and 3840x2160." >&2
+fi
+
+echo "$TARGET" > "$HOME/.resolution-request"
+echo "Applying ${TARGET} - the desktop will restart in a few seconds..."
+echo "The browser tab will reconnect on its own; just wait ~10 seconds."

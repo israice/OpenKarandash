@@ -52,6 +52,8 @@ const writeStaleLock = () => {
     check(lock.read()?.child === process.pid, 'the lock does not name the holder');
 
     // 2. занятый замок не занимается второй раз
+    const future = new Date(Date.now() + 1000);
+    fs.utimesSync(FILE, future, future);
     const second = lock.acquire({ watchdogPid: null });
     check(!second.ok, 'a second instance took a lock that is already held');
     check(second.age >= 0, 'the refusal does not say how long the lock has been held');
@@ -125,8 +127,8 @@ const writeStaleLock = () => {
         try { parent.kill(); } catch { /* уже мёртв */ }
     }
 
-    // 9. старый пульс без живого процесса: остановка убирает замок и говорит,
-    // что сервер уже не работал. Явно устаревшее время не зависит от расписания CI.
+    // 9. stale lock cleanup is deterministic even when the watchdog removed
+    // its own lock while exiting on Linux.
     writeStaleLock();
     const stopped = await lock.stop();
     check(stopped.reason === 'stale', 'stop did not recognise a leftover lock');

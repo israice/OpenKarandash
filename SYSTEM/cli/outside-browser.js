@@ -47,11 +47,11 @@ function create({ agentByName, agentNameByTarget, ask, turnJudgment, db, runs })
     // Свой CLI так и не поднялся — работа не идёт никуда: подхвата больше нет
     // (DOCS/decisions/097), чужой исполнитель работал бы не той моделью и молча,
     // а ход не сделанный виден в ленте ошибкой с его именем
-    async function readyExecutor(sessionTarget) {
+    async function readyExecutor(sessionTarget, sessionId) {
         const name = agentNameByTarget(sessionTarget);
         const adapter = agentByName(name);
         if (!adapter.connected()) {
-            const target = adapter.targets().find((t) => t.id === sessionTarget);
+            const target = await adapter.resolveTarget(sessionTarget, sessionId);
             try {
                 if (!target) throw new Error(`unknown environment ${sessionTarget}`);
                 await adapter.version(target);
@@ -70,7 +70,7 @@ function create({ agentByName, agentNameByTarget, ask, turnJudgment, db, runs })
         if (!getSessionTitle.get(sessionId)) throw new Error('Session not found');
         if (runs.isStopping()) throw new Error(runs.restartError);
 
-        const name = await readyExecutor(getSessionMeta.get(sessionId)?.target);
+        const name = await readyExecutor(getSessionMeta.get(sessionId)?.target, sessionId);
         // модель и effort — те же, что человек выбрал для этой сессии
         const last = getLastTurnParams.get(sessionId) || {};
         // отказ до старта хода (не подключён, пустой запрос) в базу не попадёт и

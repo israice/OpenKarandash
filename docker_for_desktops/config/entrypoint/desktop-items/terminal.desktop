@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Terminal
+Name[ru]=Терминал
+Comment=Open a terminal window
+Comment[ru]=Открыть окно терминала
+Exec=lxterminal
+Icon=terminal
+Terminal=false
+Categories=System;TerminalEmulator;
+StartupNotify=true

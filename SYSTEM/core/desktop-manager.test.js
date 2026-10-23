@@ -9,34 +9,34 @@ function execResponse(output = '', code = 0) {
     return new Response(events.map((event) => JSON.stringify(event)).join('\n'));
 }
 
-test('ensures Node 22 using the verified official archive and returns its PATH', async () => {
+test('uses Node.js and npm supplied by the desktop base image', async () => {
     const previousFetch = global.fetch;
     const calls = [];
     global.fetch = async (_url, options) => {
         const request = JSON.parse(options.body);
         calls.push(request);
-        if (request.command[0] === 'uname') return execResponse('x86_64\n');
-        if (request.command[0] === 'sh') return execResponse();
-        return execResponse('/usr/local/bin:/usr/bin:/bin\n');
+        if (request.command[0] === 'node') return execResponse('v22.23.4\n');
+        if (request.command[0] === 'npm') return execResponse('10.9.9\n');
+        throw new Error(`Unexpected desktop command: ${request.command.join(' ')}`);
     };
 
     try {
         const env = await ensureNode('test-session');
-        assert.equal(env.PATH, '/home/desktop/.tools/node22/bin:/usr/local/bin:/usr/bin:/bin');
-        const installCommand = calls.find((call) => call.command[0] === 'sh').command[2];
-        assert.match(installCommand, /latest-v22\.x/);
-        assert.match(installCommand, /node-v22\\\.\[0-9\].*linux-x64/);
-        assert.match(installCommand, /sha256sum -c/);
+        assert.deepEqual(env, {});
+        assert.deepEqual(calls.map((call) => call.command), [
+            ['node', '--version'],
+            ['npm', '--version'],
+        ]);
     } finally {
         global.fetch = previousFetch;
     }
 });
 
-test('rejects unsupported desktop architectures', async () => {
+test('rejects a desktop image without the supported Node.js version', async () => {
     const previousFetch = global.fetch;
-    global.fetch = async () => execResponse('riscv64\n');
+    global.fetch = async () => execResponse('v20.19.0\n');
     try {
-        await assert.rejects(ensureNode('test-session'), /do not support architecture riscv64/);
+        await assert.rejects(ensureNode('test-session'), /requires Node\.js 22; found v20\.19\.0/);
     } finally {
         global.fetch = previousFetch;
     }
