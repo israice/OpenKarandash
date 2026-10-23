@@ -85,7 +85,16 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR_URL: ${{ steps.pr.outputs.url }}
         run: |
-          gh pr checks "$PR_URL" --repo "$GH_REPO" --watch
+          for attempt in {1..60}; do
+            checks="$(gh pr checks "$PR_URL" --repo "$GH_REPO" --json name --jq '[.[] | select(.name == "project-check")] | length' 2>/dev/null || true)"
+            if [ "${checks:-0}" -gt 0 ]; then
+              gh pr checks "$PR_URL" --repo "$GH_REPO" --watch
+              exit
+            fi
+            sleep 5
+          done
+          echo "Timed out waiting for the project-check to appear on the version PR." >&2
+          exit 1
       - name: Enable automatic merge
         env:
           GH_TOKEN: ${{ secrets.VERSION_PR_TOKEN }}
