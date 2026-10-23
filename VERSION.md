@@ -25,3 +25,4 @@ v0.0.207 - чат-сессии связаны с изолированными Li
 v0.0.208 - перед добовлением проекта в github
 v0.0.209 - Use a dedicated token for version PR validation (PR #3)
 v0.0.210 - Wait for version PR checks before enabling auto-merge (PR #5)
+v0.0.211 - Automate validated session updates from GitHub (PR #1)
