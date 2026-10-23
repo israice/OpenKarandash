@@ -1,11 +1,9 @@
 """Thin, deliberately narrow wrapper around the Docker API.
 
-This module is the ONLY place that touches the Docker socket, and it only ever
-calls: create_container, start, stop, remove, inspect, list, logs,
-get_archive (read-only file extraction), put_archive (writing a home directory
-into another session) and commit (publishing the main session as a template
-image). There is no exec and no attach: the manager has no way to RUN code
-inside a session container even if it were compromised through the API.
+This module is the ONLY place that touches the Docker socket. Lifecycle,
+inspection, archive transfer and a narrowly wrapped non-interactive exec are
+kept here; the HTTP layer remains responsible for authentication and checking
+that the requested container belongs to the addressed desktop session.
 Reading a file out of a session is not that: it copies bytes, it does not
 execute them. Committing a container is not that either: it snapshots the
 writable layer into an image, it runs nothing.
@@ -312,6 +310,40 @@ class DockerControl:
             pass
         except DockerException as exc:
             raise DockerUnavailable(f"failed to remove {container_id}: {exc}") from exc
+
+    def exec_create(self, container_name: str, command: list[str], workdir: str, env: dict[str, str] | None = None) -> str:
+        """Create a non-interactive argv command inside one managed session."""
+        if not command or any(not isinstance(part, str) or not part for part in command):
+            raise ValueError("command must be a non-empty list of strings")
+        container = self.client.containers.get(container_name)
+        labels = container.attrs.get("Config", {}).get("Labels") or {}
+        if not labels.get(SESSION_LABEL):
+            raise ValueError("container is not a managed desktop session")
+        created = self.client.api.exec_create(
+            container.id, cmd=command, workdir=workdir, environment=env or {}, stdin=False, tty=False
+        )
+        return str(created["Id"])
+
+    def exec_stream(self, exec_id: str):
+        return self.client.api.exec_start(exec_id, stream=True, demux=True)
+
+    def exec_inspect(self, exec_id: str) -> dict[str, Any]:
+        return dict(self.client.api.exec_inspect(exec_id))
+
+    def exec_kill(self, container_name: str, exec_id: str) -> None:
+        """Terminate one exec process without stopping its desktop container."""
+        container = self.client.containers.get(container_name)
+        info = self.exec_inspect(exec_id)
+        pid = info.get("Pid")
+        container_id = info.get("ContainerID") or info.get("ContainerId")
+        if container_id and container_id != container.id:
+            raise ValueError("exec does not belong to this desktop session")
+        if not pid or not container_id:
+            return
+        killer = self.client.api.exec_create(
+            container_id, cmd=["/bin/sh", "-lc", f"kill -TERM {int(pid)}"]
+        )
+        self.client.api.exec_start(killer["Id"], stream=False)
 
     # -------------------------------------------------------------- queries
     def inspect(self, container_id: str) -> dict[str, Any] | None:

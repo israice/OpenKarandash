@@ -14,6 +14,8 @@ import asyncio
 import contextlib
 import logging
 import os
+import base64
+import json
 import posixpath
 import re
 import socket
@@ -31,6 +33,7 @@ from fastapi.responses import (
     PlainTextResponse,
     RedirectResponse,
     Response,
+    StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
 
@@ -358,7 +361,81 @@ def build_app() -> FastAPI:
         p=Depends(principal_of),
     ) -> dict[str, Any]:
         _session_or_404(service, session_id, p)
-        return service.delete(session_id, delete_data=delete_data)
+        return await asyncio.to_thread(service.delete, session_id, delete_data=delete_data)
+
+    @app.post("/api/sessions/{session_id}/exec")
+    async def exec_in_session(session_id: str, request: Request, p=Depends(principal_of)):
+        """Stream one argv command inside exactly one managed desktop."""
+        session = _session_or_404(service, session_id, p)
+        if docker is None or not docker.available:
+            raise HTTPException(status_code=503, detail="Docker daemon is unavailable")
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="body must be JSON")
+        command = body.get("command")
+        workdir = body.get("workdir") or "/home/desktop"
+        env = body.get("env") or {}
+        if not isinstance(command, list) or not command or not all(isinstance(x, str) and x for x in command):
+            raise HTTPException(status_code=400, detail="command must be a non-empty argv list")
+        if not isinstance(workdir, str) or not workdir.startswith("/") or ".." in workdir.split("/"):
+            raise HTTPException(status_code=400, detail="workdir must be an absolute container path")
+        if not isinstance(env, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            or not (key == "GIT_TERMINAL_PROMPT" or key.startswith("GIT_CONFIG_"))
+            for key, value in env.items()
+        ):
+            raise HTTPException(status_code=400, detail="env is limited to Git configuration variables")
+        try:
+            exec_id = await asyncio.to_thread(
+                docker.exec_create, session.container_name, command, workdir, env
+            )
+        except (DockerUnavailable, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        async def stream():
+            try:
+                iterator = iter(docker.exec_stream(exec_id))
+                sentinel = object()
+                def next_chunk():
+                    try:
+                        return next(iterator)
+                    except StopIteration:
+                        return sentinel
+                while True:
+                    chunk = await asyncio.to_thread(next_chunk)
+                    if chunk is sentinel:
+                        break
+                    if chunk:
+                        if isinstance(chunk, tuple):
+                            chunk = b"".join(part for part in chunk if part)
+                        raw = chunk if isinstance(chunk, bytes) else str(chunk).encode()
+                        yield (json.dumps({
+                            "type": "data", "data": base64.b64encode(raw).decode("ascii"),
+                        }) + "\n").encode()
+                info = await asyncio.to_thread(docker.exec_inspect, exec_id)
+                yield json.dumps({
+                    "type": "done", "code": info.get("ExitCode"), "exec_id": exec_id,
+                }).encode() + b"\n"
+            except Exception as exc:
+                yield json.dumps({
+                    "type": "error", "error": str(exc), "exec_id": exec_id,
+                }).encode() + b"\n"
+
+        return StreamingResponse(
+            stream(), media_type="application/octet-stream", headers={"X-Exec-Id": exec_id}
+        )
+
+    @app.delete("/api/sessions/{session_id}/exec/{exec_id}")
+    async def stop_exec(session_id: str, exec_id: str, p=Depends(principal_of)):
+        session = _session_or_404(service, session_id, p)
+        if docker is None or not docker.available:
+            raise HTTPException(status_code=503, detail="Docker daemon is unavailable")
+        try:
+            await asyncio.to_thread(docker.exec_kill, session.container_name, exec_id)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"ok": True, "session_id": session.id, "exec_id": exec_id}
 
     @app.post("/api/sessions/{session_id}/make-main")
     async def make_main(session_id: str, p=Depends(principal_of)) -> dict[str, Any]:

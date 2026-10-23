@@ -81,6 +81,7 @@ RUN apt-get update \
       sudo \
       ca-certificates \
       curl \
+      git \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /var/log/* /tmp/* /var/tmp/*
 
@@ -241,6 +242,18 @@ RUN printf '%s ALL=(ALL) NOPASSWD:ALL\n' "${USERNAME}" > /etc/sudoers.d/desktop 
  && chmod 0440 /etc/sudoers.d/desktop \
  && grep -q '^@includedir /etc/sudoers.d' /etc/sudoers \
  && visudo -c
+
+# OpenCode is part of the desktop contract: the chat bridge executes the CLI
+# in this image, while the interactive terminal in LXDE uses the same binary.
+# Install it into the system PATH so it is available to both root during image
+# build and the unprivileged desktop user at runtime.  Git is installed in the
+# package stage above because workspace preparation and OpenCode both need it.
+RUN export OPENCODE_INSTALL_DIR=/usr/local/bin \
+ && curl -fsSL https://opencode.ai/install | bash \
+ && install -m 0755 /home/desktop/.opencode/bin/opencode /usr/local/bin/opencode \
+ && /usr/local/bin/opencode --version \
+ && rm -rf /home/${USERNAME}/.opencode /home/${USERNAME}/.local \
+ && chown ${USER_UID}:${USER_GID} /home/${USERNAME}/.bashrc
 
 USER ${USERNAME}
 WORKDIR /home/${USERNAME}
