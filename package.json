@@ -8,6 +8,7 @@
     "start": "node server.js",
     "stop": "node SYSTEM/stop.js",
     "check": "node SYSTEM/checks.js",
+    "test": "node --test SYSTEM/core/desktop-manager.test.js SYSTEM/core/desktop-sessions.test.js SYSTEM/core/github-updater.test.js SYSTEM/core/runs.test.js TOOLS/record-version.test.js",
     "ui": "node SYSTEM/ui-walk.mjs",
     "gate": "node SYSTEM/branch-gate.mjs",
     "branches": "node SYSTEM/branch-sweep.mjs"

@@ -83,6 +83,7 @@ function create({ releaseTelegram }) {
     // Ход только что начат: он виден как идущий и держит занятость. Возвращает
     // ту же запись — ход дальше снимается ею же, отдельного номера у него нет
     function beginTurn(run) {
+        if (restartRequested || stopping || maintenance) throw new Error(RESTART_ERROR);
         run.runId = nextRunId++;
         run.finished = false;
         run.released = false;
@@ -111,6 +112,7 @@ function create({ releaseTelegram }) {
         run.released = true;
         dropFinished(run);
         confirmRestart();
+        confirmMaintenance();
         return true;
     }
 
@@ -225,6 +227,25 @@ function create({ releaseTelegram }) {
     // новых ходов не берём — щели между «ходов нет» и смертью процесса не остаётся
     let restartRequested = false;
     let stopping = false; // ответ сторожу уже отправлен: процесса вот-вот не станет
+    let maintenance = null;
+
+    function confirmMaintenance() {
+        if (!maintenance || maintenance.ready || busyCount() > 0) return;
+        maintenance.ready = true;
+        const request = maintenance;
+        request.resolve(() => {
+            if (maintenance === request) maintenance = null;
+        });
+    }
+
+    function pauseForMaintenance() {
+        if (restartRequested || stopping) return Promise.reject(new Error(RESTART_ERROR));
+        if (maintenance) return Promise.reject(new Error('Maintenance is already pending'));
+        return new Promise((resolve) => {
+            maintenance = { resolve, ready: false };
+            confirmMaintenance();
+        });
+    }
 
     async function confirmRestart() {
         if (!restartRequested || stopping || busyCount() > 0) return;
@@ -259,9 +280,10 @@ function create({ releaseTelegram }) {
         busyCount,
         // ответ сторожу уже ушёл: новый ход запускать нельзя, ход умрёт вместе
         // с процессом, не дописавшись ответ
-        isStopping: () => stopping,
+        isStopping: () => stopping || Boolean(maintenance),
+        isRestartRequested: () => restartRequested || stopping,
         restartError: RESTART_ERROR,
-        beginTurn, finishTurn, releaseTurn, stop, activeCount, activeStartedAt, activeTitles,
+        beginTurn, finishTurn, releaseTurn, pauseForMaintenance, stop, activeCount, activeStartedAt, activeTitles,
         open, close, isRunning, liveSeq, attach,
         stampEventSeq, broadcast, emitLive,
     };

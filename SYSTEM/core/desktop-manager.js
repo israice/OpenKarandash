@@ -10,6 +10,7 @@ const workspace = String(process.env.DESKTOP_WORKSPACE || '/home/desktop/workspa
 const gitName = process.env.DESKTOP_GIT_NAME || 'OpenKarandash worker';
 const gitEmail = process.env.DESKTOP_GIT_EMAIL || 'openkarandash-worker@localhost';
 const githubToken = String(process.env.DESKTOP_GITHUB_TOKEN || '').trim();
+const nodeTools = '/home/desktop/.tools/node22';
 
 const headers = () => ({
     'Content-Type': 'application/json',
@@ -90,6 +91,37 @@ async function exec(sessionId, command, workdir, { timeoutMs, onLine, onSpawn, e
     }
 }
 
+async function ensureNode(sessionId) {
+    const architecture = await exec(sessionId, ['uname', '-m'], '/home/desktop', { timeoutMs: 15000 });
+    const nodeArch = { x86_64: 'x64', aarch64: 'arm64' }[architecture.trim()];
+    if (!nodeArch) throw new Error(`Desktop checks do not support architecture ${architecture.trim()}`);
+
+    const script = [
+        'set -eu',
+        'if [ -x /home/desktop/.tools/node22/bin/node ] && [ -x /home/desktop/.tools/node22/bin/npm ]; then exit 0; fi',
+        'sudo apt-get update',
+        'sudo apt-get install -y ca-certificates curl tar gzip coreutils grep',
+        'base=https://nodejs.org/dist/latest-v22.x',
+        'tmp=/tmp/openkarandash-node-install',
+        'mkdir -p "$tmp" /home/desktop/.tools',
+        'curl -fsSL "$base/SHASUMS256.txt" -o "$tmp/SHASUMS256.txt"',
+        `archive="$(grep -Eo 'node-v22\\.[0-9]+\\.[0-9]+-linux-${nodeArch}\\.tar\\.gz' "$tmp/SHASUMS256.txt" | head -n 1)"`,
+        'test -n "$archive"',
+        'curl -fsSL "$base/$archive" -o "$tmp/$archive"',
+        'cd "$tmp"',
+        'grep "  $archive$" "$tmp/SHASUMS256.txt" | sha256sum -c -',
+        'cd /home/desktop',
+        'tar -xzf "$tmp/$archive" -C /home/desktop/.tools',
+        'directory="${archive%.tar.gz}"',
+        'ln -sfn "/home/desktop/.tools/$directory" /home/desktop/.tools/node22',
+    ].join('\n');
+    await exec(sessionId, ['sh', '-lc', script], '/home/desktop', { timeoutMs: 300000 });
+
+    const nodeBin = `${nodeTools}/bin`;
+    const path = await exec(sessionId, ['printenv', 'PATH'], '/home/desktop', { timeoutMs: 15000 });
+    return { PATH: `${nodeBin}:${path.trim()}` };
+}
+
 async function createDesktop(owner) {
     const created = await jsonRequest('/api/sessions', {
         method: 'POST', body: JSON.stringify({ inherit: false, wait: 120 }),
@@ -131,5 +163,5 @@ function isEnabled() { return enabled; }
 
 module.exports = {
     isEnabled, createDesktop, prepareDesktop, destroyDesktop, urlFor, exec,
-    repository, baseBranch, workspace, githubToken,
+    repository, baseBranch, workspace, githubToken, ensureNode,
 };
